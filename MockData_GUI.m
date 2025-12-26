@@ -5,7 +5,7 @@ function MockData_GUI(configStruct)
 % === Main Figure ===
 figWidth = 1800;
 figHeight = 1050;
-fig = uifigure('Name', 'HILIGHT Data Analysis Simulator', 'Position', [50 50 figWidth figHeight]);
+fig = uifigure('Name', 'HILIGHTer', 'Position', [50 50 figWidth figHeight]);
 
 % Store config and data in a struct
 dataStruct.config = configStruct;
