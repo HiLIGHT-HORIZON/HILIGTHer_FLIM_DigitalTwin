@@ -90,6 +90,7 @@ uilabel(gatePanel, 'Text', 'ns',                            'Position', [250 new
 
 % custom gates
 new_line = new_line-gui_line;
+gFields = gobjects(1, 8); % Preallocate for speed
 for i=1:8
     uilabel(gatePanel, 'Text', ['Width' num2str(i)],            'Position', [ 10+(i-1)*panel_width/9 new_line    40 22]);
     gFields(i) = uieditfield(gatePanel, 'numeric', 'Value', 2,  'Position', [ 10+(i-1)*panel_width/9 new_line-20 40 22], 'Tooltip', 'Gate width in nanoseconds');
@@ -244,7 +245,7 @@ function toggleGate(gateDropdown,field_ids, NGateField)
 if strcmp(gateDropdown.Value, 'Equal')
     set(field_ids,'Enable','off');
 else
-    set(field_ids(1:str2num(NGateField.Value)),'Enable','on');
+    set(field_ids(1:str2double(NGateField.Value)),'Enable','on');
 end
 end
 

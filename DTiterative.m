@@ -109,6 +109,7 @@ end
 % Batch processed? No, fminbnd is scalar.
 % Loop
 update_interval = floor(M / 100);
+if update_interval < 1, update_interval = 1; end
 
 for k = 1:M
     % Check Cancel
@@ -124,8 +125,10 @@ for k = 1:M
     try
         tau_est_flat(k) = fminbnd(@(tau) fast_objective(tau, pixel_counts), ...
             search_range(1), search_range(2), options);
-    catch
-        % NaN
+    catch ME
+        % Report error to command window so user can see what's happening
+        fprintf('Error fitting pixel %d: %s\n', k, ME.message);
+        tau_est_flat(k) = NaN;
     end
 
     % Progress
