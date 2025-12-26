@@ -52,26 +52,23 @@ col1X = margin;
 % Remaining width for cols 2 and 3
 col2X = col1X + col1W + margin;
 
-% === Top Toggles (Top Left) ===
+% === Top Switches (Top Left) ===
 toggleX = col1X;
-toggleY = figHeight - 45;
+toggleY = figHeight - 70;
 
-tgMode = uibuttongroup(fig, 'Position', [toggleX, toggleY, 200, 35], ...
-    'BorderType', 'none', 'SelectionChangedFcn', @(bg, ev) toggleAppMode(fig, ev.NewValue.Text));
-tSim = uitogglebutton(tgMode, 'Position', [0 0 100 35], 'Text', 'Simulator');
-tAna = uitogglebutton(tgMode, 'Position', [100 0 100 35], 'Text', 'Analyser');
+% Mode Switch (Simulator vs Analyser)
+uilabel(fig, 'Text', 'App Mode', 'Position', [toggleX, toggleY+35, 100, 20], 'FontWeight', 'bold');
+swMode = uiswitch(fig, 'slider', 'Items', {'Simulator', 'Analyser'}, ...
+    'Position', [toggleX + 25, toggleY + 10, 45, 20], ...
+    'Tag', 'swMode', ...
+    'ValueChangedFcn', @(src, ev) toggleAppMode(fig, src.Value));
+swMode.Value = initialMode;
 
-% Set initial selection
-if strcmp(initialMode, 'Analyser')
-    tgMode.SelectedObject = tAna;
-else
-    tgMode.SelectedObject = tSim;
-end
-
-tgExtra = uibuttongroup(fig, 'Position', [toggleX + 160, toggleY, 120, 35], ...
-    'BorderType', 'none');
-uitogglebutton(tgExtra, 'Position', [0 0 60 35], 'Text', 'HL');
-uitogglebutton(tgExtra, 'Position', [60 0 60 35], 'Text', 'DT');
+% Extra Switch (HL vs DT)
+uilabel(fig, 'Text', 'Framework', 'Position', [toggleX + 160, toggleY+35, 100, 20], 'FontWeight', 'bold');
+swExtra = uiswitch(fig, 'slider', 'Items', {'HL', 'DT'}, ...
+    'Position', [toggleX + 160 + 25, toggleY + 10, 45, 20], ...
+    'Tag', 'swExtra');
 
 % === Configuration Panel (Top Left) ===
 configPanelH = 280;
