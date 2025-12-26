@@ -1,6 +1,30 @@
 function MockData_GUI(configStruct)
-% MOCKDATA_GUI - GUI for generating mock FLIM data
+% MOCKDATA_GUI - renamed to HILIGHTer
 % ConfigStruct contains settings imported from the main FLIM_GUI
+
+% Handle empty input for direct calls
+if nargin < 1 || isempty(configStruct)
+    % Provide defaults for direct calls
+    configStruct.T = 12.5;
+    configStruct.fwhm = 0.2;
+    configStruct.profile = 'Gaussian';
+    configStruct.toff = 12.5;
+    configStruct.r = 0.5;
+    configStruct.N_gates = 32;
+    configStruct.N_photons = 1000;
+    configStruct.M = 1;
+    configStruct.dt = 0.05;
+    configStruct.rise_time = 0.1;
+    configStruct.fall_time = 0.1;
+    configStruct.bPulseTrain = false;
+    configStruct.PT_sigma = 0.2;
+    configStruct.PT_Trep = 12.5;
+    configStruct.gate_type = 'Equal';
+    configStruct.gate_edges = linspace(0, 12.5, 33);
+    initialMode = 'Analyser';
+else
+    initialMode = 'Simulator';
+end
 
 % === Main Figure ===
 figWidth = 1800;
@@ -28,10 +52,43 @@ col1X = margin;
 % Remaining width for cols 2 and 3
 col2X = col1X + col1W + margin;
 
+% === Top Toggles (Top Left) ===
+toggleX = col1X;
+toggleY = figHeight - 45;
+
+tgMode = uibuttongroup(fig, 'Position', [toggleX, toggleY, 200, 35], ...
+    'BorderType', 'none', 'SelectionChangedFcn', @(bg, ev) toggleAppMode(fig, ev.NewValue.Text));
+tSim = uitogglebutton(tgMode, 'Position', [0 0 100 35], 'Text', 'Simulator');
+tAna = uitogglebutton(tgMode, 'Position', [100 0 100 35], 'Text', 'Analyser');
+
+% Set initial selection
+if strcmp(initialMode, 'Analyser')
+    tgMode.SelectedObject = tAna;
+else
+    tgMode.SelectedObject = tSim;
+end
+
+tgExtra = uibuttongroup(fig, 'Position', [toggleX + 160, toggleY, 120, 35], ...
+    'BorderType', 'none');
+uitogglebutton(tgExtra, 'Position', [0 0 60 35], 'Text', 'HL');
+uitogglebutton(tgExtra, 'Position', [60 0 60 35], 'Text', 'DT');
+
 % === Configuration Panel (Top Left) ===
 configPanelH = 280;
-configPanel = uipanel(fig, 'Title', 'Configuration', ...
-    'Position', [col1X, figHeight - configPanelH - margin, col1W, configPanelH]);
+configPanel = uipanel(fig, 'Title', 'Simulation Configuration', 'Tag', 'pnlConfig', ...
+    'Position', [col1X, figHeight - configPanelH - margin - 50, col1W, configPanelH]);
+
+% === Analyzer Panel (Alternative to Config) ===
+analyzerPanel = uipanel(fig, 'Title', 'Analysis Controls', 'Tag', 'pnlAnalyzer', ...
+    'Position', configPanel.Position, 'Visible', 'off');
+uilabel(analyzerPanel, 'Text', 'Empty Analysis Controls Pane', 'FontSize', 12, ...
+    'FontWeight', 'bold', 'Position', [10 configPanelH-50 200 22]);
+
+% Apply initial mode visibility
+if strcmp(initialMode, 'Analyser')
+    configPanel.Visible = 'off';
+    analyzerPanel.Visible = 'on';
+end
 
 inputH = 22;
 
@@ -85,7 +142,7 @@ uibutton(configPanel, 'Text', 'GENERATE', 'FontWeight','bold', 'Tooltip', 'Creat
 
 % === Instrument Parameters Panel (Below Config) ===
 % Fill the remaining vertical space in Column 1
-instPanelH = figHeight - configPanelH - 3*margin - 20;
+instPanelH = configPanel.Position(2) - 2*margin;
 instPanel = uipanel(fig, 'Title', 'Instrument Parameters', ...
     'Position', [col1X, margin, col1W, instPanelH]);
 
@@ -1959,5 +2016,17 @@ try
 
 catch ME
     uialert(fig, ['Analysis Failed: ' ME.message], 'Error');
+end
+end
+
+function toggleAppMode(fig, mode)
+pConfig = findobj(fig, 'Tag', 'pnlConfig');
+pAnalyzer = findobj(fig, 'Tag', 'pnlAnalyzer');
+if strcmpi(mode, 'Simulator')
+    pConfig.Visible = 'on';
+    pAnalyzer.Visible = 'off';
+else
+    pConfig.Visible = 'off';
+    pAnalyzer.Visible = 'on';
 end
 end
