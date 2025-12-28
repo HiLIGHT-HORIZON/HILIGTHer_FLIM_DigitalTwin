@@ -1,0 +1,7 @@
+legacy/SPC-handbook-11ed-07.pdf
+legacy/bfmatlab/bioformats_package.jar
+*.mat
+*.sdt
+*.csv
+.agent/
+AppProperties/settings.mat
