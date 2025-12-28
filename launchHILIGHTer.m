@@ -1,4 +1,4 @@
-function launchMockDataGUI(TField, fwhmField, profileDropdown, toffField, rField, NGateField, ...
+function launchHILIGHTer(TField, fwhmField, profileDropdown, toffField, rField, NGateField, ...
     NPhotonsField, MField, dtField, riseField, fallField, ...
     PTCheck, PTSField, PTTField, gFields, gateDropdown)
 
@@ -24,10 +24,10 @@ if strcmp(config.gate_type, 'Custom (max 8)')
     % Reconstruct gate edges from widths
     % Custom: reconstruct from widths
     % The fields contain WIDTHS, so we cumsum them starting from 0.
-    widths = [];
     count = min(8, config.N_gates);
+    widths = zeros(1, count);
     for i = 1:count
-        widths = [widths, gFields(i).Value];
+        widths(i) = gFields(i).Value;
     end
     config.gate_edges = [0, cumsum(widths)];
 else
@@ -37,5 +37,11 @@ else
 end
 
 % Launch the new GUI
-MockData_GUI(config);
+try
+    HILIGHTer(config);
+catch ME
+    errordlg(sprintf('Error launching HILIGHTer:\n%s', ME.message), 'Launch Error');
+    fprintf('Error stack:\n');
+    disp(ME.stack);
+end
 end

@@ -1,0 +1,36 @@
+{
+        "UIFigure": {
+            "Color": "#1E1E1E"
+        }
+
+        ,
+        "UIPanel": {
+            "BackgroundColor": "#252526",
+                "ForegroundColor": "#E0E0E0"
+        }
+
+        ,
+        "UIButton": {
+            "BackgroundColor": "#333333",
+                "FontColor": "#E0E0E0"
+        }
+
+        ,
+        "UILabel": {
+            "FontColor": "#E0E0E0"
+        }
+
+        ,
+        "UISpinner": {
+            "FontColor": "#E0E0E0",
+                "BackgroundColor": "#333333"
+        }
+
+        ,
+        "UIAxes": {
+            "BackgroundColor": "#1E1E1E",
+                "XColor": "#CCCCCC",
+                "YColor": "#CCCCCC",
+                "TitleColor": "#FFFFFF"
+        }
+    }

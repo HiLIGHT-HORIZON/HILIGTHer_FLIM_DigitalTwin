@@ -1,6 +1,9 @@
-% FLIM_GUI.m - Reconstructed GUI layout for parameter sweeping
+% DigitalTwin.m - Reconstructed GUI layout for parameter sweeping
 
-function FLIM_GUI()
+function DigitalTwin()
+% Add AppProperties to path to ensure shared utilities are available
+addpath(fullfile(fileparts(mfilename('fullpath')), 'AppProperties'));
+
 
 gui_line    = 30;
 gui_header  = 30;
@@ -10,6 +13,10 @@ fig_width   = 1400;
 
 fig = uifigure('Name', 'HILIGHT FLIM Digital Twin', 'Position', [100 100 fig_width fig_height]);
 
+% === App Properties & Theme ===
+setupAppProperties(fig);
+
+
 % === Excitation Panel ===
 panel_height    = 270;
 panel_bottom    = 800;
@@ -17,34 +24,34 @@ excitationPanel = uipanel(fig, 'Title', 'Excitation', 'FontWeight', 'bold', 'Pos
 
 new_line = panel_height-gui_header-gui_line;
 uilabel(excitationPanel, 'Text', 'Period (T)',                  'Position', [10  new_line 100 22]);
-TField = uieditfield(excitationPanel, 'numeric', 'Value', 50,   'Position', [120 new_line 100 22]);
+TField = uieditfield(excitationPanel, 'numeric', 'Value', 50,   'Position', [120 new_line 100 22], 'Tag', 'TField');
 uilabel(excitationPanel, 'Text', 'ns',                          'Position', [230 new_line  30 22]);
 
 new_line = new_line-gui_line;
 uilabel(excitationPanel, 'Text', 'Excitation FWHM',             'Position', [ 10 new_line 100 22]);
-fwhmField = uieditfield(excitationPanel, 'Text', 'Value', '5',  'Position', [120 new_line 100 22], 'Tooltip', 'Full Width at Half Maximum');
-sweepAlphaCheck = uicheckbox(excitationPanel, 'Text', 'Sweep α','Position', [250 new_line 100 22]);
+fwhmField = uieditfield(excitationPanel, 'text', 'Value', '5',  'Position', [120 new_line 100 22], 'Tooltip', 'Full Width at Half Maximum', 'Tag', 'fwhmField');
+sweepAlphaCheck = uicheckbox(excitationPanel, 'Text', 'Sweep α','Position', [250 new_line 100 22], 'Tag', 'sweepAlphaCheck');
 uilabel(excitationPanel, 'Text', 'ns',                          'Position', [230 new_line  30 22]);
 
 new_line = new_line-gui_line;
 uilabel(excitationPanel, 'Text', 'Profile type',                'Position', [ 10 new_line 100 22]);
 profileDropdown = uidropdown(excitationPanel, ...
-    'Items', {'Rectangular','Gaussian'},'Value', 'Rectangular', 'Position', [120 new_line 140 22]);
+    'Items', {'Rectangular','Gaussian'},'Value', 'Rectangular', 'Position', [120 new_line 140 22], 'Tag', 'profileDropdown');
 
 new_line = new_line-gui_line;
 uilabel(excitationPanel, 'Text', 'Last gate edge (toff)',           'Position', [ 10 new_line 120 22]);
-toffField = uieditfield(excitationPanel, 'numeric', 'Value', 18,    'Position', [140 new_line  80 22]);
+toffField = uieditfield(excitationPanel, 'numeric', 'Value', 18,    'Position', [140 new_line  80 22], 'Tag', 'toffField');
 uilabel(excitationPanel, 'Text', 'ns',                              'Position', [230 new_line  30 22]);
 
 new_line = new_line-gui_line;
 uilabel(excitationPanel, 'Text', 'Rise time',                       'Position', [ 10 new_line 100 22]);
-riseField = uieditfield(excitationPanel, 'Text', 'Value', '0',      'Position', [120 new_line  60 22]);
+riseField = uieditfield(excitationPanel, 'text', 'Value', '0',      'Position', [120 new_line  60 22], 'Tag', 'riseField');
 uilabel(excitationPanel, 'Text', 'ns',                              'Position', [190 new_line  30 22]);
-sweepRiseCheck = uicheckbox(excitationPanel, 'Text', 'Sweep rise',  'Position', [210 new_line 100 22]);
+sweepRiseCheck = uicheckbox(excitationPanel, 'Text', 'Sweep rise',  'Position', [210 new_line 100 22], 'Tag', 'sweepRiseCheck');
 
 new_line = new_line-gui_line;
 uilabel(excitationPanel, 'Text', 'Fall time',                   'Position', [ 10 new_line 100 22]);
-fallField = uieditfield(excitationPanel, 'numeric', 'Value', 0, 'Position', [120 new_line  60 22]);
+fallField = uieditfield(excitationPanel, 'numeric', 'Value', 0, 'Position', [120 new_line  60 22], 'Tag', 'fallField');
 uilabel(excitationPanel, 'Text', 'ns',                          'Position', [190 new_line  30 22]);
 
 % Enable/disable rise/fall fields based on profile
@@ -52,12 +59,12 @@ profileDropdown.ValueChangedFcn = @(dd, event) toggleRiseFall(dd, riseField, fal
 toggleRiseFall(profileDropdown, riseField, fallField);  % set initial state
 
 new_line = new_line-gui_line;
-PTCheck = uicheckbox(excitationPanel, 'Text', 'Pulse Train',        'Position', [ 10 new_line 100 22]);
+PTCheck = uicheckbox(excitationPanel, 'Text', 'Pulse Train',        'Position', [ 10 new_line 100 22], 'Tag', 'PTCheck');
 uilabel(excitationPanel, 'Text', 'T',                               'Position', [110 new_line 100 22]);
-PTTField = uieditfield(excitationPanel, 'numeric', 'Value', 0.1,    'Position', [120 new_line  60 22]);
+PTTField = uieditfield(excitationPanel, 'numeric', 'Value', 0.1,    'Position', [120 new_line  60 22], 'Tag', 'PTTField');
 uilabel(excitationPanel, 'Text', 'ns',                              'Position', [190 new_line  30 22]);
 uilabel(excitationPanel, 'Text', '\sigma',                          'Position', [210 new_line 100 22]);
-PTSField = uieditfield(excitationPanel, 'numeric', 'Value', 0.05,   'Position', [220 new_line  60 22]);
+PTSField = uieditfield(excitationPanel, 'numeric', 'Value', 0.05,   'Position', [220 new_line  60 22], 'Tag', 'PTSField');
 uilabel(excitationPanel, 'Text', 'ns',                              'Position', [290 new_line  30 22]);
 
 % Enable/disable rise/fall fields based on profile
@@ -75,17 +82,17 @@ new_line = panel_height-gui_header-gui_line;
 uilabel(gatePanel, 'Text', 'Gating type',                 'Position', [ 10 new_line 100 22]);
 gateDropdown = uidropdown(gatePanel, ...
     'Items', {'Equal','Custom (max 8)'}, ...
-    'Value',  'Equal',               'Position', [120 new_line 140 22]);
+    'Value',  'Equal',               'Position', [120 new_line 140 22], 'Tag', 'gateDropdown');
 
 new_line = new_line-gui_line;
 uilabel(gatePanel, 'Text', 'Number of gates',                       'Position', [ 10 new_line 120 22]);
-NGateField = uieditfield(gatePanel, 'text', 'Value', '4',           'Position', [140 new_line 100 22], 'Tooltip', 'Can be scalar or vector');
-sweepNGateCheck = uicheckbox(gatePanel, 'Text', 'Sweep #gates',     'Position', [280 new_line 120 22]);
+NGateField = uieditfield(gatePanel, 'text', 'Value', '4',           'Position', [140 new_line 100 22], 'Tooltip', 'Can be scalar or vector', 'Tag', 'NGateField');
+sweepNGateCheck = uicheckbox(gatePanel, 'Text', 'Sweep #gates',     'Position', [280 new_line 120 22], 'Tag', 'sweepNGateCheck');
 
 new_line = new_line-gui_line;
 uilabel(gatePanel, 'Text', 'Rise/decay time (r)',           'Position', [ 10 new_line 120 22]);
-rField = uieditfield(gatePanel, 'text', 'Value', '0.001',   'Position', [140 new_line 100 22], 'Tooltip', 'Can be scalar or vector');
-sweepRCheck = uicheckbox(gatePanel, 'Text', 'Sweep r',      'Position', [280 new_line 100 22]);
+rField = uieditfield(gatePanel, 'text', 'Value', '0.001',   'Position', [140 new_line 100 22], 'Tooltip', 'Can be scalar or vector', 'Tag', 'rField');
+sweepRCheck = uicheckbox(gatePanel, 'Text', 'Sweep r',      'Position', [280 new_line 100 22], 'Tag', 'sweepRCheck');
 uilabel(gatePanel, 'Text', 'ns',                            'Position', [250 new_line  30 22]);
 
 % custom gates
@@ -93,13 +100,14 @@ new_line = new_line-gui_line;
 gFields = gobjects(1, 8); % Preallocate for speed
 for i=1:8
     uilabel(gatePanel, 'Text', ['Width' num2str(i)],            'Position', [ 10+(i-1)*panel_width/9 new_line    40 22]);
-    gFields(i) = uieditfield(gatePanel, 'numeric', 'Value', 2,  'Position', [ 10+(i-1)*panel_width/9 new_line-20 40 22], 'Tooltip', 'Gate width in nanoseconds');
+    gFields(i) = uieditfield(gatePanel, 'numeric', 'Value', 2,  'Position', [ 10+(i-1)*panel_width/9 new_line-20 40 22], 'Tooltip', 'Gate width in nanoseconds', 'Tag', sprintf('gField%d', i));
 end
 uilabel(gatePanel, 'Text', 'ns',                                'Position', [ 10+8*panel_width/9 new_line-20 40 22]);
 
 % Enable/disable gate inputs based on drop down selection
 gateDropdown.ValueChangedFcn = @(dd, event) toggleGate(dd, gFields,NGateField);
 toggleGate(gateDropdown, gFields,NGateField);  % set initial state
+
 
 % Make sweep checkboxes mutually exclusive
 sweepAlphaCheck.ValueChangedFcn = @(src, event) set([sweepNGateCheck, sweepRCheck, sweepRiseCheck], 'Value', false);
@@ -125,7 +133,6 @@ uilabel(lifetimePanel, 'Text', 'ns',                                'Position', 
 
 uilabel(lifetimePanel, 'Text', '#steps',                            'Position', [255 new_line 50 22]);
 tauStpField = uieditfield(lifetimePanel, 'numeric', 'Value', 20,    'Position', [300 new_line 60 22]);
-
 
 % === Monte Carlo Panel ===
 panel_height    = 130;
@@ -198,7 +205,7 @@ uibutton(controlPanel, 'Text', 'Run Simulation', 'Position', [30 new_line panel_
 % === HILIGHTer Button ===
 new_line = new_line - 30;
 uibutton(controlPanel, 'Text', 'HILIGHTer', 'Position', [30 new_line panel_width-60 20], ...
-    'ButtonPushedFcn', @(btn, event) launchMockDataGUI(TField, fwhmField, profileDropdown, toffField, rField, NGateField, ...
+    'ButtonPushedFcn', @(btn, event) launchHILIGHTer(TField, fwhmField, profileDropdown, toffField, rField, NGateField, ...
     NPhotonsField, MField, dtField, riseField, fallField, ...
     PTCheck, PTSField, PTTField, gFields, gateDropdown));
 
@@ -272,6 +279,8 @@ updateGatesCallback = @(edges) updateMainGuiGates(edges, gFields, NGateField, ga
 GateOptimizer_GUI(irf, T_max, tau_params, updateGatesCallback, gate_params);
 end
 
+
+
 function updateMainGuiGates(edges, gFields, NGateField, gateDropdown)
 % Update the main GUI fields with the optimized edges
 widths = diff(edges);
@@ -293,4 +302,14 @@ end
 % If there are more gates than fields, we can't show them all,
 % but the text output in optimizer preserves them.
 fprintf('Updated Main GUI with optimized gate widths.\n');
+end
+
+function toggleModality(dropdown, lifetimePanel, fretPanel)
+if strcmp(dropdown.Value, 'Lifetime Sweep')
+    lifetimePanel.Visible = 'on';
+    fretPanel.Visible = 'off';
+else
+    lifetimePanel.Visible = 'off';
+    fretPanel.Visible = 'on';
+end
 end
