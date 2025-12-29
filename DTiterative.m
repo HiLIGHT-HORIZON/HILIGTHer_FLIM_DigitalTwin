@@ -1,16 +1,22 @@
-function [tau_est_map, stats] = DTiterative(RawData, config, fig)
+function [Results, stats] = DTiterative(RawData, config, fig, start_gate_idx, end_gate_idx, num_components)
 % DTITERATIVE - Iterative Reconvolution (LSQ) for FLIM Data
 % Fits lifetime tau using Weighted Least Squares (Chi-Squared minimization).
-% Uses Matrix Method for fast convolution and integration.
 %
 % Inputs:
 %   RawData: (nY, nX, nGates) matrix of photon counts
-%   config: Configuration struct containing time/gate/IRF info
-%   fig: (Optional) Figure handle for uiprogressdlg. If empty, no progress bar.
+%   config: Configuration struct
+%   fig: (Optional) Figure handle for progress bar
+%   start_gate_idx, end_gate_idx: (Optional) Fit range
+%   num_components: (Optional) Number of exponential components (1, 2, or 3). Default 1.
 %
 % Outputs:
-%   tau_est_map: (nY, nX) matrix of estimated lifetimes
-%   stats: Struct with basic stats (mean, std)
+%   Results: Struct containing maps:
+%       .Tau1, .Frac1 (if N>=1)
+%       .Tau2, .Frac2 (if N>=2)
+%       .Tau3, .Frac3 (if N>=3)
+%   stats: Struct with basic stats
+
+if nargin < 6 || isempty(num_components), num_components = 1; end
 
 % 1. Setup Time vector
 dt = config.dt;
@@ -32,43 +38,52 @@ excitation = DTexcitation(t, config.fwhm, config.profile, ...
     config.bPulseTrain, config.PT_Trep, config.PT_sigma);
 IRF = excitation / sum(excitation); % Sum=1
 
-% 3. Pre-Calculate Convolution Matrix or Effective Sensitivity Matrix
-% Method: ExpectedSignal = Gates * (IRF * Decay)
-% We want Matrix W such that ExpectedSignal = W * DecayVector
+% 3. Convolution Matrix W
+% ExpectedSignal = W * DecayVector
 % W(g, j) represents the contribution of Decay(j) to Gate g
-% W = GateMatrix * ConvolutionMatrix(IRF)
-
-% Construct Convolution Matrix T_IRF (Lower Toeplitz)
-% C(i, j) = IRF(i - j + 1)
-% Since dimension is small (~256-1000), we can build it explicitly.
-% Or use loops to build W directly to save memory.
-
-W = zeros(config.N_gates, Nt);
-
-% It is faster to build T_IRF if Nt is small.
 col = IRF(:);
 row = zeros(1, Nt); row(1) = col(1);
 T_IRF = toeplitz(col, row);
-% T_IRF is lower triangular. Matches filter(IRF, 1, Decay)
-
-% The convolution matrix T_IRF does not account for 'dt' in integral.
-% But we are working with discrete sums.
-% Gate integration: trapz or sum?
-% DTgates assumes continuous profiles.
-% Let's use simple sum for matrix ops: Proj = GateMatrix * (T_IRF * Decay)
-% To match trapz scaling roughly we can multiply by dt later if needed,
-% but since we normalize the resulting profile, constant factors cancel.
-
 W = gate_profiles * T_IRF; % (N_gates x Nt)
 
 % 4. Prepare Data
 [nY, nX, nGates] = size(RawData);
+
+% Handle Start/End Gates
+if nargin < 4 || isempty(start_gate_idx), start_gate_idx = 1; end
+if nargin < 5 || isempty(end_gate_idx), end_gate_idx = nGates; end
+if start_gate_idx < 1, start_gate_idx = 1; end
+if end_gate_idx > nGates, end_gate_idx = nGates; end
+if end_gate_idx <= start_gate_idx, end_gate_idx = start_gate_idx + 1; end
+
+gates_to_fit = start_gate_idx:end_gate_idx;
+nFitGates = length(gates_to_fit);
+
 M = nY * nX;
 flatData = reshape(RawData, M, nGates)'; % (nGates, M)
-tau_est_flat = nan(1, M);
+
+% Initialize Output Maps
+Results = struct();
+Results.Tau1 = nan(nY, nX);
+Results.Frac1 = nan(nY, nX);
+if num_components >= 2
+    Results.Tau2 = nan(nY, nX);
+    Results.Frac2 = nan(nY, nX);
+end
+if num_components >= 3
+    Results.Tau3 = nan(nY, nX);
+    Results.Frac3 = nan(nY, nX);
+end
+
+% Flattened arrays for parallel/loop access
+tau1_flat = nan(1, M);
+frac1_flat = nan(1, M);
+tau2_flat = nan(1, M);
+frac2_flat = nan(1, M);
+tau3_flat = nan(1, M);
+frac3_flat = nan(1, M);
 
 % Optimization Setup
-search_range = [0.1, 10];
 options = optimset('Display', 'off', 'TolX', 1e-3);
 
 % 5. Progress Bar
@@ -78,75 +93,159 @@ if nargin >= 3 && ~isempty(fig)
     d.Value = 0;
 end
 
-% 6. Loop over pixels
-% We define objective function here to use W
-
-% Nested Objective Function
-    function ssq = fast_objective(tau, observed_counts)
-        % Decay Vector
-        d_vec = exp(-t(:) ./ tau);
-
-        % Predicted Gate Counts (Unscaled)
-        pred = W * d_vec; % (N_gates x 1)
-
-        % Normalize pattern
-        s = sum(pred);
-        if s > 0
-            pred = pred / s;
-        end
-
-        % Scale to Observation (Minimize Shape Error + Poisson Weight)
-        total_counts = sum(observed_counts);
-        expected = pred * total_counts;
-
-        % Weights (Poisson: 1/N)
-        w = 1 ./ max(expected, 1e-9);
-
-        diff = observed_counts - expected;
-        ssq = sum((diff.^2) .* w);
-    end
-
-% Batch processed? No, fminbnd is scalar.
-% Loop
+% 6. Fitting Loop
 update_interval = floor(M / 100);
 if update_interval < 1, update_interval = 1; end
 
-for k = 1:M
-    % Check Cancel
-    if ~isempty(d) && d.CancelRequested
-        break;
-    end
+% Pre-allocate t vector for speed
+t_vec = t(:);
 
-    pixel_counts = flatData(:, k);
-    if sum(pixel_counts) < 10
-        continue;
-    end
+for k = 1:M
+    if ~isempty(d) && d.CancelRequested, break; end
+
+    pixel_counts = flatData(gates_to_fit, k);
+    total_counts = sum(pixel_counts); % We use sum logic inside obj fun, strictly
+
+    if sum(pixel_counts) < 10, continue; end
 
     try
-        tau_est_flat(k) = fminbnd(@(tau) fast_objective(tau, pixel_counts), ...
-            search_range(1), search_range(2), options);
-    catch ME
-        % Report error to command window so user can see what's happening
-        fprintf('Error fitting pixel %d: %s\n', k, ME.message);
-        tau_est_flat(k) = NaN;
+        if num_components == 1
+            % --- Mono-Exponential ---
+            % x = tau
+            search_range = [0.1, 10];
+            tau_est = fminbnd(@(x) obj_mono(x, pixel_counts, W, gates_to_fit, t_vec), ...
+                search_range(1), search_range(2), options);
+
+            tau1_flat(k) = tau_est;
+            frac1_flat(k) = 100;
+
+        elseif num_components == 2
+            % --- Bi-Exponential ---
+            % x = [tau1, tau2, frac1]
+            % Constraints: tau > 0, 0 <= frac1 <= 1
+            % Initial Guess: [0.5, 2.5, 0.5]
+            x0 = [0.5, 2.5, 0.5];
+
+            % Using fminsearch (unconstrained) with penalties or transforms
+            % Transform: tau = exp(u), frac = sigmoid(v)
+            % Or simple absolute values / clamping inside objective
+
+            [x_opt, ~] = fminsearch(@(x) obj_bi(x, pixel_counts, W, gates_to_fit, t_vec), x0, options);
+
+            % Extract results (clamped)
+            t1 = abs(x_opt(1));
+            t2 = abs(x_opt(2));
+            f1 = max(0, min(1, x_opt(3)));
+
+            % Re-order so Tau1 < Tau2 for consistency?
+            % Or Tau1 is the 'fast' one?
+            % Usually ordered by size.
+            if t1 > t2
+                tmp = t1; t1 = t2; t2 = tmp;
+                f1 = 1 - f1;
+            end
+
+            tau1_flat(k) = t1;
+            tau2_flat(k) = t2;
+            frac1_flat(k) = f1 * 100;
+            frac2_flat(k) = (1 - f1) * 100;
+
+        elseif num_components == 3
+            % --- Tri-Exponential ---
+            % x = [t1, t2, t3, f1, f2]
+            x0 = [0.4, 1.5, 4.0, 0.33, 0.33];
+            [x_opt, ~] = fminsearch(@(x) obj_tri(x, pixel_counts, W, gates_to_fit, t_vec), x0, options);
+
+            t1 = abs(x_opt(1)); t2 = abs(x_opt(2)); t3 = abs(x_opt(3));
+            f1 = max(0, min(1, x_opt(4)));
+            f2 = max(0, min(1 - f1, x_opt(5)));
+            f3 = 1 - f1 - f2;
+
+            % Sort
+            vars = [t1, f1; t2, f2; t3, f3];
+            [~, idx] = sort(vars(:,1));
+            vars = vars(idx, :);
+
+            tau1_flat(k) = vars(1,1); frac1_flat(k) = vars(1,2) * 100;
+            tau2_flat(k) = vars(2,1); frac2_flat(k) = vars(2,2) * 100;
+            tau3_flat(k) = vars(3,1); frac3_flat(k) = vars(3,2) * 100;
+        end
+
+    catch
+        % Failed fit stays NaN
     end
 
-    % Progress
     if ~isempty(d) && mod(k, update_interval) == 0
         d.Value = k / M;
         d.Message = sprintf('Fitting pixel %d / %d', k, M);
     end
 end
 
-if ~isempty(d)
-    close(d);
+if ~isempty(d), close(d); end
+
+% 7. Populate Output Maps
+Results.Tau1 = reshape(tau1_flat, nY, nX);
+Results.Frac1 = reshape(frac1_flat, nY, nX);
+
+if num_components >= 2
+    Results.Tau2 = reshape(tau2_flat, nY, nX);
+    Results.Frac2 = reshape(frac2_flat, nY, nX);
+end
+if num_components >= 3
+    Results.Tau3 = reshape(tau3_flat, nY, nX);
+    Results.Frac3 = reshape(frac3_flat, nY, nX);
 end
 
-% 7. Reshape and Stats
-tau_est_map = reshape(tau_est_flat, nY, nX);
-stats.mean = mean(tau_est_flat, 'omitnan');
-stats.std = std(tau_est_flat, 'omitnan');
-stats.F = NaN;
-stats.p_eff = NaN;
+stats.mean = mean(tau1_flat, 'omitnan');
+stats.std = std(tau1_flat, 'omitnan');
+end
 
+% --- Objective Functions ---
+
+function ssq = obj_mono(tau, obs, W, gates, t)
+if tau <= 0, ssq=1e9; return; end
+d = exp(-t ./ tau);
+pred = W * d;
+p = pred(gates);
+
+s = sum(p); if s>0, p=p/s; end
+exp_counts = p * sum(obs);
+
+w = 1 ./ max(exp_counts, 1e-9);
+ssq = sum(((obs - exp_counts).^2) .* w);
+end
+
+function ssq = obj_bi(x, obs, W, gates, t)
+t1 = abs(x(1)); t2 = abs(x(2));
+f1 = x(3);
+% Soft constraint on f1
+if f1 < 0 || f1 > 1, ssq = 1e9 + abs(f1)*1000; return; end
+
+d1 = exp(-t ./ t1);
+d2 = exp(-t ./ t2);
+
+% Linear combo of decays
+d = f1*d1 + (1-f1)*d2;
+
+pred = W * d;
+p = pred(gates);
+s = sum(p); if s>0, p=p/s; end
+exp_counts = p * sum(obs);
+w = 1 ./ max(exp_counts, 1e-9);
+ssq = sum(((obs - exp_counts).^2) .* w);
+end
+
+function ssq = obj_tri(x, obs, W, gates, t)
+t1 = abs(x(1)); t2 = abs(x(2)); t3 = abs(x(3));
+f1 = x(4); f2 = x(5);
+if f1 < 0 || f2 < 0 || (f1+f2) > 1, ssq = 1e9; return; end
+
+d = f1*exp(-t./t1) + f2*exp(-t./t2) + (1-f1-f2)*exp(-t./t3);
+
+pred = W * d;
+p = pred(gates);
+s = sum(p); if s>0, p=p/s; end
+exp_counts = p * sum(obs);
+w = 1 ./ max(exp_counts, 1e-9);
+ssq = sum(((obs - exp_counts).^2) .* w);
 end

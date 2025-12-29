@@ -141,15 +141,15 @@ montePanel = uipanel(fig, 'Title', 'Monte Carlo', 'FontWeight', 'bold', 'Positio
 
 new_line = panel_height-gui_header-gui_line;
 uilabel(montePanel, 'Text', 'Photons/run',                          'Position', [ 10 new_line 100 22]);
-NPhotonsField = uieditfield(montePanel, 'numeric', 'Value', 1e4,    'Position', [120 new_line 100 22]);
+NPhotonsField = uieditfield(montePanel, 'numeric', 'Value', 1e4,    'Position', [120 new_line 100 22], 'Tag', 'NPhotonsField');
 
 new_line = new_line-gui_line;
 uilabel(montePanel, 'Text', 'MC samples (M)',                       'Position', [ 10 new_line 100 22]);
-MField = uieditfield(montePanel, 'numeric', 'Value', 400,           'Position', [120 new_line 100 22]);
+MField = uieditfield(montePanel, 'numeric', 'Value', 400,           'Position', [120 new_line 100 22], 'Tag', 'MField');
 
 new_line = new_line-gui_line;
 uilabel(montePanel, 'Text', 'dt (time step)',                       'Position', [ 10 new_line 100 22]);
-dtField = uieditfield(montePanel, 'numeric', 'Value', 0.01,         'Position', [120 new_line 100 22]);
+dtField = uieditfield(montePanel, 'numeric', 'Value', 0.01,         'Position', [120 new_line 100 22], 'Tag', 'dtField');
 uilabel(montePanel, 'Text', 'ns',                                   'Position', [225 new_line 20 22]);
 
 % === Estimation Grid Panel ===

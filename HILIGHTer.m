@@ -170,9 +170,9 @@ modeDropdown = uidropdown(configPanel, ...
 currY = currY - 35;
 % -- Image Dimensions (Line 1) --
 uilabel(configPanel, 'Text', 'Size:', 'Position', [10 currY 40 inputH]);
-dimXField = uieditfield(configPanel, 'numeric', 'Value', 64, 'Position', [50 currY 40 inputH], 'Tooltip', 'Width');
+dimXField = uieditfield(configPanel, 'numeric', 'Value', 64, 'Position', [50 currY 40 inputH], 'Tooltip', 'Width', 'Tag', 'dimXField');
 uilabel(configPanel, 'Text', 'x', 'Position', [92 currY 10 inputH]);
-dimYField = uieditfield(configPanel, 'numeric', 'Value', 64, 'Position', [105 currY 40 inputH], 'Tooltip', 'Height');
+dimYField = uieditfield(configPanel, 'numeric', 'Value', 64, 'Position', [105 currY 40 inputH], 'Tooltip', 'Height', 'Tag', 'dimYField');
 
 uibutton(configPanel, 'Text', 'x2', 'Position', [160 currY 30 inputH], 'Tooltip', 'Double size', ...
     'ButtonPushedFcn', @(btn, event) adjustSize(dimXField, dimYField, 2));
@@ -182,9 +182,9 @@ uibutton(configPanel, 'Text', '/2', 'Position', [195 currY 30 inputH], 'Tooltip'
 currY = currY - 35;
 % -- Photons & Background (Line 2) --
 uilabel(configPanel, 'Text', 'Photons:', 'Position', [10 currY 55 inputH]);
-photonsField = uieditfield(configPanel, 'numeric', 'Value', dataStruct.config.N_photons, 'Position', [70 currY 60 inputH], 'Tooltip', 'Photons/pixel');
+photonsField = uieditfield(configPanel, 'numeric', 'Value', dataStruct.config.N_photons, 'Position', [70 currY 60 inputH], 'Tooltip', 'Photons/pixel', 'Tag', 'photonsField');
 uilabel(configPanel, 'Text', 'Bkg:', 'Position', [140 currY 30 inputH]);
-darkCountsField = uieditfield(configPanel, 'numeric', 'Value', 0, 'Position', [175 currY 50 inputH], 'Tooltip', 'Background counts');
+darkCountsField = uieditfield(configPanel, 'numeric', 'Value', 0, 'Position', [175 currY 50 inputH], 'Tooltip', 'Background counts', 'Tag', 'darkCountsField');
 
 currY = currY - 45;
 % -- Generate Button Placeholder --
@@ -307,34 +307,38 @@ fig.UserData = dataStruct;
 createDataTab(dataTabGroup, 1, dataStruct);
 
 % === Column 3: Analysis Results Tabs ===
-col3X = col2X + tabDataWidth + margin;
+col3X = col2X + tabDataWidth + margin - 50;
 tabGroup = uitabgroup(fig, 'Position', [col3X, margin, figWidth - col3X - margin, figHeight - 2*margin]);
 tabGroup.Tag = 'analysisTabs';
 tabGroup.SelectionChangedFcn = @(src, event) refreshXYProjection(fig);
 
+% Relative alignment constants for use inside tabs
+dataStruct.axL = 20;
+dataStruct.axW = 400;
+dataStruct.metX = 600;
+dataStruct.xyY_top = 530;
+dataStruct.xtH = xtH;
+fig.UserData = dataStruct;
+
+% Initial Analysis tabs (now permanent)
 % Initial Analysis tabs (now permanent)
 tabMLE = uitab(tabGroup, 'Title', 'Grid MLE');
-uibutton(tabMLE, 'Text', 'ANALYSE using Grid MLE', 'Position', [10, 960, 180, 20], ...
-    'FontSize', 12, 'FontWeight', 'bold', 'BackgroundColor', [1 0 0], 'FontColor', [1 1 1], ...
-    'ButtonPushedFcn', @(~,~) onAnalyze(fig, 'Grid MLE'));
-uibutton(tabMLE, 'Text', 'Clear', 'Position', [200, 960, 60, 20], ...
-    'ButtonPushedFcn', @(~,~) onClearTab(fig));
+createNewFitTab(fig, tabMLE, 'Grid MLE', 1); % Pre-populate
 
 tabIter = uitab(tabGroup, 'Title', 'Iterative Reconvolution');
-uibutton(tabIter, 'Text', 'ANALYSE using Iterative Reconv.', 'Position', [10, 960, 180, 20], ...
-    'FontSize', 12, 'FontWeight', 'bold', 'BackgroundColor', [1 0 0], 'FontColor', [1 1 1], ...
-    'ButtonPushedFcn', @(~,~) onAnalyze(fig, 'Iterative Reconvolution'));
-uibutton(tabIter, 'Text', 'Clear', 'Position', [200, 960, 60, 20], ...
-    'ButtonPushedFcn', @(~,~) onClearTab(fig));
+createNewFitTab(fig, tabIter, 'Iterative Reconvolution', 1);
 
 tabTail = uitab(tabGroup, 'Title', 'Tail Fitting');
-uibutton(tabTail, 'Text', 'ANALYSE using Tail Fitting', 'Position', [10, 960, 180, 20], ...
-    'FontSize', 12, 'FontWeight', 'bold', 'BackgroundColor', [1 0 0], 'FontColor', [1 1 1], ...
-    'ButtonPushedFcn', @(~,~) onAnalyze(fig, 'Tail Fitting'));
-uibutton(tabTail, 'Text', 'Clear', 'Position', [200, 960, 60, 20], ...
-    'ButtonPushedFcn', @(~,~) onClearTab(fig));
+createNewFitTab(fig, tabTail, 'Tail Fitting', 1);
+
 
 tabPhasor = uitab(tabGroup, 'Title', 'Phasor Analysis');
+% Phaser/PM/LiMA/Fisher might need similar updates, but request focused on fitting algorithms (tabs with new layout).
+% Keeping original button logic for non-fitting or updating them?
+% The request said "tabs for data fitting analyses". But to be consistent let's check.
+% "From now on prepopulate the GUI/tabs with everything but the missing fitted data."
+% I will apply this logic to the fitting tabs first as requested.
+
 uibutton(tabPhasor, 'Text', 'ANALYSE using Phasor Plot', 'Position', [10, 960, 180, 20], ...
     'FontSize', 12, 'FontWeight', 'bold', 'BackgroundColor', [1 0 0], 'FontColor', [1 1 1], ...
     'ButtonPushedFcn', @(~,~) onAnalyze(fig, 'Phasor Analysis'));
@@ -355,6 +359,8 @@ uibutton(tabLima, 'Text', 'ANALYSE using LiMA', 'Position', [10, 960, 180, 20], 
 uibutton(tabLima, 'Text', 'Clear', 'Position', [200, 960, 60, 20], ...
     'ButtonPushedFcn', @(~,~) onClearTab(fig));
 
+
+
 tabFisher = uitab(tabGroup, 'Title', 'Fisher Analysis');
 uibutton(tabFisher, 'Text', 'ANALYSE using Fisher Analysis', 'Position', [10, 960, 220, 20], ...
     'FontSize', 12, 'FontWeight', 'bold', 'BackgroundColor', [1 0 0], 'FontColor', [1 1 1], ...
@@ -362,17 +368,114 @@ uibutton(tabFisher, 'Text', 'ANALYSE using Fisher Analysis', 'Position', [10, 96
 uibutton(tabFisher, 'Text', 'Clear', 'Position', [240, 960, 60, 20], ...
     'ButtonPushedFcn', @(~,~) onClearTab(fig));
 
-% Relative alignment constants for use inside tabs
-dataStruct.axL = 70;
-dataStruct.axW = 400;
-dataStruct.metX = 650;
-dataStruct.xyY_top = 530; % Slightly lowered to make room for button
-dataStruct.xtH = xtH;
-fig.UserData = dataStruct;
+tabCellSAM = uitab(tabGroup, 'Title', 'CellSAM');
+uibutton(tabCellSAM, 'Text', 'DOWNLOAD/LOAD MODEL', 'Position', [10, 960, 180, 20], ...
+    'FontSize', 12, 'FontWeight', 'bold', 'BackgroundColor', [0 0.5 0], 'FontColor', [1 1 1], ...
+    'ButtonPushedFcn', @(~,~) onLoadCellSAMModel(fig));
+
+uibutton(tabCellSAM, 'Text', 'SEGMENT IMAGE', 'Position', [200, 960, 180, 20], ...
+    'FontSize', 12, 'FontWeight', 'bold', 'BackgroundColor', [0 0 1], 'FontColor', [1 1 1], ...
+    'ButtonPushedFcn', @(~,~) onRunCellSAM(fig));
+
+
+tabML = uitab(tabGroup, 'Title', 'Machine Learning');
+createNewMLTab(fig, tabML, 'Machine Learning', 1);
+
+
+
 
 % Initial Instrument Update
-% Initial Instrument Update
 updateInstrumentPlot(fig, tau1Field, tau2Field);
+
+% === Analysis Methods Menu ===
+mAnalysis = uimenu(fig, 'Text', 'Analysis methods');
+methods = {'Grid MLE', 'Iterative Reconvolution', 'Tail Fitting', 'Phasor Analysis', 'Pattern Matching', 'LiMA', 'Fisher Analysis', 'CellSAM', 'Machine Learning'};
+tabHandles = {tabMLE, tabIter, tabTail, tabPhasor, tabPM, tabLima, tabFisher, tabCellSAM, tabML};
+items = gobjects(1, length(methods));
+
+% Settings File Path
+settingsFile = fullfile(fileparts(mfilename('fullpath')), 'AppProperties', 'settings.mat');
+
+% Helper to Toggle Tab
+    function toggleTab(src)
+        % Updates status
+        if strcmp(src.Checked, 'on')
+            src.Checked = 'off';
+        else
+            src.Checked = 'on';
+        end
+
+        % Re-parent tabs in correct order
+        for k = 1:length(tabHandles)
+            % Check status of the corresponding menu item
+            if strcmp(items(k).Checked, 'on')
+                % Setting Parent moves it to end of list, so doing this in order preserves order
+                tabHandles{k}.Parent = tabGroup;
+            else
+                tabHandles{k}.Parent = [];
+            end
+        end
+
+        saveAnalysisSettings();
+    end
+
+% Helper to Save Settings
+    function saveAnalysisSettings()
+        activeMethods = {};
+        for k = 1:length(methods)
+            if strcmp(items(k).Checked, 'on')
+                activeMethods{end+1} = methods{k};
+            end
+        end
+
+        try
+            if exist(settingsFile, 'file')
+                save(settingsFile, 'activeMethods', '-append');
+            else
+                save(settingsFile, 'activeMethods');
+            end
+        catch
+            % warning('Could not save settings.');
+        end
+    end
+
+% Load Settings
+savedMethods = methods; % Default all on
+try
+    if exist(settingsFile, 'file')
+        % Check if the variable exists in the file to avoid warnings
+        vars = who('-file', settingsFile);
+        if any(strcmp(vars, 'activeMethods'))
+            loaded = load(settingsFile, 'activeMethods');
+            if isfield(loaded, 'activeMethods')
+                savedMethods = loaded.activeMethods;
+            end
+        end
+    end
+catch
+end
+
+% Create Menu Items
+for i = 1:length(methods)
+    % Determined Initial State
+    is_active = any(strcmp(savedMethods, methods{i}));
+    if is_active
+        chk = 'on';
+        tabHandles{i}.Parent = tabGroup;
+    else
+        chk = 'off';
+        tabHandles{i}.Parent = [];
+    end
+
+    % Add Separator before Phasor Analysis (start of non-parametric)
+    sep = 'off';
+    if strcmp(methods{i}, 'Phasor Analysis')
+        sep = 'on';
+    end
+
+    items(i) = uimenu(mAnalysis, 'Text', methods{i}, 'Checked', chk, 'Separator', sep, ...
+        'MenuSelectedFcn', @(src, ev) toggleTab(src));
+end
 
 % Theme is now handled by setupAppProperties(fig)
 
@@ -384,6 +487,8 @@ function onGenerate(fig, modeDropdown, dimXField, dimYField, tau1Field, tau2Fiel
     fretTauField, minFRETField, maxFRETField, minFracField, maxFracField)
 try
     fprintf('Starting Generate Data...\n');
+    f = uiprogressdlg(fig, 'Title', 'Generating Synthetic Data', 'Message', 'Initializing...', 'Indeterminate', 'on');
+
     % Retrieve config and params
     data = fig.UserData;
     config = data.config;
@@ -393,19 +498,40 @@ try
 
     nX = dimXField.Value;
     nY = dimYField.Value;
-    tau1_ns = tau1Field.Value / 1000; % convert ps to ns
-    tau2_ns = tau2Field.Value / 1000;
+    tau1_ns = max(tau1Field.Value, 1) / 1000; % convert ps to ns, guard against 0
+    tau2_ns = max(tau2Field.Value, 1) / 1000;
     N_generated = photonsField.Value;
+    if isempty(N_generated) || N_generated <= 0, N_generated = 1e4; photonsField.Value = 1e4; end
     N_dark = darkCountsField.Value;
 
+    fprintf('Settings: Size=[%d,%d], T1=%.2fns, T2=%.2fns, Photons=%.1e, Bkg=%.1e\n', ...
+        nX, nY, tau1_ns, tau2_ns, N_generated, N_dark);
+
     % Setup Time and Gates (Reuse logic)
-    dt = config.dt;
-    T = config.T;
+    dt = config.dt; if isempty(dt) || dt <= 0, dt = 0.05; end
+    T = config.T; if isempty(T) || T <= 0, T = 12.5; end
     t = 0:dt:T;
 
     % Reconstruct Gate Interp Functions
     actual_gate_edges = config.gate_edges;
-    gate_profiles = DTgates(t, config.r, actual_gate_edges);
+    if isempty(actual_gate_edges)
+        actual_gate_edges = linspace(0, T, config.N_gates + 1);
+    end
+    % Ensure gates are within simulation time
+    if ~isempty(actual_gate_edges)
+        actual_gate_edges(actual_gate_edges > T) = T;
+    end
+
+    gate_profiles = DTgates(t, max(config.r, 1e-4), actual_gate_edges);
+
+    % Ensure N_gates is in sync with the actual edges provided
+    n_gates_actual = size(gate_profiles, 1);
+    if config.N_gates ~= n_gates_actual
+        fprintf('Warning: Syncing N_gates (%d -> %d) based on gate_edges\n', config.N_gates, n_gates_actual);
+        config.N_gates = n_gates_actual;
+        data.config.N_gates = n_gates_actual;
+    end
+
     gate_interp_fns = cell(config.N_gates, 1);
     for i = 1:config.N_gates
         gate_interp_fns{i} = griddedInterpolant(t, gate_profiles(i, :), 'linear', 'nearest');
@@ -486,9 +612,16 @@ try
 
         % Store Data
         data.RawData = reshape(RawData, [nY, nX, config.N_gates, 1]);
+        data.ProcData = cell(1, 1); % Init ProcData
         data.GroundTruthE = Map_E;
         data.GroundTruthFrac = Map_f;
         fig.UserData = data;
+
+        % Cleanup
+        close(f);
+
+        % Apply default binning for channel 1
+        processChannelData(fig, 1);
 
         refreshAllPlots(fig);
         return;
@@ -531,8 +664,15 @@ try
 
     % Store Data for Analysis (with 4th dimension for Channel)
     data.RawData = reshape(RawData, [nY, nX, config.N_gates, 1]);
+    data.ProcData = cell(1, 1); % Init ProcData
     data.GroundTruthTaus = unique_taus;
     fig.UserData = data;
+
+    % Synchronize analysis tabs with new gate count
+    syncAnalysisTabsWithConfig(fig);
+
+    % Apply default binning for channel 1
+    processChannelData(fig, 1);
 
     % 6. Refresh Plotting
     refreshAllPlots(fig);
@@ -540,11 +680,13 @@ try
     % Note: Analysis results (tabs) are preserved as history.
     % To clear them, one would interact with the tab group.
     fprintf('Data generation complete.\n');
+    close(f);
 
 catch ME
+    if exist('f', 'var') && isvalid(f), close(f); end
     fprintf(2, 'Error in onGenerate: %s\n', ME.message);
     disp(ME.stack);
-    % uialert(fig, ['Generate Failed: ' ME.message], 'Error'); % Optional UI feedback
+    uialert(fig, ['Generate Failed: ' ME.message], 'Error'); % Optional UI feedback
 end
 end
 
@@ -571,7 +713,7 @@ try
 
     % Update each channel
     for c = 1:nC
-        cData = squeeze(RawData(:, :, :, c)); % [Y, X, T]
+        cData = getChannelData(fig, c);
 
         % Projections for this channel
         projXY = sum(cData, 3);
@@ -593,7 +735,29 @@ try
             maxCounts = max(projXY(:));
             title(axXY, sprintf('XY Channel %d | Max: %g', c, maxCounts));
             set(axXY, 'XTick', [], 'YTick', [], 'Box', 'on');
-            % CLim will be set later by spinners to avoid redundancy/beeps
+            title(axXY, sprintf('XY Channel %d | Max: %g', c, maxCounts));
+            set(axXY, 'XTick', [], 'YTick', [], 'Box', 'on');
+
+            % Update CLim Spinners (Sync with new data range)
+            % This addresses the "no data" or "wrong range" visual bug
+            dataTab = dataTabGroup.Children(c);
+            spnMin = findobj(dataTab, 'Tag', sprintf('spnMin_Ch%d', c));
+            spnMax = findobj(dataTab, 'Tag', sprintf('spnMax_Ch%d', c));
+
+            if ~isempty(spnMin) && ~isempty(spnMax)
+                % Only update if Range is significantly different or if it was default
+                % Ideally we should adjust CLim to data always on refresh?
+                cMin = min(projXY(:));
+                cMax = maxCounts;
+                if cMin==cMax, cMax = cMin + 1; end
+
+                % Update GUI spinners
+                spnMin.Value = cMin;
+                spnMax.Value = cMax;
+
+                % Apply to Axes
+                set(axXY, 'CLim', [cMin cMax]);
+            end
         end
 
         % Update XT
@@ -796,6 +960,8 @@ try
         createNewFisherTab(fig, destTab, activeChanIdx);
     elseif strcmpi(algo, 'Tail Fitting')
         createNewFitTab(fig, destTab, algo, activeChanIdx);
+    elseif strcmpi(algo, 'Machine Learning')
+        createNewMLTab(fig, destTab, algo, activeChanIdx);
     else
         createNewFitTab(fig, destTab, algo, activeChanIdx);
     end
@@ -906,7 +1072,7 @@ axXY = findobj(activeTab, 'Tag', sprintf('axXY_Ch%d', chanIdx));
 if isempty(axXY), return; end
 
 % Get data for this channel
-cData = squeeze(data.RawData(:, :, :, chanIdx));
+cData = getChannelData(fig, chanIdx);
 projXY = sum(cData, 3);
 
 % Capture current crosshair positions if they exist
@@ -1050,6 +1216,7 @@ xlabel(axP, 'G'); ylabel(axP, 'S');
 axP.Box = 'on'; grid(axP, 'on');
 axis(axP, 'equal');
 tabMeta.axPhasor = axP;
+tabMeta.algo = 'Phasor Analysis';
 t.UserData = tabMeta;
 
 % ROI & Controls Panel (Inside Tab)
@@ -1106,296 +1273,847 @@ uibutton(ctrlPanel, 'Text', '', 'Position', [70 currY 32 32], 'Tooltip', 'Zoom t
 refreshPhasorPlot(fig, axP);
 end
 
-function createNewFitTab(fig, tab, algo, activeChanIdx)
+function createNewMLTab(fig, tab, algo, activeChanIdx)
 data = fig.UserData;
-
 config = data.config;
-
 axL = data.axL; axW = data.axW; metX = data.metX; xyY_top = data.xyY_top;
 
-% If UI already exists, retrieval
-if isempty(tab.UserData) || ~isfield(tab.UserData, 'axTau')
-    axTau = uiaxes(tab, 'PositionConstraint', 'innerposition');
-    axTau.InnerPosition = [axL, xyY_top, axW, axW]; axTau.Tag = 'axTauLocal';
-    % Customize for tight display
-    set(axTau, 'XTick', [], 'YTick', [], 'Box', 'on', 'LineWidth', 2);
+if isempty(tab.UserData) || ~isfield(tab.UserData, 'mapAxes')
+    % --- Map Tab Group (Standard Layout) ---
+    mapH = 380; histH = 165;
+    mapTgW = axW + 90;
+    mapTgH = mapH + histH + 100;
+    mapTgY = 1020 - mapTgH - 40;
 
-    % Colorbar Spinners (Right of Axes)
-    cbX = axL + axW + 10; % Align with colorbar left edge
-    cbY_mid = xyY_top + axW/2;
+    mapTg = uitabgroup(tab, 'Position', [axL, mapTgY, mapTgW, mapTgH], 'Tag', 'mapTg', ...
+        'SelectionChangedFcn', @(src, ev) syncMapDisplay(tab));
 
-    % Max Spinner (Top of half-bar)
-    spnCMax = uispinner(tab, 'Position', [cbX, cbY_mid + axW/4 + 10, 60, 22], ...
-        'Tag', 'spnCMax', 'Value', 10, 'Step', 0.1, ...
-        'ValueChangedFcn', @(src,ev) updateCLimFit(tab, 'Max', src.Value));
+    mapAxes = struct(); mapHists = struct(); mapSpins = struct();
+    pNames = {'Photons', 'TauAvg', 'Chi2'}; % Simplified for now
+    dNames = {'Photons', 'Tau Avg', 'Red. Chi2'};
 
-    % Min Spinner (Bottom of half-bar)
-    spnCMin = uispinner(tab, 'Position', [cbX, cbY_mid - axW/4 - 30, 60, 22], ...
-        'Tag', 'spnCMin', 'Value', 0, 'Step', 0.1, ...
-        'ValueChangedFcn', @(src,ev) updateCLimFit(tab, 'Min', src.Value));
+    for i = 1:numel(pNames)
+        p = pNames{i};
+        t = uitab(mapTg, 'Title', dNames{i}, 'Tag', ['tab_' p]);
+        ax = uiaxes(t, 'Position', [5, histH + 50, axW, mapH], 'Tag', ['ax_' p]);
+        set(ax, 'XTick', [], 'YTick', [], 'Box', 'on', 'LineWidth', 2);
+        disableDefaultInteractions(ax);
+        colormap(ax, 'jet');
+        mapAxes.(p) = ax;
 
+        axH = uiaxes(t, 'Position', [10, 10, axW-10, histH], 'Tag', ['hist_' p]);
+        set(axH, 'Box', 'on', 'YTick', [], 'HitTest', 'on');
+        disableDefaultInteractions(axH);
+        mapHists.(p) = axH;
 
-    statsY = xyY_top - 15 - data.xtH;
-    axStats = uiaxes(tab, 'PositionConstraint', 'innerposition');
-    axStats.InnerPosition = [axL, statsY, axW, data.xtH];
+        % Colorbar (Outside only)
+        cb = colorbar(ax);
+        cb.Ticks = []; cb.Location = 'eastoutside'; cb.Units = 'pixels';
+        axPos = ax.Position; cbW = 20; cbH = axPos(4) * 0.5;
+        cbX = axPos(1) + axPos(3) + 10; cbY = axPos(2) + (axPos(4) - cbH)/2;
+        cb.Position = [cbX, cbY, cbW, cbH];
+        cb.Label.String = dNames{i};
 
-    zH = data.xtH * 0.45;
-    resY = statsY - 2 - zH;
-    axRes = uiaxes(tab, 'PositionConstraint', 'innerposition');
-    axRes.InnerPosition = [axL, resY, axW, zH];
+        % Spinners (Aligned left to colorbar)
+        spX = cbX;
+        uilabel(t, 'Text', 'Max', 'Position', [spX, cbY + cbH + 28, 65, 20], 'HorizontalAlignment', 'left');
+        spMax = uispinner(t, 'Position', [spX, cbY + cbH + 5, 65, 22], ...
+            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Max', src.Value));
 
-    uChi = uilabel(tab, 'Text', 'Chi2: --', 'FontWeight', 'bold', 'Position', [metX, resY + zH - 20, 150, 20]);
-    uRE = uilabel(tab, 'Text', 'R.E.: --%', 'FontWeight', 'bold', 'Position', [metX, resY + zH - 40, 150, 20]);
-    uRND = uilabel(tab, 'Text', 'RND: --', 'FontWeight', 'bold', 'Position', [metX, resY + zH - 60, 150, 20]);
+        uilabel(t, 'Text', 'Min', 'Position', [spX, cbY - 45, 65, 20], 'HorizontalAlignment', 'left');
+        spMin = uispinner(t, 'Position', [spX, cbY - 25, 65, 22], ...
+            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Min', src.Value));
 
-    pixelH = 150; pixelY = resY - 60 - pixelH;
-    axPix = uiaxes(tab, 'PositionConstraint', 'innerposition');
-    axPix.InnerPosition = [axL, pixelY, axW, pixelH];
-    axPixRes = uiaxes(tab, 'PositionConstraint', 'innerposition');
-    axPixRes.InnerPosition = [axL, pixelY - 5 - zH, axW, zH];
+        uilabel(t, 'Text', 'Bins:', 'Position', [axW + 15, 40, 40, 20]);
+        spBins = uispinner(t, 'Limits', [2 1024], 'Value', 128, 'Position', [axW + 15, 15, 65, 22], ...
+            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Bins', src.Value));
 
-    uPixPos = uilabel(tab, 'Text', 'Pos: --', 'FontWeight', 'bold', 'Position', [metX, pixelY + pixelH - 20, 150, 20]);
-    uPixTau = uilabel(tab, 'Text', 'Tau: --', 'FontWeight', 'bold', 'Position', [metX, pixelY + pixelH - 40, 150, 20]);
-    uPixChi = uilabel(tab, 'Text', 'Chi2: --', 'FontWeight', 'bold', 'Position', [metX, pixelY + pixelH - 60, 150, 20]);
-    uPixRE = uilabel(tab, 'Text', 'R.E.: --%', 'FontWeight', 'bold', 'Position', [metX, pixelY + pixelH - 80, 150, 20]);
-    uPixRND = uilabel(tab, 'Text', 'RND: --', 'FontWeight', 'bold', 'Position', [metX, pixelY + pixelH - 100, 150, 20]);
+        % Click-to-toggle axis labels
+        ylabel(axH, 'Pixels', 'FontWeight', 'bold');
+        axH.YLabel.ButtonDownFcn = @(src, ev) toggleHistYScale(src);
+        xlabel(axH, dNames{i}, 'FontWeight', 'bold');
+        axH.XLabel.ButtonDownFcn = @(src, ev) toggleHistXScale(src);
 
-    % Analysis Parameters Panel (Inside Fit Tab)
-    paramPanel = uipanel(tab, 'Title', 'Analysis Parameters', 'Tag', 'paramPanel', ...
-        'Position', [metX, xyY_top + axW - 160, 230, 160]);
-    uilabel(paramPanel, 'Text', 'Algorithm: --', 'Tag', 'uAlgo', 'Position', [10, 110, 200, 20]);
-    uilabel(paramPanel, 'Text', 'Gates: --', 'Tag', 'uGates', 'Position', [10, 90, 200, 20]);
-    uilabel(paramPanel, 'Text', 'FWHM: --', 'Tag', 'uFWHM', 'Position', [10, 70, 200, 20]);
+        mapSpins.(p).Max = spMax; mapSpins.(p).Min = spMin; mapSpins.(p).Bins = spBins;
+    end
 
-    % Checkbox Anscombe
-    chkAns = uicheckbox(paramPanel, 'Text', 'Anscombe Transform', ...
-        'Position', [10, 40, 200, 22], ...
-        'Tooltip', 'Apply 2*sqrt(x + 3/8) to stabilize variance before fitting.', ...
-        'Tag', 'chkAnscombe');
+    % --- Results Tabs ---
+    resTabGroupH = mapTgY - 20;
+    resTabGroup = uitabgroup(tab, 'Position', [axL, 10, metX - axL + 200, resTabGroupH]);
+    tabRes = uitab(resTabGroup, 'Title', 'Analysis Results');
+    tabTrain = uitab(resTabGroup, 'Title', 'Training Performance');
 
-    % Run Button
-    uibutton(paramPanel, 'Text', 'Re-Run Analysis', 'FontWeight', 'bold', ...
-        'Position', [10, 10, 200, 25], ...
-        'ButtonPushedFcn', @(btn, ev) runFitAnalysis(fig, tab));
+    pixelH = 200; zH = 60; groupW = 600;
+    innerH = resTabGroup.Position(4);
+    pixY = innerH - pixelH - 45;
 
-    tabMeta.activeChanIdx = activeChanIdx;
-    tabMeta.axTau = axTau; tabMeta.axStats = axStats; tabMeta.axRes = axRes;
-    tabMeta.axPix = axPix; tabMeta.axPixRes = axPixRes;
-    tabMeta.uChi = uChi; tabMeta.uRE = uRE; tabMeta.uRND = uRND;
-    tabMeta.uPixPos = uPixPos; tabMeta.uPixTau = uPixTau;
-    tabMeta.uPixChi = uPixChi; tabMeta.uPixRE = uPixRE; tabMeta.uPixRND = uPixRND;
-    tabMeta.chkAnscombe = chkAns;
-    tabMeta.spnCMin = spnCMin; tabMeta.spnCMax = spnCMax;
-    tabMeta.algo = algo;
+    axStats = uiaxes(tabRes, 'Position', [10, pixY, groupW, pixelH]);
+    axRes = uiaxes(tabRes, 'Position', [10, pixY - zH - 10, groupW, zH]);
+    disableDefaultInteractions(axStats);
+    disableDefaultInteractions(axRes);
+
+    % --- ML Parameters Panel ---
+    paramPanel = uipanel(tab, 'Title', 'Machine Learning Parameters', 'Tag', 'paramPanelML', ...
+        'Position', [metX, 660, 300, 320]);
+
+    uilabel(paramPanel, 'Text', 'Model Type:', 'Position', [10, 240, 100, 20]);
+    uidropdown(paramPanel, 'Items', {'Random Forest', 'Neural Network', 'Custom ONNX'}, ...
+        'Position', [110, 240, 170, 22], 'Tag', 'ddMLModel');
+
+    uibutton(paramPanel, 'Text', 'LOAD MODEL', 'Position', [10, 180, 260, 30], ...
+        'BackgroundColor', [0 0.45 0.74], 'FontColor', [1 1 1], 'FontWeight', 'bold');
+
+    uilabel(paramPanel, 'Text', 'Feature Selection:', 'Position', [10, 140, 100, 20]);
+    uicheckbox(paramPanel, 'Text', 'Intensity', 'Position', [10, 120, 100, 20], 'Value', 1);
+    uicheckbox(paramPanel, 'Text', 'Gates1-32', 'Position', [120, 120, 100, 20], 'Value', 1);
+
+    uibutton(paramPanel, 'Text', 'PREDICT', 'FontWeight', 'bold', 'Position', [10, 10, 120, 35], ...
+        'BackgroundColor', [0.8 0 0], 'FontColor', [1 1 1], ...
+        'ButtonPushedFcn', @(btn, ev) runMLAnalysis(fig, tab));
+    uibutton(paramPanel, 'Text', 'TRAIN', 'Position', [140, 10, 120, 35]);
+
+    % Metadata
+    tabMeta = struct();
+    tabMeta.mapTg = mapTg; tabMeta.mapAxes = mapAxes; tabMeta.mapHists = mapHists; tabMeta.mapSpins = mapSpins;
+    tabMeta.axStats = axStats; tabMeta.axRes = axRes;
+    tabMeta.activeChanIdx = activeChanIdx; tabMeta.algo = algo;
+
+    % Initialize maps
+    if ~isfield(data, 'RawData') || isempty(data.RawData)
+        nY = 64; nX = 64;
+    else
+        [nY, nX, ~, ~] = size(data.RawData);
+    end
+    for i = 1:numel(pNames)
+        p = pNames{i};
+        tabMeta.Maps.(p) = nan(nY, nX);
+        ax = mapAxes.(p);
+        hImg = imagesc(ax, tabMeta.Maps.(p));
+        hImg.ButtonDownFcn = @(src, ev) updatePixelAnalysis(fig, ev.IntersectionPoint);
+        axis(ax, 'image');
+    end
     tab.UserData = tabMeta;
 else
-    % Refresh references if needed
     tabMeta = tab.UserData;
-    % If we re-opened same tab for same channel, activeChanIdx matches.
-    % If channel changed, we should probably update it.
     tabMeta.activeChanIdx = activeChanIdx;
     tabMeta.algo = algo;
+    tabMeta.lastBins = 128;
+    tab.UserData = tabMeta;
+end
+end
+
+function runMLAnalysis(fig, tab)
+data = fig.UserData;
+meta = tab.UserData;
+activeChanIdx = meta.activeChanIdx;
+
+% Extract Data
+RawData = double(getChannelData(fig, activeChanIdx));
+[nY, nX, ~] = size(RawData);
+
+% Progress feedback
+f = uiprogressdlg(fig, 'Title', 'Running ML Analysis', 'Message', 'Executing model...', 'Indeterminate', 'on');
+
+try
+    % Call skeletal ML backend
+    MLResults = DTmachinelearning(RawData, data.config);
+
+    % Populate Maps
+    meta.Maps.Photons = MLResults.Photons;
+    meta.Maps.TauAvg = MLResults.TauAvg;
+    meta.Maps.Chi2 = MLResults.Chi2;
+
+    % Save meta
+    tab.UserData = meta;
+
+    % Update all Map Displays
+    pNames = fieldnames(meta.mapAxes);
+    for i = 1:numel(pNames)
+        p = pNames{i};
+        ax = meta.mapAxes.(p);
+        hImg = findobj(ax, 'Type', 'image');
+        if isfield(meta.Maps, p)
+            if isempty(hImg)
+                hImg = imagesc(ax, meta.Maps.(p));
+                hImg.ButtonDownFcn = @(src, ev) updatePixelAnalysis(fig, ev.IntersectionPoint);
+            else
+                hImg.CData = meta.Maps.(p);
+            end
+            axis(ax, 'image');
+            % Auto-scale CLim
+            data_px = meta.Maps.(p)(~isnan(meta.Maps.(p)) & ~isinf(meta.Maps.(p)));
+            if ~isempty(data_px)
+                cmin = min(data_px); cmax = max(data_px);
+                if cmin == cmax, cmax = cmin + 0.1; end
+                set(ax, 'CLim', [cmin cmax]);
+            end
+        end
+    end
+
+    % Sync everything
+    syncMapDisplay(tab);
+    updatePixelAnalysis(fig, [nX/2, nY/2]);
+
+    fprintf('ML Analysis Completed: %s\n', MLResults.Status);
+catch ME
+    uialert(fig, ['ML Analysis Failed: ' ME.message], 'Error');
+end
+close(f);
+end
+
+function createNewFitTab(fig, tab, algo, activeChanIdx)
+data = fig.UserData;
+config = data.config;
+axL = data.axL; axW = data.axW; metX = data.metX; xyY_top = data.xyY_top;
+
+if isempty(tab.UserData) || ~isfield(tab.UserData, 'mapAxes')
+    % --- Map Tab Group (Fixed Layout) ---
+    mapH = 260; histH = 110; % Further reduced map height to make room
+    mapTgW = axW + 90;
+    mapTgH = mapH + histH + 80;
+
+    % Push higher to bottom of top panel/menu area
+    mapTgY = 1020 - mapTgH - 10;
+
+    mapTg = uitabgroup(tab, 'Position', [axL, mapTgY, mapTgW, mapTgH], 'Tag', 'mapTg', ...
+        'SelectionChangedFcn', @(src, ev) syncMapDisplay(tab));
+
+    mapAxes = struct(); mapHists = struct(); mapSpins = struct();
+    tabs = struct(); % Store tab handles
+    pNames = {'Photons', 'TauAvg', 'Chi2', 'Back', 'Tau1', 'Frac1', 'Tau2', 'Frac2', 'Tau3', 'Frac3', 'Beta'};
+    dNames = {'Photons', 'Tau Avg', 'Red. Chi2', 'Background', 'Tau 1', 'Frac 1', 'Tau 2', 'Frac 2', 'Tau 3', 'Frac 3', 'Beta'};
+
+    for i = 1:numel(pNames)
+        p = pNames{i};
+        t = uitab(mapTg, 'Title', dNames{i}, 'Tag', ['tab_' p]);
+        tabs.(p) = t;
+
+        % Map Axis
+        ax = uiaxes(t, 'Position', [5, histH + 50, axW, mapH], 'Tag', ['ax_' p]);
+        set(ax, 'XTick', [], 'YTick', [], 'Box', 'on', 'LineWidth', 2);
+        disableDefaultInteractions(ax); % Prevent mouse drag zoom/pan
+        colormap(ax, 'jet');
+        mapAxes.(p) = ax;
+
+        % Colorbar (Outside only)
+        cb = colorbar(ax);
+        cb.Ticks = []; cb.Location = 'eastoutside'; cb.Units = 'pixels';
+        axPos = ax.Position; cbW = 20; cbH = axPos(4) * 0.5;
+        cbX = axPos(1) + axPos(3) + 10; cbY = axPos(2) + (axPos(4) - cbH)/2;
+        cb.Position = [cbX, cbY, cbW, cbH];
+        cb.Label.String = dNames{i};
+
+        % Histogram Axis
+        axH = uiaxes(t, 'Position', [10, 10, axW-10, histH], 'Tag', ['hist_' p]);
+        set(axH, 'Box', 'on', 'YTick', [], 'HitTest', 'on');
+        disableDefaultInteractions(axH);
+        mapHists.(p) = axH;
+
+        % Repositioned Spinners (Left Aligned to colorbar)
+        spX = cbX;
+        uilabel(t, 'Text', 'Max', 'Position', [spX, cbY + cbH + 28, 65, 20], 'HorizontalAlignment', 'left');
+        spMax = uispinner(t, 'Position', [spX, cbY + cbH + 5, 65, 22], 'Tag', ['spnCMax_' p], ...
+            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Max', src.Value));
+
+        uilabel(t, 'Text', 'Min', 'Position', [spX, cbY - 45, 65, 20], 'HorizontalAlignment', 'left');
+        spMin = uispinner(t, 'Position', [spX, cbY - 25, 65, 22], 'Tag', ['spnCMin_' p], ...
+            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Min', src.Value));
+
+        uilabel(t, 'Text', 'Bins:', 'Position', [axW + 15, 40, 40, 20]);
+        spBins = uispinner(t, 'Limits', [2 1024], 'Value', 128, 'Position', [axW + 15, 15, 65, 22], 'Tag', ['spnBins_' p], ...
+            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Bins', src.Value));
+
+        % Click-to-toggle axis labels
+        ylabel(axH, 'Pixels', 'FontWeight', 'bold');
+        axH.YLabel.ButtonDownFcn = @(src, ev) toggleHistYScale(src);
+        xlabel(axH, dNames{i}, 'FontWeight', 'bold');
+        axH.XLabel.ButtonDownFcn = @(src, ev) toggleHistXScale(src);
+
+        mapSpins.(p).Max = spMax;
+        mapSpins.(p).Min = spMin;
+        mapSpins.(p).Bins = spBins;
+    end
+
+    % --- Results (Residuals/Pixel/Hist) ---
+    resTabGroupH = mapTgY - 10; % Expanded available height
+    resTabGroup = uitabgroup(tab, 'Position', [axL, 5, metX - axL + 200, resTabGroupH]);
+    tabPixel = uitab(resTabGroup, 'Title', 'Analysis');
+    tabGT = uitab(resTabGroup, 'Title', 'Ground Truth');
+
+    pixelH = 110; zH = 330; groupW = 600; % Re-balanced: zH is 3x pixelH
+    innerH = resTabGroup.Position(4);
+    % Start from bottom which is 0 inside tab
+    resY = 30;
+    pixY = resY + zH + 20;
+
+    axPix = uiaxes(tabPixel, 'Position', [10, pixY, groupW, pixelH]);
+    axPixRes = uiaxes(tabPixel, 'Position', [10, resY, groupW, zH]);
+    disableDefaultInteractions(axPix);
+    disableDefaultInteractions(axPixRes);
+
+    lblX = groupW + 30;
+    lblY_Z = resY + zH - 10; % Align with top of z-score plot
+
+    uPixPos = uilabel(tabPixel, 'Text', 'Pos: --', 'FontWeight', 'bold', 'Position', [lblX, pixY + pixelH - 20, 150, 20]);
+    uPixTau = uilabel(tabPixel, 'Text', 'Tau: --', 'FontWeight', 'bold', 'Position', [lblX, pixY + pixelH - 40, 150, 20]);
+
+    uPixChi = uilabel(tabPixel, 'Text', 'Chi2: --', 'FontWeight', 'bold', 'Position', [lblX, lblY_Z, 150, 20]);
+    uPixRE = uilabel(tabPixel, 'Text', 'R.E.: --%', 'FontWeight', 'bold', 'Position', [lblX, lblY_Z - 20, 150, 20]);
+    uPixRND = uilabel(tabPixel, 'Text', 'RND: --', 'FontWeight', 'bold', 'Position', [lblX, lblY_Z - 40, 150, 20]);
+
+    uilabel(tabPixel, 'Text', 'Fit Range (Bins):', 'Position', [lblX, lblY_Z - 75, 120, 20]);
+    spnStart = uispinner(tabPixel, 'Limits', [1 config.N_gates], 'Value', 1, 'Position', [lblX, lblY_Z - 100, 50, 22], ...
+        'ValueChangedFcn', @(src, ev) updatePixelAnalysis(fig, [nan nan]));
+    spnEnd = uispinner(tabPixel, 'Limits', [1 config.N_gates], 'Value', config.N_gates, 'Position', [lblX+70, lblY_Z - 100, 50, 22], ...
+        'ValueChangedFcn', @(src, ev) updatePixelAnalysis(fig, [nan nan]));
+
+
+    % Ground Truth Tab content
+    axStats = uiaxes(tabGT, 'Position', [10, pixY, groupW, pixelH]);
+    axRes = uiaxes(tabGT, 'Position', [10, resY, groupW, zH]);
+    disableDefaultInteractions(axStats);
+    disableDefaultInteractions(axRes);
+    uChi = uilabel(tabGT, 'Text', 'Chi2: --', 'FontWeight', 'bold', 'Position', [lblX, lblY_Z, 150, 20]);
+    uRE = uilabel(tabGT, 'Text', 'R.E.: --%', 'FontWeight', 'bold', 'Position', [lblX, lblY_Z - 20, 150, 20]);
+    uRND = uilabel(tabGT, 'Text', 'RND: --', 'FontWeight', 'bold', 'Position', [lblX, lblY_Z - 40, 150, 20]);
+
+    % --- Analysis Parameters Panel (Top Right) ---
+    % Extended height to 380 to fit equation label
+    % --- Analysis Parameters Panel (Top Right) ---
+    % Increase height to 450 to accommodate clear layout
+    % --- Analysis Parameters Panel (Top Right) ---
+    % Increase height to 450 and width to 375 (+75px)
+    paramPanel = uipanel(tab, 'Title', 'Analysis Parameters', 'Tag', 'paramPanel', ...
+        'Position', [metX - 60, 530, 375, 450]); % Shifted another 40px right (metX - 100 -> metX - 60)
+    % Actually user asked to make pane 75px wider. 300 -> 375.
+    % And move content 20px to right.
+
+    leftMargin = 30; % 10 + 20
+
+    % 1. Decay Model Selector (Top)
+    uilabel(paramPanel, 'Text', 'Decay Model:', 'Position', [leftMargin, 400, 100, 20]);
+    ddModel = uidropdown(paramPanel, 'Items', {'Multiexponential decay', 'Stretched exponentials'}, ...
+        'Position', [leftMargin + 100, 400, 170, 22], 'Tooltip', 'Select the mathematical model for fitting the fluorescence decay.');
+
+    % 2. Equation Label (Dedicated Space Below Model)
+    % Center in new width (375)
+    lblEquation = uilabel(paramPanel, 'Text', '', 'Position', [10, 350, 355, 45], ...
+        'Interpreter', 'tex', 'HorizontalAlignment', 'center', 'FontSize', 12);
+
+    % 3. Parameters Container (Below Equation)
+    % Shifted 20px right -> Left 30
+    pnlParams = uipanel(paramPanel, 'BorderType', 'none', 'Position', [leftMargin, 60, 335, 280]);
+
+    % --- Multi-Exponential Panel ---
+    pnlMultiExp = uipanel(pnlParams, 'BorderType', 'none', 'Position', [0, 60, 335, 210], 'Tag', 'pnlMultiExp');
+
+    % Components Spinner & Checkbox
+    uilabel(pnlMultiExp, 'Text', 'Components:', 'Position', [0, 185, 80, 20]);
+    spnNExp = uispinner(pnlMultiExp, 'Limits', [1 3], 'Value', 1, 'Position', [85, 185, 45, 22], ...
+        'Tooltip', 'Number of exponential components to fit (1-3).');
+    chkNeg = uicheckbox(pnlMultiExp, 'Text', 'N', 'Position', [145, 185, 30, 22], ...
+        'Tooltip', 'Allow negative coefficients.', 'FontSize', 9);
+
+    % Spinner Width logic: 105 * 0.6 = 63 -> 65 px
+    spW = 65;
+    alphaX = 20 + spW + 55; % 20 + 65 + 55 = 140
+
+    % Column Headers for Parameters
+    % Col 1 (Tau): Start ~20. Width 65.
+    % Col 2 (Alpha): Start ~140. Width 65.
+    uilabel(pnlMultiExp, 'Text', '$\tau$ (ns)', 'Position', [20, 160, spW, 20], 'HorizontalAlignment', 'center', 'FontWeight', 'bold', 'Interpreter', 'latex');
+    uilabel(pnlMultiExp, 'Text', 'F G', 'Position', [20+spW+5, 160, 40, 20], 'FontWeight', 'bold', 'FontSize', 9);
+
+    uilabel(pnlMultiExp, 'Text', '$\alpha$ (\%)', 'Position', [alphaX, 160, spW, 20], 'HorizontalAlignment', 'center', 'FontWeight', 'bold', 'Interpreter', 'latex');
+    uilabel(pnlMultiExp, 'Text', 'F G', 'Position', [alphaX+spW+5, 160, 40, 20], 'FontWeight', 'bold', 'FontSize', 9);
+
+    % Row Y positions
+    y1 = 125; y2 = 100; y3 = 75;
+
+    % Comp 1
+    uilabel(pnlMultiExp, 'Text', '1:', 'Position', [0, y1, 15, 20], 'FontWeight', 'bold');
+    spnTau1 = uispinner(pnlMultiExp, 'Value', 1.0, 'Position', [20, y1, spW, 22]);
+    chkFTau1 = uicheckbox(pnlMultiExp, 'Text', '', 'Position', [20+spW+5, y1, 15, 22], 'Tag', 'chkFTau1');
+    chkGTau1 = uicheckbox(pnlMultiExp, 'Text', '', 'Position', [20+spW+20, y1, 15, 22], 'Tag', 'chkGTau1');
+
+    spnFrac1 = uispinner(pnlMultiExp, 'Value', 100, 'Position', [alphaX, y1, spW, 22], 'Editable', 'off');
+    chkFFrac1 = uicheckbox(pnlMultiExp, 'Text', '', 'Position', [alphaX+spW+5, y1, 15, 22], 'Tag', 'chkFFrac1', 'Enable', 'off');
+    chkGFrac1 = uicheckbox(pnlMultiExp, 'Text', '', 'Position', [alphaX+spW+20, y1, 15, 22], 'Tag', 'chkGFrac1', 'Enable', 'off');
+
+    % Comp 2
+    lblComp2 = uilabel(pnlMultiExp, 'Text', '2:', 'Position', [0, y2, 15, 20], 'Visible', 'off', 'FontWeight', 'bold');
+    spnTau2 = uispinner(pnlMultiExp, 'Value', 2.0, 'Position', [20, y2, spW, 22], 'Visible', 'off');
+    chkFTau2 = uicheckbox(pnlMultiExp, 'Text', '', 'Position', [20+spW+5, y2, 15, 22], 'Visible', 'off', 'Tag', 'chkFTau2');
+    chkGTau2 = uicheckbox(pnlMultiExp, 'Text', '', 'Position', [20+spW+20, y2, 15, 22], 'Visible', 'off', 'Tag', 'chkGTau2');
+
+    spnFrac2 = uispinner(pnlMultiExp, 'Value', 0, 'Position', [alphaX, y2, spW, 22], 'Visible', 'off');
+    chkFFrac2 = uicheckbox(pnlMultiExp, 'Text', '', 'Position', [alphaX+spW+5, y2, 15, 22], 'Visible', 'off', 'Tag', 'chkFFrac2');
+    chkGFrac2 = uicheckbox(pnlMultiExp, 'Text', '', 'Position', [alphaX+spW+20, y2, 15, 22], 'Visible', 'off', 'Tag', 'chkGFrac2');
+
+    % Comp 3
+    lblComp3 = uilabel(pnlMultiExp, 'Text', '3:', 'Position', [0, y3, 15, 20], 'Visible', 'off', 'FontWeight', 'bold');
+    spnTau3 = uispinner(pnlMultiExp, 'Value', 0.5, 'Position', [20, y3, spW, 22], 'Visible', 'off');
+    chkFTau3 = uicheckbox(pnlMultiExp, 'Text', '', 'Position', [20+spW+5, y3, 15, 22], 'Visible', 'off', 'Tag', 'chkFTau3');
+    chkGTau3 = uicheckbox(pnlMultiExp, 'Text', '', 'Position', [20+spW+20, y3, 15, 22], 'Visible', 'off', 'Tag', 'chkGTau3');
+
+    spnFrac3 = uispinner(pnlMultiExp, 'Value', 0, 'Position', [alphaX, y3, spW, 22], 'Visible', 'off');
+    chkFFrac3 = uicheckbox(pnlMultiExp, 'Text', '', 'Position', [alphaX+spW+5, y3, 15, 22], 'Visible', 'off', 'Tag', 'chkFFrac3');
+    chkGFrac3 = uicheckbox(pnlMultiExp, 'Text', '', 'Position', [alphaX+spW+20, y3, 15, 22], 'Visible', 'off', 'Tag', 'chkGFrac3');
+
+    % Logic for Negative Exponentials and Alpha 1
+    updateAlpha1State = @(src, ev) set([chkFFrac1, chkGFrac1], 'Enable', ...
+        string(matlab.lang.OnOffSwitchState(src.Value)));
+    chkNeg.ValueChangedFcn = updateAlpha1State;
+
+    % Fraction logic
+    updateFrac = @(~,~) set(spnFrac1, 'Value', max(0, min(100, 100 - (spnFrac2.Value + spnFrac3.Value))));
+    spnFrac2.ValueChangedFcn = updateFrac;
+    spnFrac3.ValueChangedFcn = updateFrac;
+
+    % --- Stretched Exponential Panel ---
+    pnlStretchedExp = uipanel(pnlParams, 'BorderType', 'none', 'Position', [0, 60, 335, 210], 'Visible', 'off');
+    uilabel(pnlStretchedExp, 'Text', 'Base $\tau$ (ns):', 'Position', [0, 125, 90, 20], 'Interpreter', 'latex');
+    spnSTau = uispinner(pnlStretchedExp, 'Value', 1.0, 'Step', 0.1, 'Position', [95, 125, spW, 22]);
+    chkFSTau = uicheckbox(pnlStretchedExp, 'Text', '', 'Position', [95+spW+5, 125, 20, 22], 'Tag', 'chkFSTau');
+    chkGSTau = uicheckbox(pnlStretchedExp, 'Text', '', 'Position', [95+spW+30, 125, 20, 22], 'Tag', 'chkGSTau');
+
+    uilabel(pnlStretchedExp, 'Text', '$\beta$ Factor:', 'Position', [0, 100, 90, 20], 'Interpreter', 'latex');
+    spnBeta = uispinner(pnlStretchedExp, 'Value', 0.8, 'Limits', [0.1 1.0], 'Step', 0.05, 'Position', [95, 100, spW, 22]);
+    chkFBeta = uicheckbox(pnlStretchedExp, 'Text', '', 'Position', [95+spW+5, 100, 20, 22], 'Tag', 'chkFBeta');
+    chkGBeta = uicheckbox(pnlStretchedExp, 'Text', '', 'Position', [95+spW+30, 100, 20, 22], 'Tag', 'chkGBeta');
+
+    % Shared parameters
+    uilabel(pnlParams, 'Text', 'Background:', 'Position', [0, 30, 80, 20]);
+    spnBack = uispinner(pnlParams, 'Value', 0, 'Limits', [0 1e6], 'Position', [95, 30, spW, 22]);
+    chkFBack = uicheckbox(pnlParams, 'Text', '', 'Position', [95+spW+5, 30, 20, 22], 'Tag', 'chkFBack');
+    chkGBack = uicheckbox(pnlParams, 'Text', '', 'Position', [95+spW+30, 30, 20, 22], 'Tag', 'chkGBack');
+
+    pnlStretchedExp.Visible = 'off';
+
+    % Callbacks & Buttons located at bottom of paramPanel
+    ddModel.ValueChangedFcn = @(src, ev) onModelChange(src, pnlMultiExp, pnlStretchedExp, tab, lblEquation);
+    spnNExp.ValueChangedFcn = @(src, ev) setComponentVisibility(src, ...
+        {lblComp2, spnTau2, spnFrac2, chkFTau2, chkGTau2, chkFFrac2, chkGFrac2}, ...
+        {lblComp3, spnTau3, spnFrac3, chkFTau3, chkGTau3, chkFFrac3, chkGFrac3}, tab, lblEquation);
+
+    % Attach equation updater to checkboxes (Tau, Frac, etc.)
+    chkAll = {chkFTau1, chkGTau1, chkFFrac1, chkGFrac1, ...
+        chkFTau2, chkGTau2, chkFFrac2, chkGFrac2, ...
+        chkFTau3, chkGTau3, chkFFrac3, chkGFrac3, ...
+        chkFSTau, chkGSTau, chkFBeta, chkGBeta, chkFBack, chkGBack};
+    for k=1:numel(chkAll)
+        chkAll{k}.ValueChangedFcn = @(src, ev) updateEquationDisplay(tab, lblEquation);
+    end
+
+    uicheckbox(paramPanel, 'Text', 'Anscombe Transform', 'Position', [leftMargin, 50, 200, 22], 'Tag', 'chkAnscombe', ...
+        'Tooltip', 'Apply Anscombe transform.');
+
+    uibutton(paramPanel, 'Text', 'Analyse', 'FontWeight', 'bold', 'Position', [leftMargin, 10, 100, 35], ...
+        'BackgroundColor', [0.8 0 0], 'FontColor', [1 1 1], 'ButtonPushedFcn', @(btn, ev) runFitAnalysis(fig, tab), ...
+        'Tooltip', 'Run Analysis.');
+    uibutton(paramPanel, 'Text', 'Limits', 'Position', [leftMargin+110, 10, 80, 35], 'ButtonPushedFcn', @(~,~) openLimitDialog(fig), ...
+        'Tooltip', 'Set parameter limits.');
+    uibutton(paramPanel, 'Text', 'Clear', 'Position', [leftMargin+200, 10, 100, 35], 'ButtonPushedFcn', @(~,~) onClearTab(fig), ...
+        'Tooltip', 'Clear Tab.');
+
+    % Assemble tabMeta
+    tabMeta = struct();
+    tabMeta.mapTg = mapTg; tabMeta.mapAxes = mapAxes; tabMeta.mapHists = mapHists; tabMeta.mapSpins = mapSpins;
+    tabMeta.tabs = tabs; % Store tab references
+    tabMeta.axPix = axPix; tabMeta.axPixRes = axPixRes;
+    tabMeta.axStats = axStats; tabMeta.axRes = axRes;
+    tabMeta.spnStart = spnStart; tabMeta.spnEnd = spnEnd;
+    tabMeta.uPixPos = uPixPos; tabMeta.uPixTau = uPixTau; tabMeta.uPixChi = uPixChi;
+    tabMeta.uPixRE = uPixRE; tabMeta.uPixRND = uPixRND;
+    tabMeta.uChi = uChi; tabMeta.uRE = uRE; tabMeta.uRND = uRND;
+    tabMeta.ddModel = ddModel; tabMeta.spnNExp = spnNExp; tabMeta.chkNegExp = chkNeg;
+    tabMeta.spnTau1 = spnTau1; tabMeta.spnFrac1 = spnFrac1;
+    tabMeta.chkFTau1 = chkFTau1; tabMeta.chkFFrac1 = chkFFrac1; % Store handles for logic check
+
+    tabMeta.spnTau2 = spnTau2; tabMeta.spnFrac2 = spnFrac2;
+    tabMeta.chkFTau2 = chkFTau2; tabMeta.chkFFrac2 = chkFFrac2;
+
+    tabMeta.spnTau3 = spnTau3; tabMeta.spnFrac3 = spnFrac3;
+    tabMeta.chkFTau3 = chkFTau3; tabMeta.chkFFrac3 = chkFFrac3;
+    tabMeta.spnSTau = spnSTau; tabMeta.spnBeta = spnBeta;
+    tabMeta.chkFSTau = chkFSTau; tabMeta.chkFBeta = chkFBeta; % Needed for equation color
+    tabMeta.spnBack = spnBack;
+    tabMeta.chkFBack = chkFBack;
+
+    tabMeta.activeChanIdx = activeChanIdx; tabMeta.algo = algo;
+
+    % Initialize maps with placeholders
+    if ~isfield(data, 'RawData') || isempty(data.RawData)
+        nY = 64; nX = 64;
+    else
+        [nY, nX, ~, ~] = size(data.RawData);
+    end
+    for i = 1:numel(pNames)
+        p = pNames{i};
+        tabMeta.Maps.(p) = nan(nY, nX);
+        ax = mapAxes.(p);
+        hImg = imagesc(ax, tabMeta.Maps.(p));
+        hImg.ButtonDownFcn = @(src, ev) updatePixelAnalysis(fig, ev.IntersectionPoint);
+        axis(ax, 'image');
+        cb = colorbar(ax);
+        cb.Ticks = []; cb.Location = 'eastoutside'; cb.Units = 'pixels';
+        axPos = ax.Position; cbW = 20; cbH = axPos(4) * 0.5;
+        cbX = axPos(1) + axPos(3) + 10; cbY = axPos(2) + (axPos(4) - cbH)/2;
+        cb.Position = [cbX, cbY, cbW, cbH];
+        cb.Label.String = dNames{i};
+    end
+
+    % --- Initial Updates ---
+    % Store handle in metadata first
+    tabMeta.lblEquation = lblEquation;
+
+    % Update equation immediately to show default state
+    % (We need tab.UserData to be set for the helper to work)
+    tab.UserData = tabMeta;
+    updateEquationDisplay(tab, lblEquation);
+
+    % Update visibility after metadata is set
+    updateTabVisibility(tab);
+else % Tab already exists, just update metadata
+    tabMeta = tab.UserData; % Retrieve existing metadata
+    tabMeta.algo = algo;
+    tabMeta.activeChanIdx = activeChanIdx;
+
+    % Update limits if config changed
+    if isfield(tabMeta, 'spnStart') && isgraphics(tabMeta.spnStart)
+        tabMeta.spnStart.Limits = [1 config.N_gates];
+        tabMeta.spnEnd.Limits = [1 config.N_gates];
+    end
     tab.UserData = tabMeta;
 end
 
-% Update Parameters Panel text
-pnl = findobj(tab, 'Tag', 'paramPanel');
-if ~isempty(pnl)
-    uAlgo = findobj(pnl, 'Tag', 'uAlgo'); uAlgo.Text = sprintf('Algorithm: %s', algo);
-    uGates = findobj(pnl, 'Tag', 'uGates'); uGates.Text = sprintf('Gates: %d', config.N_gates);
-    uFWHM = findobj(pnl, 'Tag', 'uFWHM'); uFWHM.Text = sprintf('FWHM: %.1f ps', config.fwhm*1000);
+% Clean Stats/Residuals as no data
+axStats = tabMeta.axStats;
+axRes = tabMeta.axRes;
+cla(axStats); title(axStats, 'Statistics (No Analysis)');
+cla(axRes); title(axRes, 'Residuals (No Analysis)');
+
+% Show initial pixel data (default center pixel)
+updatePixelAnalysis(fig, [nX/2, nY/2]);
 end
 
-% Run Initial Analysis
-runFitAnalysis(fig, tab);
-end
 
 function runFitAnalysis(fig, tab)
-% Extract Data & Config
-
 data = fig.UserData;
 config = data.config;
 meta = tab.UserData;
 activeChanIdx = meta.activeChanIdx;
 
-RawData = squeeze(data.RawData(:, :, :, activeChanIdx));
+RawData = double(getChannelData(fig, activeChanIdx));
+[nY, nX, nGates] = size(RawData);
+
+% Identify Background from UI
+backVal = 0;
+if isfield(meta, 'spnBack') && isvalid(meta.spnBack), backVal = meta.spnBack.Value; end
+
+% Total Photons (Raw)
+PhotonsMap = sum(RawData, 3);
+meta.Maps.Photons = PhotonsMap;
+
+% Apply Background Subtraction (to a copy for fitting)
+fitData = RawData - (backVal / nGates);
+fitData(fitData < 0) = 0; % Floor to 0
 
 % Apply Mask
 mask = getChannelMask(fig, activeChanIdx);
 if ~isempty(mask)
-    [nY, nX, nGates] = size(RawData);
     mask3D = repmat(mask, 1, 1, nGates);
-    RawData(mask3D) = 0;
-else
-    [nY, nX, nGates] = size(RawData);
+    fitData(mask3D) = 0;
 end
+
+% Total Photons map (Subtracted)
+meta.Maps.Photons = sum(fitData, 3);
+meta.Maps.Back = repmat(backVal, nY, nX);
 
 % Check Anscombe
-isAnscombe = false;
 if isfield(meta, 'chkAnscombe') && isvalid(meta.chkAnscombe) && meta.chkAnscombe.Value
-    isAnscombe = true;
-    RawData = 2 * sqrt(RawData + 3/8);
+    fitData = 2 * sqrt(fitData + 3/8);
 end
 
+% Extract Fit Range
+start_gate = 1; end_gate = nGates;
+if isfield(meta, 'spnStart') && isvalid(meta.spnStart), start_gate = meta.spnStart.Value; end
+if isfield(meta, 'spnEnd') && isvalid(meta.spnEnd), end_gate = meta.spnEnd.Value; end
+
+% Pre-calc for models
 dt = config.dt; T = config.T; t = 0:dt:T;
 gate_profiles = DTgates(t, config.r, config.gate_edges);
-gate_interp_fns = cell(config.N_gates, 1);
-for i = 1:config.N_gates
-    gate_interp_fns{i} = griddedInterpolant(t, gate_profiles(i, :), 'linear', 'nearest');
-end
+gate_interp_fns = cell(nGates, 1);
+for i = 1:nGates, gate_interp_fns{i} = griddedInterpolant(t, gate_profiles(i, :), 'linear', 'nearest'); end
+meta.gate_interp_fns = gate_interp_fns;
+gate_edges = config.gate_edges;
+meta.gate_centers = 0.5 * (gate_edges(1:end-1) + gate_edges(2:end));
 
-M = nY * nX; flatData = double(reshape(permute(RawData, [3, 1, 2]), nGates, M));
-N_detections = sum(flatData, 1); % If Anscombe, this sums transformed values!
-
+% Perform Fit
+% Perform Fit
 algo = meta.algo;
+numExp = 1;
+if isfield(meta, 'spnNExp') && isgraphics(meta.spnNExp), numExp = meta.spnNExp.Value; end
+if strcmpi(algo, 'Grid MLE') || strcmpi(algo, 'Tail Fitting'), numExp = 1; end % Enforce 1 for simple methods
+
+Results = struct();
+
 if strcmpi(algo, 'Grid MLE')
     tau_grid = linspace(0.1, 10, 100);
-    P_model_grid = DTpmod(config.N_gates, tau_grid, t, gate_interp_fns, ...
+    P_model_grid = DTpmod(nGates, tau_grid, t, gate_interp_fns, ...
         config.fwhm, config.profile, config.rise_time, config.fall_time, ...
         config.bPulseTrain, config.PT_Trep, config.PT_sigma);
 
-    % We proceed passing transformed data as requested.
-    [tau_est_flat, ~] = DTmle(N_detections, flatData, tau_grid, P_model_grid, fig);
+    flatData = reshape(fitData, nY*nX, nGates)';
+    N_detections = sum(flatData, 1);
+    [tau_est_flat, ~] = DTmle(N_detections, flatData, tau_grid, P_model_grid, fig, start_gate, end_gate);
+    Results.Tau1 = reshape(tau_est_flat, nY, nX);
+    Results.Frac1 = repmat(100, nY, nX);
+
 elseif strcmpi(algo, 'Tail Fitting')
-    % Tail Fit
-    % Pass RawData directly.
-    [TauMap_Tail, ~] = DTtailfit(RawData, config);
-    tau_est_flat = reshape(TauMap_Tail, 1, []);
+    [TauMap_Tail, ~] = DTtailfit(fitData, config, start_gate, end_gate);
+    Results.Tau1 = TauMap_Tail;
+    Results.Frac1 = repmat(100, nY, nX);
+
+else % Iterative Reconvolution
+    % Pass numExp to DTiterative
+    [Results, ~] = DTiterative(fitData, config, fig, start_gate, end_gate, numExp);
+end
+
+% Populate Maps
+meta.Maps.Tau1 = Results.Tau1;
+meta.Maps.Frac1 = Results.Frac1;
+
+% Handle Multi-Exp Maps
+if numExp >= 2 && isfield(Results, 'Tau2')
+    meta.Maps.Tau2 = Results.Tau2;
+    meta.Maps.Frac2 = Results.Frac2;
 else
-    % Iterative
-    % DTiterative usually takes RawData (3D).
-    [TauMap_Iter, ~] = DTiterative(RawData, config, fig);
-    tau_est_flat = reshape(TauMap_Iter, 1, []);
-end
-TauMap = reshape(tau_est_flat, nY, nX);
-
-% Update Plots
-axTau = meta.axTau; axStats = meta.axStats; axRes = meta.axRes;
-
-hImg = imagesc(axTau, TauMap); colormap(axTau, 'jet');
-hImg.ButtonDownFcn = @(src, event) updatePixelAnalysis(fig, event.IntersectionPoint);
-axis(axTau, 'image'); % Fix aspect ratio
-set(axTau, 'XTick', [], 'YTick', [], 'Box', 'on', 'LineWidth', 2); % Re-apply style
-
-% --- Colorbar Logic ---
-% 1. Create or Get Colorbar
-cb = colorbar(axTau);
-cb.Ticks = [];
-cb.Location = 'eastoutside';
-cb.Units = 'pixels'; % Ensure units match for positioning
-
-% 2. Manual Resize to Half Height
-% We must use 'Position' property of colorbar which requires manual mode
-% AXIS InnerPosition: [x,y,w,h]
-axPos = axTau.InnerPosition;
-cbW = 20;
-cbH = axPos(4) * 0.5; % Half height
-cbX = axPos(1) + axPos(3) + 10; % 10px padding
-cbY = axPos(2) + (axPos(4) - cbH)/2; % Centered vertically
-
-% Wait for layout reflow or force position
-drawnow limitrate;
-cb.Position = [cbX, cbY, cbW, cbH];
-cb.Label.String = 'Lifetime (ns)';
-
-% Update Spinners
-cMin = min(TauMap(:)); cMax = max(TauMap(:));
-if isempty(cMin), cMin = 0; end
-if isempty(cMax) || cMax <= cMin, cMax = cMin + 1e-3; end
-
-% Update Spinner Values & Position
-meta = tab.UserData;
-if ~isempty(meta.spnCMin) && isvalid(meta.spnCMin)
-    meta.spnCMin.Value = cMin;
-    % Align left edge to colorbar left edge
-    meta.spnCMin.Position(1) = cbX;
-    meta.spnCMin.Position(2) = cbY - 25;
-end
-if ~isempty(meta.spnCMax) && isvalid(meta.spnCMax)
-    meta.spnCMax.Value = cMax;
-    % Align left edge to colorbar left edge
-    meta.spnCMax.Position(1) = cbX;
-    meta.spnCMax.Position(2) = cbY + cbH + 5;
+    meta.Maps.Tau2 = nan(nY, nX);
+    meta.Maps.Frac2 = nan(nY, nX);
 end
 
-% Set CLim
-set(axTau, 'CLim', [cMin cMax]);
-
-if isAnscombe
-    title(axTau, [tab.Title ' [Anscombe]']);
+if numExp >= 3 && isfield(Results, 'Tau3')
+    meta.Maps.Tau3 = Results.Tau3;
+    meta.Maps.Frac3 = Results.Frac3;
 else
-    title(axTau, tab.Title);
+    meta.Maps.Tau3 = nan(nY, nX);
+    meta.Maps.Frac3 = nan(nY, nX);
 end
 
-meta.TauMap = TauMap; meta.gate_interp_fns = gate_interp_fns;
-meta.nX = nX; meta.nY = nY;
+% Calculate Intensity Weighted Average Lifetime (TauAvg)
+% TauAvg = sum(f_i * tau_i) / sum(f_i) = sum(f_i/100 * tau_i)
+TauAvg = (Results.Tau1 .* Results.Frac1)/100;
+if numExp >= 2 && isfield(Results, 'Tau2')
+    TauAvg = TauAvg + (Results.Tau2 .* Results.Frac2)/100;
+end
+if numExp >= 3 && isfield(Results, 'Tau3')
+    TauAvg = TauAvg + (Results.Tau3 .* Results.Frac3)/100;
+end
+meta.Maps.TauAvg = TauAvg;
+
+% --- Compute Reduced Chi2 Map ---
+PhotonsMap = meta.Maps.Photons;
+% Use Tau1 as validity mask
+if ~isempty(Results.Tau1) && any(~isnan(Results.Tau1(:)))
+    chi2_map = nan(nY, nX);
+
+    % Basis for reconstruction
+    % Pre-calculate a slightly finer grid for interpolation
+    tau_search = linspace(0.05, 20, 200);
+    P_basis = DTpmod(nGates, tau_search, t, gate_interp_fns, ...
+        config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+        config.bPulseTrain, config.PT_Trep, config.PT_sigma);
+
+    % Calculate DOF
+    % N_points = (end_gate - start_gate + 1)
+    % N_params = 2*numExp - 1 (1 constraint)
+    n_points = end_gate - start_gate + 1;
+    n_params = 2 * numExp - 1;
+    dof = n_points - n_params;
+    if dof < 1, dof = 1; end
+
+    for y = 1:nY
+        for x = 1:nX
+            if ~isnan(Results.Tau1(y,x))
+                % Reconstruct Decay
+                P_px = zeros(nGates, 1);
+
+                % Comp 1
+                t1 = Results.Tau1(y,x); f1 = Results.Frac1(y,x)/100;
+                % Interp1 works on columns if Y is matrix, but here P_basis is (Gates x Taus)
+                % We need column corresponding to t1.
+                % interp1(X, V', xi) returns row vector. Transpose back.
+                p1 = interp1(tau_search, P_basis', t1, 'linear', 'extrap')';
+                P_px = P_px + f1 * p1;
+
+                if numExp >= 2
+                    t2 = meta.Maps.Tau2(y,x); f2 = meta.Maps.Frac2(y,x)/100;
+                    p2 = interp1(tau_search, P_basis', t2, 'linear', 'extrap')';
+                    P_px = P_px + f2 * p2;
+                end
+                if numExp >= 3
+                    t3 = meta.Maps.Tau3(y,x); f3 = meta.Maps.Frac3(y,x)/100;
+                    p3 = interp1(tau_search, P_basis', t3, 'linear', 'extrap')';
+                    P_px = P_px + f3 * p3;
+                end
+
+                % Normalize PDF
+                s = sum(P_px); if s>0, P_px = P_px/s; end
+
+                obs = squeeze(fitData(y,x,start_gate:end_gate));
+                mod_px = P_px(start_gate:end_gate) * PhotonsMap(y,x);
+
+                % Reduced Chi2
+                chi2_map(y,x) = sum(((obs - mod_px).^2) ./ (mod_px + 1e-3)) / dof;
+            end
+        end
+    end
+    meta.Maps.Chi2 = chi2_map;
+else
+    meta.Maps.Chi2 = nan(nY, nX);
+end
+
+% Save meta
 tab.UserData = meta;
 
-% Update Stats
-meanTau = mean(TauMap, 1, 'omitnan'); stdTau = std(TauMap, 0, 1, 'omitnan');
-xVec = 1:nX;
-cla(axStats);
-fill(axStats, [xVec, fliplr(xVec)], [meanTau+1.96*stdTau, fliplr(meanTau-1.96*stdTau)], ...
-    [0.6 0.8 1], 'EdgeColor', 'none', 'FaceAlpha', 0.5);
-hold(axStats, 'on'); plot(axStats, xVec, meanTau, 'b-', 'LineWidth', 1.5);
-grid(axStats, 'on');
+% Update All Map Displays
+pNames = fieldnames(meta.mapAxes);
+for i = 1:numel(pNames)
+    p = pNames{i};
+    ax = meta.mapAxes.(p);
+    hImg = findobj(ax, 'Type', 'image');
+    if isfield(meta.Maps, p)
+        if isempty(hImg)
+            hImg = imagesc(ax, meta.Maps.(p));
+            hImg.ButtonDownFcn = @(src, ev) updatePixelAnalysis(fig, ev.IntersectionPoint);
+        else
+            hImg.CData = meta.Maps.(p);
+        end
 
-% Update Residuals (Global)
-% Note: Ground Truth might not align if user did transform.
-% We compute residual vs Ground Truth if available.
+        % Auto-scale CLim
+        data_px = meta.Maps.(p)(~isnan(meta.Maps.(p)) & ~isinf(meta.Maps.(p)));
+        if ~isempty(data_px)
+            cmin = min(data_px); cmax = max(data_px);
+            if cmin == cmax, cmax = cmin + 0.1; end
+            set(ax, 'CLim', [cmin cmax]);
+        end
+    end
+end
 
+
+
+% --- Ground Truth Logic ---
 if isfield(data, 'GroundTruthTaus') && ~isempty(data.GroundTruthTaus)
-    tau_true = data.GroundTruthTaus(:)';
-    % Handle mismatch if user changed resolution (e.g. from 64x64 to something else)
-    % or if GT is 1D (gradient) but TauMap is 2D.
-    if numel(tau_true) ~= numel(tau_est_flat)
-        % Try to reshape GT to match X dimension
-        if length(tau_true) == nX
-            tau_true = repmat(tau_true, nY, 1);
-        elseif length(tau_true) == nY
-            tau_true = repmat(tau_true', 1, nX);
-        end
-    end
+    tau_true = data.GroundTruthTaus;
+    [gtY, gtX] = size(tau_true);
+    % Expand if needed
+    if gtY == 1 && nY > 1, tau_true = repmat(tau_true, nY, 1); end
+    if gtX == 1 && nX > 1, tau_true = repmat(tau_true, 1, nX); end
 
-    % Re-check after potential expansion
-    if numel(tau_true) == numel(TauMap)
-        % Ensure shapes match
-        if size(tau_true, 1) == 1 && size(tau_true, 2) > 1
-            % 1D vector -> expand to 2D
-            tau_true = repmat(tau_true, nY, 1);
-        end
-    end
-
-    if numel(tau_true) == numel(TauMap)
-        tau_true = reshape(tau_true, nY, nX); % Ensure exact shape match
-
+    if all(size(tau_true) == [nY, nX])
         irf_params = struct('fwhm',config.fwhm,'profile',config.profile,'rise_time',config.rise_time,'fall_time',config.fall_time,...
             'bPulseTrain',config.bPulseTrain,'PT_Trep',config.PT_Trep,'PT_sigma',config.PT_sigma);
 
-        % Use original photon count for CRLB, but we might only have transformed data here.
-        n_ph_px_est = sum(N_detections) / M;
-
+        n_ph_px_est = mean(PhotonsMap(:), 'omitnan');
         [~, f_vals_true] = DTcomputeFisherInfo(config.gate_edges, irf_params, config.r, config.T, tau_true(:)', n_ph_px_est);
         f_vals_true = reshape(f_vals_true, nY, nX);
 
         sigma_crlb = (f_vals_true .* tau_true) / sqrt(n_ph_px_est);
-        z_map = (TauMap - tau_true) ./ sigma_crlb;
+        z_map = (TauAvg - tau_true) ./ sigma_crlb;
 
-        stem(axRes, 1:nX, mean(z_map, 1, 'omitnan'), 'Marker', 'none');
-        yline(axRes, [2, -2], 'r--'); grid(axRes, 'on');
+        % Update Residual Axes (tabGT)
+        axRes = meta.axRes; axStats = meta.axStats;
 
+        % Top Axis: Average Lifetime vs X with 95% CI Patch
+        mean_tau_y = mean(TauAvg, 1, 'omitnan');
+        std_tau_y = std(TauAvg, 0, 1, 'omitnan');
+        n_y = sum(~isnan(TauAvg), 1);
+        n_y(n_y==0) = 1;
+        ci95 = 1.96 * std_tau_y ./ sqrt(n_y);
+
+        cla(axStats);
+        xvec = 1:nX;
+        y_low = mean_tau_y - ci95;
+        y_high = mean_tau_y + ci95;
+
+        % Remove NaNs for filling patch
+        valid = ~isnan(y_low) & ~isnan(y_high);
+        if any(valid)
+            X_patch = [xvec(valid), fliplr(xvec(valid))];
+            Y_patch = [y_low(valid), fliplr(y_high(valid))];
+            patch(axStats, X_patch, Y_patch, [0.8 0.8 0.8], 'EdgeColor', 'none', ...
+                'FaceAlpha', 0.5, 'DisplayName', '95% CI');
+        end
+        hold(axStats, 'on');
+        plot(axStats, xvec, mean_tau_y, 'k-', 'LineWidth', 1.5, 'DisplayName', 'Mean Lifetime');
+        % Plot theoretical mean for reference
+        plot(axStats, xvec, mean(tau_true, 1, 'omitnan'), 'r--', 'LineWidth', 1.2, 'DisplayName', 'Ground Truth');
+        hold(axStats, 'off');
+
+        title(axStats, 'Fluorescence Lifetime vs Pixel X');
+        ylabel(axStats, 'Lifetime (ns)');
+        % Remove X-axis clutter as it's shared with the bottom plot
+        set(axStats, 'XTick', [], 'XTickLabel', [], 'XLabel', []);
+        grid(axStats, 'on');
+        legend(axStats, 'Location', 'northeastoutside');
+
+        % Lower Axis: Average Z-Score
+        z_score_avg = mean(z_map, 1, 'omitnan');
+        cla(axRes);
+        stem(axRes, 1:nX, z_score_avg, 'Marker', 'none', 'LineWidth', 1.2, 'Color', [0.3 0.3 0.3]);
+        hold(axRes, 'on');
+        yline(axRes, 0, 'k-', 'LineWidth', 1);
+        yline(axRes, [1.96, -1.96], 'r--', 'LineWidth', 1);
+        title(axRes, 'Average Z-Score (Mean across Y)');
+        ylabel(axRes, 'Z-Score');
+        xlabel(axRes, 'Pixel Number (X)');
+        grid(axRes, 'on');
+
+        % Full Map Chi2 Metrics
         chi2_val = mean(z_map(:).^2, 'omitnan');
         meta.uChi.Text = sprintf('Chi2: %.3f', chi2_val);
         meta.uRE.Text = sprintf('R.E.: %.1f%%', (1/chi2_val)*100);
-        meta.uRND.Text = sprintf('RND: %.2f', 1/chi2_val);
-    else
-        cla(axRes); title(axRes, 'Dimension Mismatch with GT');
-        % Warning: Ground Truth size does not match Tau Map size
+
+        % RND Test on z_score_avg
+        z_clean = z_score_avg(~isnan(z_score_avg));
+        if isempty(z_clean)
+            meta.uRND.Text = 'RND: N/A';
+            meta.uRND.FontColor = 'k';
+        else
+            s_pix = sign(z_clean); s_pix(s_pix==0) = 1;
+            r_pix = 1 + sum(diff(s_pix)~=0);
+            n1 = sum(s_pix>0); n2 = sum(s_pix<0);
+
+            if n1==0 || n2==0
+                meta.uRND.Text = 'RND: NO (Bias)';
+                meta.uRND.FontColor = [0.8 0 0];
+            else
+                mu_r = 1 + (2*n1*n2)/(n1+n2);
+                s_r = sqrt((2*n1*n2*(2*n1*n2-n1-n2))/((n1+n2)^2 * (n1+n2-1)));
+                z_r = (r_pix - mu_r)/s_r;
+
+                if z_r < -1.645
+                    meta.uRND.Text = sprintf('RND: NO (Z=%.1f)', z_r);
+                    meta.uRND.FontColor = [0.8 0 0];
+                else
+                    meta.uRND.Text = sprintf('RND: YES (Z=%.1f)', z_r);
+                    meta.uRND.FontColor = [0 0.6 0];
+                end
+            end
+        end
     end
-else
-    cla(axRes); title(axRes, 'No Ground Truth');
 end
 
+% Set "Tau Avg" as default tab after analysis
+tab_TauAvg = findobj(meta.mapTg, 'Tag', 'tab_TauAvg');
+if ~isempty(tab_TauAvg), meta.mapTg.SelectedTab = tab_TauAvg; end
+
+% Sync everything to active tab
+syncMapDisplay(tab);
+
+% Finalize
+drawnow limitrate;
 updatePixelAnalysis(fig, [nX/2, nY/2]);
 end
 
@@ -1877,7 +2595,7 @@ end
 
 % Check Anscombe
 activeChanIdx = meta.activeChanIdx;
-RawData = squeeze(data.RawData(:, :, :, activeChanIdx));
+RawData = getChannelData(fig, activeChanIdx);
 
 % Apply Mask
 mask = getChannelMask(fig, activeChanIdx);
@@ -2041,13 +2759,11 @@ t = 0:dt:config.T;
 irf = DTexcitation(t, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
     config.bPulseTrain, config.PT_Trep, config.PT_sigma);
 
-% Shift IRF by toff
-toff = 0;
-if isfield(config, 'toff'), toff = config.toff; end
-
-if toff ~= 0
-    irf = interp1(t, irf, t - toff, 'linear', 0);
-end
+% Shift IRF by toff (Removed: toff is 'Last Gate Edge', i.e. integration window width, not a delay)
+% if isfield(config, 'toff'), toff = config.toff; end
+% if toff ~= 0
+%    irf = interp1(t, irf, t - toff, 'linear', 0);
+% end
 
 % Normalize
 if max(irf) > 0, irf = irf / max(irf); end
@@ -2115,19 +2831,35 @@ end
 
 function updatePixelAnalysis(fig, point)
 data = fig.UserData;
+if isempty(data) || ~isfield(data, 'RawData') || isempty(data.RawData), return; end
+
 tabGroup = findobj(fig, 'Tag', 'analysisTabs');
 if isempty(tabGroup) || isempty(tabGroup.SelectedTab), return; end
 tab = tabGroup.SelectedTab;
-if isempty(tab.UserData) || ~isfield(tab.UserData, 'TauMap'), return; end
+if isempty(tab.UserData) || ~isfield(tab.UserData, 'Maps'), return; end
 meta = tab.UserData;
 
-px = round(point(1)); py = round(point(2));
 % Use tab-local dimensions if available, else fallback to current data
 chanIdx = 1;
 if isfield(meta, 'activeChanIdx'), chanIdx = meta.activeChanIdx; end
 
-cData = squeeze(data.RawData(:, :, :, chanIdx));
+cData = getChannelData(fig, chanIdx);
 [nY, nX, ~] = size(cData);
+
+% Check if point is NaN (triggered by spinner)
+if isnan(point(1))
+    % Use existing crosshair position if available
+    hV = findobj(fig, 'Tag', 'crossV');
+    hH = findobj(fig, 'Tag', 'crossH');
+    if ~isempty(hV) && ~isempty(hH)
+        px = round(hV.Value); py = round(hH.Value);
+    else
+        % Default to center
+        px = round(nX/2); py = round(nY/2);
+    end
+else
+    px = round(point(1)); py = round(point(2));
+end
 
 if px < 1 || px > nX || py < 1 || py > nY, return; end
 
@@ -2137,100 +2869,156 @@ hH = findobj(fig, 'Tag', 'crossH');
 if ~isempty(hV), set(hV, 'Value', px, 'Visible', 'on'); end
 if ~isempty(hH), set(hH, 'Value', py, 'Visible', 'on'); end
 
-% Extract Pixel Data (Note: RawData is now handled per channel)
+% Extract Pixel Data
 pixelCounts = squeeze(cData(py, px, :));
-estTau = meta.TauMap(py, px);
+estTau = NaN;
+if isfield(meta.Maps, 'TauAvg')
+    estTau = meta.Maps.TauAvg(py, px);
+end
 config = data.config;
 
-% 1. Clean up axes immediately for visual feedback
-axPixel = meta.axPix;
-axPixelRes = meta.axPixRes;
-
-% Reset axes
-cla(axPixel, 'reset');
-set(axPixel, 'Box', 'on', 'XTickLabel', []);
-ylabel(axPixel, 'Counts', 'FontWeight', 'bold');
-grid(axPixel, 'on');
-hold(axPixel, 'on');
-
-cla(axPixelRes, 'reset');
-set(axPixelRes, 'Box', 'on');
-ylabel(axPixelRes, 'Z-score', 'FontWeight', 'bold');
-xlabel(axPixelRes, 'Time (ns)', 'FontWeight', 'bold');
-grid(axPixelRes, 'on');
-hold(axPixelRes, 'on');
-
-drawnow; % Ensure old traces are definitively deleted
-
-% 2. Time Vector and Gate Centers
-t = 0:config.dt:config.T;
+% Define Time and Gate Vectors locally to ensure availability
+dt = config.dt; T = config.T; t = 0:dt:T;
 gate_edges = config.gate_edges;
 gate_centers = 0.5 * (gate_edges(1:end-1) + gate_edges(2:end));
 
-% 2. Calculate Fitted Model Gate Counts
-% Need to match scaling of the original photon count
-n_det = sum(pixelCounts);
-P_pixel = DTpmod(config.N_gates, estTau, t, meta.gate_interp_fns, ...
-    config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-    config.bPulseTrain, config.PT_Trep, config.PT_sigma);
-P_pixel = P_pixel ./ sum(P_pixel); % Normalize
-fittedCounts = P_pixel * n_det;
+% Check if we are inside a Result Tab Group
+axPixel = meta.axPix;
+axPixelRes = meta.axPixRes;
 
-% 3. Calculate Smooth Decay Curve for Visualization
-[decay_smooth, ~] = DTpdf(t, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-    config.bPulseTrain, config.PT_Trep, config.PT_sigma, estTau);
-decay_smooth = decay_smooth * (sum(fittedCounts) / sum(decay_smooth));
+cla(axPixel);
+hold(axPixel, 'on');
 
-% IRF for background
+hold(axPixelRes, 'on'); % axPixelRes is cleared later via cla
+
+% === PLOT DATA & FITS ===
+% Data
+plot(axPixel, gate_centers(:), pixelCounts(:), 'bo', 'MarkerSize', 6, 'LineWidth', 1.5, 'DisplayName', 'Data', 'Tag', 'hData');
+
+% IRF
 irf = DTexcitation(t, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
     config.bPulseTrain, config.PT_Trep, config.PT_sigma);
+maxI = max(irf); if maxI == 0, maxI = 1; end
+maxP = max(pixelCounts); if maxP == 0, maxP = 1; end
+irf_scaled = (irf/maxI) * maxP * 0.5;
+plot(axPixel, t, irf_scaled, 'r-', 'LineWidth', 1, 'DisplayName', 'IRF', 'Tag', 'hIRF');
 
-% 4. Plot
+% Fit (Only if analysis has been run)
+isFitValid = ~isnan(estTau);
+
+% Background value for visualization
+backVal = 0; if isfield(meta, 'spnBack') && isvalid(meta.spnBack), backVal = meta.spnBack.Value; end
+
+if isFitValid
+    [decay_smooth, ~] = DTpdf(t, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+        config.bPulseTrain, config.PT_Trep, config.PT_sigma, estTau);
+    % Recalculate discrete fit for scaling
+    n_det = sum(pixelCounts) - backVal; % Intensity excluding background
+    if n_det < 0, n_det = 0; end
+
+    P_pixel = DTpmod(config.N_gates, estTau, t, meta.gate_interp_fns, ...
+        config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+        config.bPulseTrain, config.PT_Trep, config.PT_sigma);
+
+    sP = sum(P_pixel); if sP == 0, sP = 1; end
+    P_pixel = P_pixel / sP;
+
+    fittedCounts = (P_pixel * n_det) + (backVal / config.N_gates);
+
+    decay_smooth = (decay_smooth * (n_det / sum(decay_smooth))) + (backVal / config.T);
+
+    % Determine Fit Range Time Window
+    sg = 1; eg = config.N_gates;
+    if isfield(meta, 'spnStart') && isvalid(meta.spnStart), sg = meta.spnStart.Value; end
+    if isfield(meta, 'spnEnd') && isvalid(meta.spnEnd), eg = meta.spnEnd.Value; end
+    t_start = gate_edges(sg);
+    t_end = gate_edges(eg+1);
+
+    % Mask fit curve
+    mask_fit = (t >= t_start) & (t <= t_end);
+    t_fit = t;
+    decay_fit = decay_smooth;
+    t_fit(~mask_fit) = nan; % Hide outside range
+    decay_fit(~mask_fit) = nan;
+
+    % Discrete fit points
+    mask_discrete = false(size(gate_centers));
+    mask_discrete(sg:eg) = true;
+    gc_fit = gate_centers;
+    fc_fit = fittedCounts;
+    gc_fit(~mask_discrete) = nan;
+    fc_fit(~mask_discrete) = nan;
+else
+    decay_fit = nan(size(t)); t_fit = t; fittedCounts = nan(size(gate_centers));
+end
+
+hFit = [];
+if isFitValid
+    hFit = plot(axPixel, t_fit, decay_fit, 'k-', 'LineWidth', 1.5, 'DisplayName', sprintf('Fit (%.2fns)', estTau), 'Tag', 'hFit');
+    % Clarify dashed curve in legend
+    plot(axPixel, gc_fit(:), fc_fit(:), 'k--', 'LineWidth', 0.5, 'DisplayName', 'Discrete Fit', 'Tag', 'hConn');
+end
+
+% Formatting
 title(axPixel, '(In-pixel fitting)');
-% IRF (Normalized and scaled - Red Line)
-plot(axPixel, t, (irf/max(irf)) * max(pixelCounts) * 0.5, 'r-', 'LineWidth', 1, 'DisplayName', 'IRF');
-
-% Fitted Curve (Smooth - Solid Black Line)
-plot(axPixel, t, decay_smooth, 'k-', 'LineWidth', 1.5, 'DisplayName', sprintf('Fit (%.2fns)', estTau));
-
-% Discrete Fitted Gate Counts (Line connecting)
-plot(axPixel, gate_centers(:), fittedCounts(:), 'k--', 'LineWidth', 0.5, 'HandleVisibility', 'off');
-
-% Experimental Data (Blue Circles)
-plot(axPixel, gate_centers(:), pixelCounts(:), 'bo', 'MarkerSize', 6, 'LineWidth', 1.5, 'DisplayName', 'Data');
-hold(axPixel, 'off');
 legend(axPixel, 'Location', 'northeast', 'FontSize', 8);
 grid(axPixel, 'on');
-set(axPixel, 'XTickLabel', []); % Remove time ticks here
+set(axPixel, 'XTickLabel', []);
+ylabel(axPixel, 'Counts', 'FontWeight', 'bold');
+xlim(axPixel, [0 config.T]);
+maxVal = max(pixelCounts(:));
+if isnan(maxVal) || maxVal <= 0, maxVal = 1; end
+ylim(axPixel, [0, 1.2 * maxVal]);
+
+% === RESIDUALS ===
+cla(axPixelRes); % Safe to clear residuals as no interaction there
+z_pixel = (pixelCounts(:) - fittedCounts(:)) ./ sqrt(fittedCounts(:) + 1e-10);
+if ~all(isnan(z_pixel))
+    stem(axPixelRes, gate_centers(:), z_pixel, 'Marker', 'o', 'MarkerSize', 4, 'LineWidth', 1.5, 'Color', [0.4 0.4 0.4]);
+end
+hold(axPixelRes, 'on');
+yline(axPixelRes, 0, 'k-');
+yline(axPixelRes, [1.96, -1.96], 'r--');
+grid(axPixelRes, 'on');
+xlim(axPixelRes, [0 config.T]);
+xlabel(axPixelRes, 'Time (ns)', 'FontWeight', 'bold');
+ylabel(axPixelRes, 'Z-score', 'FontWeight', 'bold');
+drawnow limitrate;
+
+% === INTERACTIVE MARKERS ===
+if isfield(meta, 'spnStart') && isvalid(meta.spnStart) && isfield(meta, 'spnEnd') && isvalid(meta.spnEnd)
+
+    % Get Settings
+    gateIdx_Start = meta.spnStart.Value;
+    gateIdx_End = meta.spnEnd.Value;
+
+    % Map to Time Coordinates (Use Gate Edges)
+    % Start Marker: Left Edge of start gate
+    % End Marker: Right Edge of end gate
+    if gateIdx_Start < 1, gateIdx_Start = 1; end
+    if gateIdx_End > numel(gate_edges)-1, gateIdx_End = numel(gate_edges)-1; end
+
+    t_start = gate_edges(gateIdx_Start);
+    t_end = gate_edges(gateIdx_End + 1);
+
+    yLim = ylim(axPixel);
+
+    % Helper to create/update line
+    updateMarkerLine(axPixel, 'roiStart', t_start, yLim, 'g', meta.spnStart, gate_edges);
+    updateMarkerLine(axPixel, 'roiEnd', t_end, yLim, 'r', meta.spnEnd, gate_edges);
+end
 
 % Update Pixel Info Labels
 meta.uPixPos.Text = sprintf('Pos: %d, %d', px, py);
 meta.uPixTau.Text = sprintf('%c: %.2f ns', 964, estTau);
-
-% == Update Pixel Residuals Plot ==
-% (axPixelRes already cleared at top)
-
-% Standardized residuals for Poisson data: (Data - Model) / sqrt(Model)
-z_pixel = (pixelCounts(:) - fittedCounts(:)) ./ sqrt(fittedCounts(:) + 1e-10);
-
-% Plot against gate_centers for same horizontal scale as axPixel
-stem(axPixelRes, gate_centers(:), z_pixel, 'Marker', 'o', 'MarkerSize', 4, 'LineWidth', 1.5, 'Color', [0.4 0.4 0.4]);
-yline(axPixelRes, 0, 'k-');
-yline(axPixelRes, [1.96, -1.96], 'r--'); % 95% confidence bounds
-
-grid(axPixelRes, 'on');
-xlim(axPixelRes, [min(t) max(t)]); % Synchronize X-axis with decay plot
-xlabel(axPixelRes, 'Time (ns)', 'FontWeight', 'bold');
-set(axPixelRes, 'XTickLabelMode', 'auto');
 
 % == Update Pixel-Level Metrics ==
 pix_chi2 = mean(z_pixel.^2);
 meta.uPixChi.Text = sprintf('%c%c%c: %.3f', 967, 178, 7523, pix_chi2);
 meta.uPixRE.Text = sprintf('R.E.: %.1f%%', (1/pix_chi2)*100);
 
-% Runs test on the decay residuals for this pixel
-s_pix = sign(z_pixel);
-s_pix(s_pix==0) = 1;
+% Runs test
+s_pix = sign(z_pixel); s_pix(s_pix==0) = 1;
 r_pix = 1 + sum(diff(s_pix)~=0);
 n1 = sum(s_pix>0); n2 = sum(s_pix<0);
 if n1==0 || n2==0
@@ -2248,6 +3036,66 @@ else
         meta.uPixRND.FontColor = [0 0.6 0];
     end
 end
+end
+
+function updateMarkerLine(ax, tag, t_val, yLim, color, spinner, edges)
+if any(isnan(t_val)) || any(isnan(yLim)), return; end
+hLine = findobj(ax, 'Tag', tag);
+if isempty(hLine)
+    % Create new interactive line
+    hLine = drawline(ax, 'Position', [t_val yLim(1); t_val yLim(2)], ...
+        'Color', color, 'LineWidth', 2, 'Tag', tag, ...
+        'InteractionsAllowed', 'translate');
+
+    % Add Listeners
+    addlistener(hLine, 'MovingROI', @(src, ev) onMarkerMoving(src, ev, spinner, edges, tag));
+else
+    % Update position only if deviation is significant (avoid fighting loop)
+    currentPos = hLine.Position;
+    if abs(currentPos(1,1) - t_val) > 1e-4 || abs(currentPos(1,2) - yLim(1)) > 1e-1 || abs(currentPos(2,2) - yLim(2)) > 1e-1
+        hLine.Position = [t_val yLim(1); t_val yLim(2)];
+    end
+end
+end
+
+function onMarkerMoving(src, evt, spinner, edges, tag)
+% Constrain to vertical movement
+pos = evt.CurrentPosition;
+x = pos(1,1);
+
+% Find nearest gate edge
+[~, nearestIdx] = min(abs(edges - x));
+
+% Map back to Gate Index
+% Start Marker (Green): Corresponds to edges(gateIdx).
+% End Marker (Red): Corresponds to edges(gateIdx + 1).
+if contains(tag, 'Start')
+    gateIdx = nearestIdx;
+else
+    gateIdx = nearestIdx - 1;
+end
+
+% Clamp
+if gateIdx < 1, gateIdx = 1; end
+if gateIdx > numel(edges)-1, gateIdx = numel(edges)-1; end
+
+% Update Spinner (only if changed to avoid spam)
+if spinner.Value ~= gateIdx
+    spinner.Value = gateIdx;
+    % Spinner ValueChanged usually triggers updatePixelAnalysis.
+    % But programmatically setting it usually DOES NOT in modern MATLAB uifigures?
+    % Actually, it often doesn't.
+    % If it doesn't, we should manually trigger simple update or text update?
+    % But we don't want to redraw the WHOLE plot while dragging.
+    % We just update the line position to snap to grid?
+
+    % Snap source to grid visually
+    % src.Position = [edges(nearestIdx) src.Position(1,2); edges(nearestIdx) src.Position(2,2)];
+end
+
+% Force vertical constraint visually during drag
+% evt.Source.Position(:,1) = x; % Basic vertical constraint handled by drawline logic?
+% drawline 'translate' moves everything.
 end
 
 function setPhasorZoom(fig, mode)
@@ -2364,7 +3212,7 @@ else
 end
 
 config = data.config;
-cData = squeeze(data.RawData(:, :, :, chanIdx));
+cData = getChannelData(fig, chanIdx);
 
 % Apply Mask
 mask = getChannelMask(fig, chanIdx);
@@ -2477,21 +3325,41 @@ function onClearTab(fig)
 tabGroup = findobj(fig, 'Tag', 'analysisTabs');
 if isempty(tabGroup) || isempty(tabGroup.SelectedTab), return; end
 tab = tabGroup.SelectedTab;
-% Clean up any persistent ROIs (e.g. Fisher ROIs)
-if ~isempty(tab.UserData) && isstruct(tab.UserData) && isfield(tab.UserData, 'refROIs')
-    rois = tab.UserData.refROIs;
-    for i = 1:numel(rois)
-        if ~isempty(rois{i}) && isvalid(rois{i})
-            delete(rois{i});
-        end
-    end
+
+if isempty(tab.UserData) || ~isfield(tab.UserData, 'algo')
+    % If we don't know what it is, just clear it
+    delete(tab.Children);
+    tab.UserData = [];
+    return;
 end
 
+algo = tab.UserData.algo;
+activeChanIdx = 1;
+if isfield(tab.UserData, 'activeChanIdx'), activeChanIdx = tab.UserData.activeChanIdx; end
+
+% Wipe and rebuild
+delete(tab.Children);
 tab.UserData = [];
-kids = tab.Children;
-for i = numel(kids):-1:1
-    if isa(kids(i), 'matlab.ui.control.Button'), continue; end
-    delete(kids(i));
+
+switch lower(algo)
+    case 'grid mle'
+        createNewFitTab(fig, tab, 'Grid MLE', activeChanIdx);
+    case 'iterative reconvolution'
+        createNewFitTab(fig, tab, 'Iterative Reconvolution', activeChanIdx);
+    case 'tail fitting'
+        createNewFitTab(fig, tab, 'Tail Fitting', activeChanIdx);
+    case 'phasor analysis'
+        createNewPhasorTab(fig, tab, activeChanIdx);
+    case 'pattern matching'
+        createNewPatternTab(fig, tab, activeChanIdx);
+    case 'lima'
+        createNewLimaTab(fig, tab, activeChanIdx);
+    case 'fisher analysis'
+        createNewFisherTab(fig, tab, activeChanIdx);
+    case 'machine learning'
+        createNewMLTab(fig, tab, 'Machine Learning', activeChanIdx);
+    otherwise
+        createNewFitTab(fig, tab, algo, activeChanIdx);
 end
 end
 
@@ -2572,6 +3440,7 @@ if isempty(t.UserData)
     meta.ref2 = [];
     meta.refROIs = {[], []}; % Store handles
     meta.chkAnscombe = chkAns;
+    meta.algo = 'Fisher Analysis';
     t.UserData = meta;
 end
 end
@@ -2698,7 +3567,7 @@ try
     P2 = meta.ref2(:);
 
     activeChanIdx = meta.activeChanIdx;
-    RawData = squeeze(data.RawData(:, :, :, activeChanIdx));
+    RawData = getChannelData(fig, activeChanIdx);
 
     % Apply Mask
     mask = getChannelMask(fig, activeChanIdx);
@@ -2883,9 +3752,15 @@ try
     % Update figure UserData
     userData = fig.UserData;
     userData.RawData = data;
+    userData.ProcData = cell(size(data, 4), 1); % Init ProcData
     userData.config = config;
     userData.runCount = userData.runCount + 1;
     fig.UserData = userData;
+
+    % Initialize processing for all channels
+    for c=1:size(data, 4)
+        processChannelData(fig, c);
+    end
 
     % Update all visual components
     if exist('waitMsg', 'var') && isvalid(waitMsg)
@@ -2931,6 +3806,7 @@ end
 end
 
 function createDataTab(tabGroup, chanIdx, dataStruct)
+fig = ancestor(tabGroup, 'figure');
 tab = uitab(tabGroup, 'Title', sprintf('Channel %d', chanIdx));
 
 % Pack everything into the tab relative to it
@@ -3022,8 +3898,217 @@ uibutton(tab, 'Text', 'Edit Mask', 'Position', [285, threshY_local + 5, 70, 22],
 
 % Store ROI handles in tab? (Not strictly necessary if we use findobj)
 
-% Store ROI handles in tab? (Not strictly necessary if we use findobj)
+% === Binning Controls ===
+binY = threshY_local - 35;
+uilabel(tab, 'Text', 'Binning:', 'FontWeight', 'bold', 'Position', [10, binY, 60, 22]);
+% Default is 'Off' as requested
+ddBin = uidropdown(tab, 'Items', {'Off', 'Binning', 'Convolution'}, 'Value', 'Off', ...
+    'Position', [70, binY, 100, 22], 'Tag', sprintf('ddBin_Ch%d', chanIdx), ...
+    'ValueChangedFcn', @(src, ev) onBinningChange(fig, chanIdx));
+
+% ... (Rest of UI definition remains same, but initial Visibility will handle 'Off' state correctly) ...
+
+% Binning Params
+lblBinF = uilabel(tab, 'Text', 'Factor:', 'Position', [180, binY, 45, 22], 'Tag', sprintf('lblBinF_Ch%d', chanIdx));
+spnBinF = uispinner(tab, 'Limits', [1 32], 'Value', 2, 'Position', [225, binY, 50, 22], ...
+    'Tag', sprintf('spnBinF_Ch%d', chanIdx), 'ValueChangedFcn', @(src, ev) onBinningChange(fig, chanIdx));
+
+% Convolution Params
+lblKern = uilabel(tab, 'Text', 'Kernel:', 'Position', [180, binY, 45, 22], 'Tag', sprintf('lblKern_Ch%d', chanIdx), 'Visible', 'off');
+ddKern = uidropdown(tab, 'Items', {'Square', 'Gaussian'}, 'Value', 'Gaussian', ...
+    'Position', [225, binY, 80, 22], 'Tag', sprintf('ddKern_Ch%d', chanIdx), 'Visible', 'off', ...
+    'ValueChangedFcn', @(src, ev) onBinningChange(fig, chanIdx));
+
+lblSize = uilabel(tab, 'Text', 'Size:', 'Position', [315, binY, 30, 22], 'Tag', sprintf('lblSize_Ch%d', chanIdx), 'Visible', 'off');
+spnSize = uispinner(tab, 'Limits', [1 99], 'Value', 5, 'Position', [345, binY, 45, 22], ...
+    'Tag', sprintf('spnSize_Ch%d', chanIdx), 'Visible', 'off', 'ValueChangedFcn', @(src, ev) onBinningChange(fig, chanIdx));
+
+lblSig = uilabel(tab, 'Text', 'Sigma:', 'Position', [395, binY, 40, 22], 'Tag', sprintf('lblSig_Ch%d', chanIdx), 'Visible', 'off');
+spnSig = uispinner(tab, 'Limits', [0.1 20], 'Value', 2, 'Step', 0.1, 'Position', [435, binY, 45, 22], ...
+    'Tag', sprintf('spnSig_Ch%d', chanIdx), 'Visible', 'off', 'ValueChangedFcn', @(src, ev) onBinningChange(fig, chanIdx));
+
+% Initial Visibility Update (Will hide everything for 'Off')
+updateBinningUI(ddBin, lblBinF, spnBinF, lblKern, ddKern, lblSize, spnSize, lblSig, spnSig);
+
+% Initial Apply
+processChannelData(fig, chanIdx);
+
 tab.UserData = struct();
+end
+
+function updateBinningUI(ddBin, lblBinF, spnBinF, lblKern, ddKern, lblSize, spnSize, lblSig, spnSig)
+mode = ddBin.Value;
+if strcmp(mode, 'Binning')
+    lblBinF.Visible = 'on'; spnBinF.Visible = 'on';
+    lblKern.Visible = 'off'; ddKern.Visible = 'off';
+    lblSize.Visible = 'off'; spnSize.Visible = 'off';
+    lblSig.Visible = 'off'; spnSig.Visible = 'off';
+elseif strcmp(mode, 'Convolution')
+    lblBinF.Visible = 'off'; spnBinF.Visible = 'off';
+    lblKern.Visible = 'on'; ddKern.Visible = 'on';
+    lblSize.Visible = 'on'; spnSize.Visible = 'on';
+    if strcmp(ddKern.Value, 'Gaussian')
+        lblSig.Visible = 'on'; spnSig.Visible = 'on';
+    else
+        lblSig.Visible = 'off'; spnSig.Visible = 'off';
+    end
+else % Off
+    lblBinF.Visible = 'off'; spnBinF.Visible = 'off';
+    lblKern.Visible = 'off'; ddKern.Visible = 'off';
+    lblSize.Visible = 'off'; spnSize.Visible = 'off';
+    lblSig.Visible = 'off'; spnSig.Visible = 'off';
+end
+end
+
+function onBinningChange(fig, chanIdx)
+dataTabGroup = findobj(fig, 'Tag', 'dataTabGroup');
+if isempty(dataTabGroup), return; end
+tab = dataTabGroup.Children(chanIdx);
+
+ddBin = findobj(tab, 'Tag', sprintf('ddBin_Ch%d', chanIdx));
+lblBinF = findobj(tab, 'Tag', sprintf('lblBinF_Ch%d', chanIdx));
+spnBinF = findobj(tab, 'Tag', sprintf('spnBinF_Ch%d', chanIdx));
+
+lblKern = findobj(tab, 'Tag', sprintf('lblKern_Ch%d', chanIdx));
+ddKern = findobj(tab, 'Tag', sprintf('ddKern_Ch%d', chanIdx));
+lblSize = findobj(tab, 'Tag', sprintf('lblSize_Ch%d', chanIdx));
+spnSize = findobj(tab, 'Tag', sprintf('spnSize_Ch%d', chanIdx));
+lblSig = findobj(tab, 'Tag', sprintf('lblSig_Ch%d', chanIdx));
+spnSig = findobj(tab, 'Tag', sprintf('spnSig_Ch%d', chanIdx));
+
+% Update UI
+updateBinningUI(ddBin, lblBinF, spnBinF, lblKern, ddKern, lblSize, spnSize, lblSig, spnSig);
+
+% Apply Processing
+processChannelData(fig, chanIdx);
+
+% Auto-Scale CLims based on new processed data
+cData = getChannelData(fig, chanIdx);
+if ~isempty(cData)
+    newImg = sum(cData, 3);
+    cmin = min(newImg(:));
+    cmax = max(newImg(:));
+    if cmin == cmax, cmax = cmin + 0.1; end
+
+    spnMin = findobj(tab, 'Tag', sprintf('spnMin_Ch%d', chanIdx));
+    spnMax = findobj(tab, 'Tag', sprintf('spnMax_Ch%d', chanIdx));
+
+    if ~isempty(spnMin), spnMin.Value = cmin; end
+    if ~isempty(spnMax), spnMax.Value = cmax; end
+
+    % Force update of plots (Contrast Change listener handles CLims, but we update explicit values)
+    % Call specific helpers to ensure propagation
+    onContrastControlChange(tab, chanIdx, 'spnMin', cmin); % Triggers CLim update
+    onContrastControlChange(tab, chanIdx, 'spnMax', cmax); % Triggers CLim update
+end
+
+% Refresh
+refreshAllPlots(fig);
+% refreshXYProjection is called by refreshAllPlots via update, but explicit call ensures partials
+end
+
+function processChannelData(fig, chanIdx)
+% Reads RawData and UI settings, populates ProcData
+data = fig.UserData;
+if isempty(data.RawData), return; end
+
+% Ensure ProcData exists
+if ~isfield(data, 'ProcData')
+    data.ProcData = cell(size(data.RawData, 4), 1);
+    fig.UserData = data;
+end
+
+try
+    % Get Settings
+    dataTabGroup = findobj(fig, 'Tag', 'dataTabGroup');
+    if isempty(dataTabGroup), return; end
+    if chanIdx > numel(dataTabGroup.Children), return; end
+    tab = dataTabGroup.Children(chanIdx);
+
+    ddBin = findobj(tab, 'Tag', sprintf('ddBin_Ch%d', chanIdx));
+    if isempty(ddBin)
+        data.ProcData{chanIdx} = [];
+        fig.UserData = data;
+        return;
+    end
+
+    mode = ddBin.Value;
+
+    if strcmp(mode, 'Off')
+        data.ProcData{chanIdx} = [];
+    else
+        rawDataSlice = squeeze(data.RawData(:,:,:,chanIdx));
+        [nY, nX, nG] = size(rawDataSlice);
+
+        if strcmp(mode, 'Binning')
+            spnBinF = findobj(tab, 'Tag', sprintf('spnBinF_Ch%d', chanIdx));
+            factor = spnBinF.Value;
+            if factor > 1
+                % Check if imresize is available
+                if exist('imresize', 'file')
+                    scale = 1/factor;
+                    % Calc new size first to preallocate
+                    tmp = imresize(rawDataSlice(:,:,1), scale, 'box');
+                    [ny, nx] = size(tmp);
+                    procData = zeros(ny, nx, nG);
+                    for g = 1:nG
+                        % Multiply by factor^2 to approximate Sum (imresize box is average)
+                        procData(:,:,g) = imresize(rawDataSlice(:,:,g), scale, 'box') * (factor^2);
+                    end
+                    data.ProcData{chanIdx} = procData;
+                else
+                    % Fallback: Blockproc/Conv? Just warn and skip
+                    fprintf('Warning: imresize not found. Binning disabled.\n');
+                    data.ProcData{chanIdx} = [];
+                end
+            else
+                data.ProcData{chanIdx} = [];
+            end
+
+        elseif strcmp(mode, 'Convolution')
+            ddKern = findobj(tab, 'Tag', sprintf('ddKern_Ch%d', chanIdx));
+            spnSize = findobj(tab, 'Tag', sprintf('spnSize_Ch%d', chanIdx));
+            sz = spnSize.Value;
+
+            hK = [];
+            if strcmp(ddKern.Value, 'Square')
+                hK = ones(sz, sz);
+            else
+                spnSig = findobj(tab, 'Tag', sprintf('spnSig_Ch%d', chanIdx));
+                sig = spnSig.Value;
+                if exist('fspecial', 'file')
+                    hK = fspecial('gaussian', [sz sz], sig);
+                else
+                    % Fallback gaussian kernel approx
+                    [x,y] = meshgrid(-(sz-1)/2:(sz-1)/2, -(sz-1)/2:(sz-1)/2);
+                    hK = exp(-(x.^2+y.^2)/(2*sig^2));
+                    hK = hK / sum(hK(:));
+                end
+            end
+
+            procData = zeros(nY, nX, nG);
+            for g = 1:nG
+                procData(:,:,g) = conv2(rawDataSlice(:,:,g), hK, 'same');
+            end
+            data.ProcData{chanIdx} = procData;
+        end
+    end
+    fig.UserData = data;
+catch ME
+    fprintf('Error in processChannelData: %s\n', ME.message);
+    % Fallback to clear
+    data.ProcData{chanIdx} = [];
+    fig.UserData = data;
+end
+end
+
+function cData = getChannelData(fig, chanIdx)
+d = fig.UserData;
+if isfield(d, 'ProcData') && ~isempty(d.ProcData) && numel(d.ProcData) >= chanIdx && ~isempty(d.ProcData{chanIdx})
+    cData = d.ProcData{chanIdx};
+else
+    cData = squeeze(d.RawData(:,:,:,chanIdx));
+end
 end
 
 function onContrastControlChange(tab, chanIdx, source, ~)
@@ -3240,12 +4325,15 @@ try
     ax = ancestor(src, 'axes');
     if isempty(ax), return; end
 
+    baseStr = 'Pixels';
+    if ~isempty(strfind(src.String, 'Count')), baseStr = 'Count'; end
+
     if strcmp(ax.YScale, 'linear')
         ax.YScale = 'log';
-        src.String = 'Count (Log)';
+        src.String = [baseStr ' (Log)'];
     else
         ax.YScale = 'linear';
-        src.String = 'Count';
+        src.String = baseStr;
     end
 catch
 end
@@ -3257,12 +4345,16 @@ try
     ax = ancestor(src, 'axes');
     if isempty(ax), return; end
 
+    currentStr = src.String;
+    % Remove ' (Log)' if present to get base
+    baseStr = strrep(currentStr, ' (Log)', '');
+
     if strcmp(ax.XScale, 'linear')
         ax.XScale = 'log';
-        src.String = 'Photons (Log)';
+        src.String = [baseStr ' (Log)'];
     else
         ax.XScale = 'linear';
-        src.String = 'Photons';
+        src.String = baseStr;
     end
 catch
 end
@@ -3283,7 +4375,7 @@ end
 [~, ~, ~, nC] = size(data.RawData);
 if chanIdx > nC, return; end
 
-cData = squeeze(data.RawData(:, :, :, chanIdx));
+cData = getChannelData(fig, chanIdx);
 projXY = sum(cData, 3);
 
 % 2. Get Current Mask (Same logic as refreshAllPlots)
@@ -3343,7 +4435,7 @@ else
         val = spnThresh.Value;
         guiData = fig.UserData;
         if ~isempty(guiData.RawData)
-            cData = squeeze(guiData.RawData(:, :, :, chanIdx));
+            cData = getChannelData(fig, chanIdx);
             projXY = sum(cData, 3);
             mask = (projXY <= val);
         else
@@ -3368,24 +4460,470 @@ end
 
 function updateCLimFit(tab, type, val)
 meta = tab.UserData;
-if ~isfield(meta, 'axTau') || isempty(meta.axTau), return; end
+if isempty(meta) || ~isfield(meta, 'mapTg'), return; end
 
-currentLim = meta.axTau.CLim;
+% Target active axis
+selTab = meta.mapTg.SelectedTab;
+pName = strrep(selTab.Tag, 'tab_', '');
+ax = meta.mapAxes.(pName);
+if isempty(ax) || ~isvalid(ax), return; end
+
+lims = ax.CLim;
 if strcmp(type, 'Min')
-    % Ensure Min < Max
-    if val >= currentLim(2)
-        val = currentLim(2) - 0.001;
-        meta.spnCMin.Value = val;
-        return; % Stop recursion or redundant updates
-    end
-    meta.axTau.CLim = [val, currentLim(2)];
+    lims(1) = val;
+    if lims(1) >= lims(2), lims(2) = lims(1) + 0.001; end
 else
-    % Ensure Max > Min
-    if val <= currentLim(1)
-        val = currentLim(1) + 0.001;
-        meta.spnCMax.Value = val;
+    lims(2) = val;
+    if lims(2) <= lims(1), lims(1) = lims(2) - 0.001; end
+end
+
+set(ax, 'CLim', lims);
+
+% Sync Spinners
+if isfield(meta, 'spnCMin') && isvalid(meta.spnCMin), meta.spnCMin.Value = lims(1); end
+if isfield(meta, 'spnCMax') && isvalid(meta.spnCMax), meta.spnCMax.Value = lims(2); end
+
+refreshTauHist(tab);
+end
+
+function syncTabSpinners(tab, type, val)
+meta = tab.UserData;
+if isempty(meta) || ~isfield(meta, 'mapSpins'), return; end
+
+if strcmp(type, 'Bins')
+    % Power of 2 logic
+    if ~isfield(meta, 'lastBins'), meta.lastBins = 128; end
+    oldVal = meta.lastBins;
+    if val > oldVal
+        val = 2^ceil(log2(val + 0.1)); % +0.1 to avoid staying on same power if val was already Power of 2
+    elseif val < oldVal
+        val = 2^floor(log2(val - 0.1));
+    end
+    val = max(2, min(1024, val));
+    if isnan(val), return; end
+    meta.lastBins = val;
+    tab.UserData = meta;
+end
+
+pNames = fieldnames(meta.mapSpins);
+for i = 1:numel(pNames)
+    p = pNames{i};
+    s = meta.mapSpins.(p);
+    if isnan(val), continue; end
+    if strcmp(type, 'Max'), s.Max.Value = val;
+    elseif strcmp(type, 'Min'), s.Min.Value = val;
+    elseif strcmp(type, 'Bins'), s.Bins.Value = val;
+    end
+end
+
+if strcmp(type, 'Bins')
+    refreshTauHist(tab);
+else
+    updateCLimFit(tab, type, val);
+end
+end
+
+function syncMapDisplay(tab)
+meta = tab.UserData;
+if isempty(meta) || ~isfield(meta, 'mapTg'), return; end
+
+% Get CLim of new active map
+selTab = meta.mapTg.SelectedTab;
+pName = strrep(selTab.Tag, 'tab_', '');
+ax = meta.mapAxes.(pName);
+
+if isgraphics(ax)
+    lims = ax.CLim;
+    if ~any(isnan(lims))
+        if isfield(meta, 'spnCMin') && isgraphics(meta.spnCMin), meta.spnCMin.Value = lims(1); end
+        if isfield(meta, 'spnCMax') && isgraphics(meta.spnCMax), meta.spnCMax.Value = lims(2); end
+    end
+end
+
+refreshTauHist(tab);
+end
+
+function updateTauHistLines(tab, clim)
+meta = tab.UserData;
+hists = {meta.axHist, meta.axHistGT};
+for k = 1:2
+    axH = hists{k};
+    if ~isempty(axH) && isvalid(axH)
+        lMin = findobj(axH, 'Tag', 'lMin');
+        lMax = findobj(axH, 'Tag', 'lMax');
+        if ~isempty(lMin), lMin.Position = [clim(1) 0; clim(1) 1e9]; end
+        if ~isempty(lMax), lMax.Position = [clim(2) 0; clim(2) 1e9]; end
+    end
+end
+end
+
+function onTauHistLineMoving(~, tab, type, src)
+val = src.Position(1,1);
+updateCLimFit(tab, type, val);
+end
+
+function onTauHistBinChange(src, ev, tab)
+% Power of 2 logic
+val = ev.Value;
+if val > ev.PreviousValue
+    newVal = 2^ceil(log2(val + 0.1));
+else
+    newVal = 2^floor(log2(val - 0.1));
+end
+newVal = max(min(newVal, 1024), 2);
+src.Value = newVal;
+refreshTauHist(tab);
+end
+
+function refreshTauHist(tab)
+meta = tab.UserData;
+if isempty(meta) || ~isfield(meta, 'mapTg'), return; end
+fig = ancestor(tab, 'figure');
+
+% Identify active parameter
+selTab = meta.mapTg.SelectedTab;
+pName = strrep(selTab.Tag, 'tab_', '');
+dName = selTab.Title;
+axMain = meta.mapAxes.(pName);
+axH = meta.mapHists.(pName);
+
+% Get Data
+MapData = [];
+if isfield(meta, 'Maps') && isfield(meta.Maps, pName), MapData = meta.Maps.(pName); end
+if isempty(MapData) || all(isnan(MapData(:))), return; end
+
+% Get Bins from current tab spinner
+bins = 128;
+if isfield(meta, 'mapSpins') && isfield(meta.mapSpins, pName)
+    bins = meta.mapSpins.(pName).Bins.Value;
+end
+clim = [0 1]; if ~isempty(axMain), clim = axMain.CLim; end
+
+xLabels = struct('TauAvg', 'Lifetime (ns)', 'Intensity', 'Intensity (counts)', ...
+    'Chi2', 'Chi-Squared', 'Back', 'Background (counts)', 'Photons', 'Total Photons', ...
+    'Tau1', 'Tau 1 (ns)', 'Tau2', 'Tau 2 (ns)', 'Tau3', 'Tau 3 (ns)', ...
+    'Frac1', 'Fraction 1 (%)', 'Frac2', 'Fraction 2 (%)', 'Frac3', 'Fraction 3 (%)', ...
+    'Beta', 'Beta Factor');
+
+xLab = '--'; if isfield(xLabels, pName), xLab = xLabels.(pName); end
+
+if ~isempty(axH) && isvalid(axH)
+    cla(axH);
+    hold(axH, 'on');
+    % Clean data: Remove NaN, Inf
+    data_clean = MapData(~isnan(MapData) & ~isinf(MapData));
+
+    % Remove outliers (Use percentiles 1% - 99%)
+    if ~isempty(data_clean)
+        p1 = prctile(data_clean, 1);
+        p99 = prctile(data_clean, 99);
+        % Keep only data within this range for plotting
+        data_clean = data_clean(data_clean >= p1 & data_clean <= p99);
+    end
+
+    if ~isempty(data_clean)
+        histogram(axH, data_clean, bins, 'FaceColor', [0.6 0.6 0.6], 'EdgeColor', 'none');
+        % Redraw lines with current CLim if valid
+        if ~any(isnan(clim))
+            lMin = drawline(axH, 'Position', [clim(1) 0; clim(1) 1e9], 'Color', 'y', 'Label', 'Min', 'Tag', 'lMin');
+            lMax = drawline(axH, 'Position', [clim(2) 0; clim(2) 1e9], 'Color', [1 0.5 0], 'Label', 'Max', 'Tag', 'lMax');
+            addlistener(lMin, 'MovingROI', @(src, ev) onTauHistLineMoving(fig, tab, 'Min', src));
+            addlistener(lMax, 'MovingROI', @(src, ev) onTauHistLineMoving(fig, tab, 'Max', src));
+            addlistener(lMin, 'ROIMoved', @(src, ev) updateCLimFit(tab, 'Min', src.Position(1,1)));
+            addlistener(lMax, 'ROIMoved', @(src, ev) updateCLimFit(tab, 'Max', src.Position(1,1)));
+        end
+
+        xrange = max(data_clean) - min(data_clean);
+        if xrange <= 0, xrange = 1; end
+        axH.XLim = [min(data_clean)-0.1*xrange, max(data_clean)+0.1*xrange];
+    end
+    title(axH, sprintf('%s Distribution', dName), 'FontSize', 9);
+    xlabel(axH, xLab);
+    ylabel(axH, 'Pixels');
+end
+end
+function onModelChange(src, pMulti, pStretch, tab, lblEq)
+% Wrapper to handle visibility and update equation
+setModelVisibility(src, pMulti, pStretch, tab);
+updateEquationDisplay(tab, lblEq);
+end
+
+function setModelVisibility(src, pMulti, pStretch, tab)
+if strcmp(src.Value, 'Multiexponential decay')
+    pMulti.Visible = 'on'; pStretch.Visible = 'off';
+else
+    pMulti.Visible = 'off'; pStretch.Visible = 'on';
+end
+updateTabVisibility(tab);
+end
+
+function setComponentVisibility(src, comp2, comp3, tab, lblEq)
+try
+    N = src.Value;
+    v2 = 'off'; if N >= 2, v2 = 'on'; end
+    v3 = 'off'; if N >= 3, v3 = 'on'; end
+
+    if iscell(comp2)
+        for k = 1:numel(comp2), if isgraphics(comp2{k}), comp2{k}.Visible = v2; end; end
+    end
+    if iscell(comp3)
+        for k = 1:numel(comp3), if isgraphics(comp3{k}), comp3{k}.Visible = v3; end; end
+    end
+    drawnow limitrate;
+    updateTabVisibility(tab);
+    if nargin > 4 && isgraphics(lblEq)
+        updateEquationDisplay(tab, lblEq);
+    end
+catch ME
+    fprintf(2, 'Error in setComponentVisibility: %s\n', ME.message);
+end
+end
+
+function updateTabVisibility(tab)
+try
+    if isempty(tab) || ~isgraphics(tab), return; end
+    meta = tab.UserData;
+    % Check if meta is a standard struct, might be just []
+    if isempty(meta) || ~isstruct(meta) || ~isfield(meta, 'mapTg'), return; end
+
+    % Base tabs always visible: Photons, TauAvg, Red. Chi2, Background
+    % Conditional tabs: Tau1, Frac1, Tau2, Frac2, Tau3, Frac3, Beta
+    mode = 'Multiexponential decay';
+    if isfield(meta, 'ddModel') && isgraphics(meta.ddModel), mode = meta.ddModel.Value; end
+    numExp = 1;
+    if isfield(meta, 'spnNExp') && isgraphics(meta.spnNExp), numExp = meta.spnNExp.Value; end
+
+    pNames = {'Tau1', 'Frac1', 'Tau2', 'Frac2', 'Tau3', 'Frac3', 'Beta', 'TauAvg'};
+    vis = struct();
+    for i=1:numel(pNames), vis.(pNames{i}) = 'off'; end
+
+    if strcmp(mode, 'Multiexponential decay')
+        vis.Tau1 = 'on'; vis.Frac1 = 'on';
+        % TauAvg hidden for N=1
+        if numExp == 1
+            vis.TauAvg = 'off';
+        else
+            vis.TauAvg = 'on';
+        end
+
+        if numExp >= 2, vis.Tau2 = 'on'; vis.Frac2 = 'on'; end
+        if numExp >= 3, vis.Tau3 = 'on'; vis.Frac3 = 'on'; end
+    else
+        % Stretched: Tau1 not fitted. TauAvg IS fitted.
+        vis.Beta = 'on';
+        vis.TauAvg = 'on';
+    end
+
+    for i=1:numel(pNames)
+        p = pNames{i};
+        % t = findobj(meta.mapTg, 'Tag', ['tab_' p]);
+        % findobj fails if parent is []
+
+        if isfield(meta, 'tabs') && isfield(meta.tabs, p)
+            t = meta.tabs.(p);
+        else
+            t = findobj(meta.mapTg, 'Tag', ['tab_' p]);
+        end
+
+        if ~isempty(t) && isgraphics(t)
+            if strcmp(vis.(p), 'on')
+                if ~isequal(t.Parent, meta.mapTg)
+                    t.Parent = meta.mapTg;
+                end
+            else
+                if ~isempty(t.Parent)
+                    t.Parent = [];
+                end
+            end
+        end
+    end
+catch ME
+    fprintf(2, 'Error in updateTabVisibility: %s\n', ME.message);
+end
+end
+
+function updateEquationDisplay(tab, lbl)
+if isempty(lbl) || ~isgraphics(lbl), return; end
+meta = tab.UserData;
+
+mode = 'Multiexponential decay';
+if isfield(meta, 'ddModel') && isgraphics(meta.ddModel), mode = meta.ddModel.Value; end
+
+% Helper for Colors - Using RGB with SPACES (MATLAB standard)
+    function c = pCol(fixTag, globTag)
+        c = '[rgb]{1 0 0}'; % Red
+        % Check Fixed
+        cbF = findobj(tab, 'Tag', fixTag);
+        if ~isempty(cbF) && cbF.Value, c = '[rgb]{0 0 1}'; end % Blue
+        % Check Global
+        cbG = findobj(tab, 'Tag', globTag);
+        if ~isempty(cbG) && cbG.Value, c = '[rgb]{1 0 1}'; end % Magenta
+    end
+
+% Safe TeX color wrapper using character concatenation
+    function out = colorTex(txt, fixTag, globTag)
+        c = pCol(fixTag, globTag);
+        % TeX syntax: \color[rgb]{1 0 0} text \color{black}
+        % Using simple concatenation. Assuming default text color is black
+        out = ['\color' c ' ' txt ' \color{black}'];
+    end
+
+str = '';
+if strcmp(mode, 'Multiexponential decay')
+    N = 1;
+    if isfield(meta, 'spnNExp') && isgraphics(meta.spnNExp), N = meta.spnNExp.Value; end
+
+    cBack = colorTex('C', 'chkFBack', 'chkGBack');
+
+    if N == 1
+        tau1 = colorTex('\tau', 'chkFTau1', 'chkGTau1');
+        str = ['I(t) = I_0 e^{-t/' tau1 '} + ' cBack];
+    elseif N == 2
+        tau1 = colorTex('\tau_1', 'chkFTau1', 'chkGTau1');
+        tau2 = colorTex('\tau_2', 'chkFTau2', 'chkGTau2');
+        a2   = colorTex('\alpha_2', 'chkFFrac2', 'chkGFrac2');
+        str = ['I(t) = I_0 [ (1-' a2 ')e^{-t/' tau1 '} + ' a2 'e^{-t/' tau2 '} ] + ' cBack];
+    elseif N == 3
+        tau1 = colorTex('\tau_1', 'chkFTau1', 'chkGTau1');
+        tau2 = colorTex('\tau_2', 'chkFTau2', 'chkGTau2');
+        tau3 = colorTex('\tau_3', 'chkFTau3', 'chkGTau3');
+        a2   = colorTex('\alpha_2', 'chkFFrac2', 'chkGFrac2');
+        a3   = colorTex('\alpha_3', 'chkFFrac3', 'chkGFrac3');
+        str = ['I(t) = I_0 [ (1-' a2 '-' a3 ')e^{-t/' tau1 '} + ' a2 'e^{-t/' tau2 '} + ' a3 'e^{-t/' tau3 '} ] + ' cBack];
+    end
+
+else
+    % Stretched
+    ct = colorTex('\tau', 'chkFSTau', 'chkGSTau');
+    cb = colorTex('\beta', 'chkFBeta', 'chkGBeta');
+    cc = colorTex('C', 'chkFBack', 'chkGBack');
+    str = ['I(t) = I_0 e^{-(t/' ct ')^{' cb '}} + ' cc];
+end
+
+lbl.Text = str;
+end
+
+% -------------------------------------------------------------------------
+% CellSAM Integration
+% -------------------------------------------------------------------------
+function onLoadCellSAMModel(fig)
+try
+    fw = fig.UserData.CellSAMWrapper;
+catch
+    % Initialize if not exists
+    try
+        fw = CellSAMWrapper();
+        d = fig.UserData;
+        d.CellSAMWrapper = fw;
+        fig.UserData = d;
+    catch ME
+        uialert(fig, ['Failed to init CellSAM: ' ME.message], 'Error');
         return;
     end
-    meta.axTau.CLim = [currentLim(1), val];
+end
+
+% Trigger download/load
+f = uiprogressdlg(fig, 'Title', 'Loading CellSAM Model', 'Indeterminate', 'on');
+try
+    fw.downloadCheckpoint();
+    success = fw.loadModel();
+    if success
+        uialert(fig, 'Model Loaded Successfully!', 'Success');
+    else
+        uialert(fig, 'Model Failed to Load. Check console.', 'Error');
+    end
+catch ME
+    uialert(fig, ['Error: ' ME.message], 'Error');
+end
+close(f);
+end
+
+function onRunCellSAM(fig)
+d = fig.UserData;
+if ~isfield(d, 'CellSAMWrapper') || isempty(d.CellSAMWrapper)
+    uialert(fig, 'Please load model first.', 'Warning');
+    return;
+end
+
+if isempty(d.RawData)
+    uialert(fig, 'No data loaded.', 'Error');
+    return;
+end
+
+imgRaw = d.RawData(:,:,:,1);
+imgParam = sum(imgRaw, 3);
+imgNorm = imgParam / max(imgParam(:));
+
+f = uiprogressdlg(fig, 'Title', 'Segmenting...', 'Indeterminate', 'on');
+try
+    [masks, flows] = d.CellSAMWrapper.segment(imgNorm);
+
+    tabCellSAM = findobj(fig, 'Title', 'CellSAM');
+    if isempty(tabCellSAM), close(f); return; end
+
+    ax = findobj(tabCellSAM, 'Type', 'axes');
+    if isempty(ax)
+        ax = uiaxes(tabCellSAM, 'Position', [50 50 500 500]);
+    end
+
+    imshow(imgNorm, 'Parent', ax); hold(ax, 'on');
+
+    if ~isempty(masks)
+        [B,L] = bwboundaries(masks);
+        for k = 1:length(B)
+            boundary = B{k};
+            plot(ax, boundary(:,2), boundary(:,1), 'r', 'LineWidth', 2);
+        end
+    end
+    title(ax, 'Segmentation Result');
+
+catch ME
+    uialert(fig, ['Segmentation failed: ' ME.message], 'Error');
+end
+close(f);
+end
+
+function disableDefaultInteractions(ax)
+if isempty(ax) || ~isvalid(ax), return; end
+if isprop(ax, 'Interactions')
+    ax.Interactions = [];
+end
+try
+    ax.Toolbar.Visible = 'off';
+catch
 end
 end
+
+function syncAnalysisTabsWithConfig(fig)
+% SYNCANALYSISTABSWITHCONFIG - Updates "Fit Range (Bins)" spinners in all
+% analysis tabs to match the current gate count.
+
+data = fig.UserData;
+if isempty(data) || ~isfield(data, 'config'), return; end
+N = data.config.N_gates;
+
+% Find the analysis tab group
+ats = findobj(fig, 'Tag', 'analysisTabs');
+if isempty(ats), return; end
+
+% Iterate through all analysis tabs (Grid MLE, Iterative, etc.)
+for k = 1:numel(ats.Children)
+    t = ats.Children(k);
+    meta = t.UserData;
+
+    % Check if tab has the spinners we need to update
+    if isstruct(meta) && isfield(meta, 'spnStart') && isfield(meta, 'spnEnd')
+        % Update Limits to match new N_gates
+        if isvalid(meta.spnStart)
+            meta.spnStart.Limits = [1 N];
+            if meta.spnStart.Value > N, meta.spnStart.Value = 1; end
+        end
+        if isvalid(meta.spnEnd)
+            meta.spnEnd.Limits = [1 N];
+            if meta.spnEnd.Value > N || meta.spnEnd.Value < 1, meta.spnEnd.Value = N; end
+        end
+    end
+end
+end
+
+

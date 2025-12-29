@@ -1,8 +1,8 @@
-function [TauMap, Info] = DTtailfit(RawData, config, start_gate_idx)
+function [TauMap, Info] = DTtailfit(RawData, config, start_gate_idx, end_gate_idx)
 % DTTAILFIT - Performs tail fitting on FLIM data
 %
 % Syntax:
-%   [TauMap, Info] = DTtailfit(RawData, config, start_gate_idx)
+%   [TauMap, Info] = DTtailfit(RawData, config, start_gate_idx, end_gate_idx)
 %
 % Inputs:
 %   RawData        - 3D array [Y, X, Gates] of photon counts
@@ -22,8 +22,7 @@ dt = config.dt;
 TauMap = zeros(nY, nX);
 Info = struct();
 
-% 2. Determine Start Gate (if not provided)
-% Heuristic: Find global peak of the summed decay and start 1-2 gates after
+% 2. Determine Start/End Gates
 if nargin < 3 || isempty(start_gate_idx)
     sumDecay = squeeze(sum(sum(RawData, 1), 2));
     [~, peakIdx] = max(sumDecay);
@@ -31,17 +30,23 @@ if nargin < 3 || isempty(start_gate_idx)
     start_gate_idx = min(peakIdx + 2, nGates - 2);
 end
 
-% Ensure valid range
-if start_gate_idx < 1, start_gate_idx = 1; end
-if start_gate_idx > nGates - 3
-    warning('Start gate too late for fitting. Defaulting to peak+1.');
-    start_gate_idx = max(1, nGates - 5);
+if nargin < 4 || isempty(end_gate_idx)
+    end_gate_idx = nGates;
 end
 
+% Ensure valid range
+if start_gate_idx < 1, start_gate_idx = 1; end
+if start_gate_idx > nGates - 2
+    % warning('Start gate too late for fitting.');
+    start_gate_idx = max(1, nGates - 3);
+end
+if end_gate_idx > nGates, end_gate_idx = nGates; end
+if end_gate_idx <= start_gate_idx, end_gate_idx = start_gate_idx + 1; end
+
 % 3. Extract Tail Data
-% We will fit data from start_gate_idx to end
+% We will fit data from start_gate_idx to end_gate_idx
 % Time vector relative to start of tail (t=0 at start_gate_idx)
-gates_to_fit = start_gate_idx:nGates;
+gates_to_fit = start_gate_idx:end_gate_idx;
 nFit = length(gates_to_fit);
 t_tail = (0:(nFit-1))' * dt; % Column vector
 
