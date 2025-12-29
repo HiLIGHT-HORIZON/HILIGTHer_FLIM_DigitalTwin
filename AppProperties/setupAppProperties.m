@@ -39,7 +39,7 @@ try
     % The settings file is expected to be in the same folder as this script
     settingsFile = fullfile(fPath, 'settings.mat');
     if exist(settingsFile, 'file')
-        loaded = load(settingsFile, 'lastTheme');
+        loaded = load(settingsFile);
         if isfield(loaded, 'lastTheme')
             applyAppTheme(fig, loaded.lastTheme);
         end

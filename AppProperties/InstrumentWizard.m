@@ -168,6 +168,9 @@ s.PT_sigma = getByTag('PTSField', 0.05);
 s.gate_type = getByTag('gateDropdown', 'Equal');
 s.N_gates = getByTag('NGateField', 4);
 s.r = getByTag('rField', 0.001);
+s.N_photons = getByTag('NPhotonsField', 1e4);
+s.M = getByTag('MField', 400);
+s.dt = getByTag('dtField', 0.01);
 
 % Custom Gates
 if s.N_gates > 0 && s.N_gates <= 8

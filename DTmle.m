@@ -1,12 +1,28 @@
-function [tau_est, stats] = DTmle(N_detections, gate_hist_all, tau_grid, P_model_grid, fig)
-% Inputs:
-% - N_detections: number of photons per measurement
-% - gate_hist_all: N_gates x M matrix of normalized counts
-% - tau_grid: candidate lifetimes
-% - P_model_grid: N_gates x length(tau_grid) model probabilities
-% - fig: (Optional) figure handle for progress dialog
+function [tau_est, stats] = DTmle(N_detections, gate_hist_all, tau_grid, P_model_grid, fig, start_gate_idx, end_gate_idx)
+% Outputs:
+%   tau_est - (1 x M) estimated lifetimes
+%   stats   - Struct containing stats
 
 M = size(gate_hist_all, 2);  % number of repetitions
+nGates = size(gate_hist_all, 1);
+
+% Handle Start/End
+if nargin < 6 || isempty(start_gate_idx), start_gate_idx = 1; end
+if nargin < 7 || isempty(end_gate_idx), end_gate_idx = nGates; end
+
+% Ensure range
+if start_gate_idx < 1, start_gate_idx = 1; end
+if end_gate_idx > nGates, end_gate_idx = nGates; end
+if end_gate_idx <= start_gate_idx, end_gate_idx = start_gate_idx + 1; end
+
+fit_gates = start_gate_idx:end_gate_idx;
+
+% Pre-slice and normalize Model Grid
+P_model_sub = P_model_grid(fit_gates, :);
+% Normalize columns to sum to 1 (conditional probability)
+colSums = sum(P_model_sub, 1);
+colSums(colSums == 0) = 1;
+P_model_sub = P_model_sub ./ colSums;
 
 % Progress Bar
 d = [];
@@ -25,19 +41,23 @@ for m = 1:M
         break;
     end
 
-    counts = gate_hist_all(:, m);
+    counts = gate_hist_all(fit_gates, m);
+    if sum(counts) == 0
+        tau_est(m) = NaN;
+        continue;
+    end
     counts = counts / sum(counts);
 
     % Compute log-likelihood for each candidate tau
-    logL = zeros(1, length(tau_grid));
-    for k = 1:length(tau_grid)
-        Pk = P_model_grid(:, k); Pk = Pk / sum(Pk);
-        if all(Pk > 0)
-            logL(k) = sum(counts .* log(Pk));
-        else
-            logL(k) = -inf;  % Invalid candidate
-        end
-    end
+    % We can vectorize this: logL = counts' * log(P_model_sub)
+    % counts is [G x 1], P is [G x K].
+    % logL is [1 x K].
+
+    % Safe Log
+    logP = log(P_model_sub);
+    logP(isinf(logP)) = -1e9; % Handle log(0)
+
+    logL = counts' * logP;
 
     % Pick tau with maximum likelihood
     [~, idx] = max(logL);

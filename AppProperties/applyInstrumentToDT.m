@@ -24,6 +24,7 @@ end
 if ~isempty(hlFig)
     hFig = hlFig(1);
     updateHILIGHTerConfig(hFig, data);
+    applyToFigTags(hFig, data); % Also update HILIGHTer UI fields if they match tags
 end
 
 % --- Focus Management ---
@@ -92,6 +93,19 @@ if isfield(data, 'PT_sigma'), setTag('PTSField', data.PT_sigma); end
 if isfield(data, 'gate_type'), setTag('gateDropdown', data.gate_type); end
 if isfield(data, 'N_gates'), setTag('NGateField', data.N_gates); end
 if isfield(data, 'r'), setTag('rField', data.r); end
+if isfield(data, 'dt'), setTag('dtField', data.dt); end
+
+% Photons and Background
+if isfield(data, 'N_photons'), setTag('photonsField', data.N_photons); end
+if isfield(data, 'N_dark'), setTag('darkCountsField', data.N_dark); end
+
+% Dimensions
+if isfield(data, 'nX'), setTag('dimXField', data.nX); end
+if isfield(data, 'nY'), setTag('dimYField', data.nY); end
+
+% Lifetimes (HILIGHTer uses ps in UI, config uses ns)
+if isfield(data, 'tau1'), setTag('tau1Field', data.tau1 * 1000); end
+if isfield(data, 'tau2'), setTag('tau2Field', data.tau2 * 1000); end
 
 % Custom Gates
 if isfield(data, 'gate_widths') && ~isempty(data.gate_widths)
@@ -109,7 +123,8 @@ if ~isfield(ud, 'config'), ud.config = struct(); end
 
 % Map fields
 baseFields = {'T', 'fwhm', 'profile', 'toff', 'rise_time', 'fall_time', ...
-    'bPulseTrain', 'PT_Trep', 'PT_sigma', 'gate_type', 'N_gates', 'r'};
+    'bPulseTrain', 'PT_Trep', 'PT_sigma', 'gate_type', 'N_gates', 'r', 'dt', 'M', ...
+    'N_photons', 'N_dark'};
 
 for i=1:length(baseFields)
     Fn = baseFields{i};
@@ -119,26 +134,37 @@ for i=1:length(baseFields)
 end
 
 % Recompute Gate Edges
-% Default logic: Equal gates from 0 to T (or toff?)
-% Standard DigitalTwin logic often uses 0 to T for equal gates.
-% But if toff is specified, maybe up to toff.
-% Let's use T as safe default if toff is missing, or max(T, toff).
-% Actually, commonly gates cover the period T.
-
+% Default logic: Equal gates from 0 to toff (Last gate edge)
 T = ud.config.T;
-if isfield(ud.config, 'gate_type') && strcmpi(ud.config.gate_type, 'Custom')
-    if isfield(data, 'gate_widths')
+if isfield(ud.config, 'gate_type') && contains(lower(ud.config.gate_type), 'custom')
+    if isfield(data, 'gate_widths') && ~isempty(data.gate_widths)
         widths = data.gate_widths;
         edges = [0, cumsum(widths(:))'];
         ud.config.gate_edges = edges;
+        ud.config.N_gates = numel(widths);
+    else
+        % Fallback if Custom but no widths
+        N = ud.config.N_gates;
+        if isempty(N) || N <= 0, N = 32; end
+        ud.config.N_gates = N;
+        ud.config.gate_edges = linspace(0, T, N + 1);
     end
 else
     % Equal
-    N = ud.config.N_gates;
-    % Check if toff is relevant for range end?
-    % Usually gates span the whole period in many FLIM systems, or a specific window.
-    % HILIGHTer default was linspace(0, 12.5, 33) where T=12.5. So 0 to T.
-    ud.config.gate_edges = linspace(0, T, N + 1);
+    if isfield(data, 'N_gates') && ~isempty(data.N_gates)
+        N = data.N_gates;
+    else
+        N = ud.config.N_gates;
+    end
+    if isempty(N) || N <= 0, N = 32; end
+    ud.config.N_gates = N;
+
+    % Check if toff is relevant for range end (Last gate edge)
+    t_end = T;
+    if isfield(ud.config, 'toff') && ud.config.toff > 0
+        t_end = ud.config.toff;
+    end
+    ud.config.gate_edges = linspace(0, t_end, N + 1);
 end
 
 fig.UserData = ud;
@@ -160,19 +186,14 @@ dt = 0.05; % Fixed resolution for viz
 t = 0:dt:config.T;
 
 % Calculate IRF
-base_irf = DTexcitation(t, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+irf = DTexcitation(t, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
     config.bPulseTrain, config.PT_Trep, config.PT_sigma);
 
-% Shift IRF by toff
-toff = 0;
-if isfield(config, 'toff'), toff = config.toff; end
-
-if toff ~= 0
-    % Interpolate: New Value at t is Old Value at (t - toff)
-    irf = interp1(t, base_irf, t - toff, 'linear', 0);
-else
-    irf = base_irf;
-end
+% Shift IRF by toff (Removed: toff is 'Last Gate Edge', i.e. integration window duration, not a delay)
+% if isfield(config, 'toff'), toff = config.toff; end
+% if toff ~= 0
+%    irf = interp1(t, irf, t - toff, 'linear', 0);
+% end
 
 % Normalize for display
 if max(irf(:)) > 0

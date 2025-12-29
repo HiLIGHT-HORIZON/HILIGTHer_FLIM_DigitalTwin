@@ -86,52 +86,52 @@ for tau_i = 1:tau_stp
     end
 
 
-    
+
 
 end
 
 % === Post-simulation stats and plots ===
-    
-    % F-value plot
-    if isa(axF, 'matlab.ui.control.UIAxes')
-        %cla(axF); hold(axF, 'on');
-        plot(axF, tau_true, F, '-', 'Color', colors(i,:), 'LineWidth', 2);
-        %plot(axF, [0, max(tau_true)], [1 1], 'k--');
-        title(axF, 'F-value vs τ'); xlabel(axF, 'Simulated τ (ns)'); ylabel(axF, 'F-value');
-        grid(axF, 'on');
-    end
-    
-    % Efficiency plot
-    if isa(axEff, 'matlab.ui.control.UIAxes')
-        %cla(axEff);
-        plot(axEff, tau_true, p_eff, '-','Color', colors(i,:), 'LineWidth', 2);
-        title(axEff, 'Photon Efficiency vs τ');
-        xlabel(axEff, 'Simulated τ (ns)'); ylabel(axEff, 'Efficiency (1/F²)');
-        ylim(axEff, [0 1.05]);
-        grid(axEff, 'on');
-    end
-    
-    % τ estimation plot
-    if isa(axTau, 'matlab.ui.control.UIAxes')
-        %cla(axTau); hold(axTau, 'on');
-        errorbar(axTau, tau_true, mean_tau, std_tau, 'Color', colors(i,:), 'LineWidth', 1.5);
-        plot(axTau, tau_true, tau_true, 'k--');
-        title(axTau, 'Estimated τ ± std vs Simulated τ');
-        xlabel(axTau, 'Simulated τ (ns)'); ylabel(axTau, 'Estimated τ (ns)');
-        grid(axTau, 'on');
-    end
-    
-    % Finalize PDF panel
-    title(ax, 'All Emission PDFs with Gate Layout');
-    xlim(ax, [-0.5 T+0.5]); ylim(ax, [-0.05 1.05]); 
+
+% F-value plot
+if isa(axF, 'matlab.ui.control.UIAxes')
+    %cla(axF); hold(axF, 'on');
+    plot(axF, tau_true, F, '-', 'Color', colors(i,:), 'LineWidth', 2);
+    %plot(axF, [0, max(tau_true)], [1 1], 'k--');
+    title(axF, 'F-value vs τ'); xlabel(axF, 'Simulated τ (ns)'); ylabel(axF, 'F-value');
+    grid(axF, 'on');
+end
+
+% Efficiency plot
+if isa(axEff, 'matlab.ui.control.UIAxes')
+    %cla(axEff);
+    plot(axEff, tau_true, p_eff, '-','Color', colors(i,:), 'LineWidth', 2);
+    title(axEff, 'Photon Efficiency vs τ');
+    xlabel(axEff, 'Simulated τ (ns)'); ylabel(axEff, 'Efficiency (1/F²)');
+    ylim(axEff, [0 1.05]);
+    grid(axEff, 'on');
+end
+
+% τ estimation plot
+if isa(axTau, 'matlab.ui.control.UIAxes')
+    %cla(axTau); hold(axTau, 'on');
+    errorbar(axTau, tau_true, mean_tau, std_tau, 'Color', colors(i,:), 'LineWidth', 1.5);
+    plot(axTau, tau_true, tau_true, 'k--');
+    title(axTau, 'Estimated τ ± std vs Simulated τ');
+    xlabel(axTau, 'Simulated τ (ns)'); ylabel(axTau, 'Estimated τ (ns)');
+    grid(axTau, 'on');
+end
+
+% Finalize PDF panel
+title(ax, 'All Emission PDFs with Gate Layout');
+xlim(ax, [-0.5 T+0.5]); ylim(ax, [-0.05 1.05]);
 end
 
 
 function updatePlotPDF(ax, gate_edges, N_gates, T, t, pdf, tau_val, tau_idx, tau_stp, color)
-    if isempty(ax) || ~isvalid(ax), return; end
-    plot(ax, t, pdf / max(pdf), 'Color', color, 'LineWidth', 1.5);
-    title(ax, sprintf('τ = %.2f ns (%d of %d)', tau_val, tau_idx, tau_stp));
-    xlabel(ax, 'Time (ns)'); ylabel(ax, 'Amplitude');
-    xlim(ax, [-0.5 T+0.5]); ylim(ax, [-0.05 1.05]);
-    drawnow limitrate;
+if isempty(ax) || ~isvalid(ax), return; end
+plot(ax, t, pdf / max(pdf), 'Color', color, 'LineWidth', 1.5);
+title(ax, sprintf('τ = %.2f ns (%d of %d)', tau_val, tau_idx, tau_stp));
+xlabel(ax, 'Time (ns)'); ylabel(ax, 'Amplitude');
+xlim(ax, [-0.5 T+0.5]); ylim(ax, [-0.05 1.05]);
+drawnow limitrate;
 end
