@@ -1,4 +1,4 @@
-function [fractionMaps, patterns, stats] = DTpatternmatching(RawData, patternsIn, config, ~)
+function [fractionMaps, patterns, stats] = DTpatternmatching(RawData, patternsIn, config, fig, irf_custom)
 % DTPATTERNMATCHING - Linear Decomposition using reference patterns
 % Based on the principle described in Niehörster et al., Nature Methods 2016.
 %
@@ -9,11 +9,14 @@ function [fractionMaps, patterns, stats] = DTpatternmatching(RawData, patternsIn
 %       - Matrix (nGates, K) of explicit reference decay patterns
 %   config: Configuration struct (dt, T, IRF, etc.)
 %   fig: (Optional) figure handle for progress bar
+%   irf_custom: (Optional) Custom IRF vector
 %
 % Outputs:
 %   fractionMaps: (nY, nX, K) maps of pattern contributions
 %   patterns: (nGates, K) matrix of reference patterns used
 %   stats: Basic statistics
+
+if nargin < 5, irf_custom = []; end
 
 [nY, nX, nGates] = size(RawData);
 M = nY * nX;
@@ -35,7 +38,7 @@ if isvector(patternsIn) && length(patternsIn) < nGates
     % Generate Reference Patterns
     patterns = DTpmod(nGates, tau_refs, t, gate_interp_fns, ...
         config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-        config.bPulseTrain, config.PT_Trep, config.PT_sigma);
+        config.bPulseTrain, config.PT_Trep, config.PT_sigma, 0, false, 0, irf_custom);
 else
     % Treat as Explicit Patterns
     patterns = patternsIn;
