@@ -1,4 +1,4 @@
-function [Results, stats] = DTiterative(RawData, config, fig, start_gate_idx, end_gate_idx, num_components)
+function [Results, stats] = DTiterative(RawData, config, fig, start_gate_idx, end_gate_idx, num_components, irf_custom)
 % DTITERATIVE - Iterative Reconvolution (LSQ) for FLIM Data
 % Fits lifetime tau using Weighted Least Squares (Chi-Squared minimization).
 %
@@ -8,6 +8,7 @@ function [Results, stats] = DTiterative(RawData, config, fig, start_gate_idx, en
 %   fig: (Optional) Figure handle for progress bar
 %   start_gate_idx, end_gate_idx: (Optional) Fit range
 %   num_components: (Optional) Number of exponential components (1, 2, or 3). Default 1.
+%   irf_custom: (Optional) Custom IRF vector
 %
 % Outputs:
 %   Results: Struct containing maps:
@@ -17,6 +18,7 @@ function [Results, stats] = DTiterative(RawData, config, fig, start_gate_idx, en
 %   stats: Struct with basic stats
 
 if nargin < 6 || isempty(num_components), num_components = 1; end
+if nargin < 7, irf_custom = []; end
 
 % 1. Setup Time vector
 dt = config.dt;
@@ -33,9 +35,16 @@ end
 gate_profiles = DTgates(t, config.r, actual_gate_edges); % (N_gates x Nt)
 
 % 2. IRF (Normalized)
-excitation = DTexcitation(t, config.fwhm, config.profile, ...
-    config.rise_time, config.fall_time, ...
-    config.bPulseTrain, config.PT_Trep, config.PT_sigma);
+if ~isempty(irf_custom)
+    excitation = irf_custom(:)';
+    if numel(excitation) ~= Nt
+        excitation = interp1(linspace(0, T, numel(excitation)), excitation, t, 'linear', 0);
+    end
+else
+    excitation = DTexcitation(t, config.fwhm, config.profile, ...
+        config.rise_time, config.fall_time, ...
+        config.bPulseTrain, config.PT_Trep, config.PT_sigma);
+end
 IRF = excitation / sum(excitation); % Sum=1
 
 % 3. Convolution Matrix W
