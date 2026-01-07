@@ -210,6 +210,11 @@ uibutton(controlPanel, 'Text', 'HILIGHTer', 'Position', [30 new_line panel_width
     NPhotonsField, MField, dtField, riseField, fallField, ...
     PTCheck, PTSField, PTTField, gFields, gateDropdown));
 
+% === Flows Button ===
+new_line = new_line - 30;
+uibutton(controlPanel, 'Text', 'Flows', 'Position', [30 new_line panel_width-60 20], ...
+    'ButtonPushedFcn', @(btn, event) Flows());
+
 % === Optimize Gates Button (Create late to ensure all fields exist) ===
 % Position manually relative to Gate Panel
 % We need to find the gate panel or just hardcode if we know the layout.
@@ -306,14 +311,4 @@ end
 % If there are more gates than fields, we can't show them all,
 % but the text output in optimizer preserves them.
 fprintf('Updated Main GUI with optimized gate widths.\n');
-end
-
-function toggleModality(dropdown, lifetimePanel, fretPanel)
-if strcmp(dropdown.Value, 'Lifetime Sweep')
-    lifetimePanel.Visible = 'on';
-    fretPanel.Visible = 'off';
-else
-    lifetimePanel.Visible = 'off';
-    fretPanel.Visible = 'on';
-end
 end
