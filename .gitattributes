@@ -1,5 +1,6 @@
 # Auto-detect text files and perform LF normalization
 * text=auto
+
 # MATLAB Specifics - Treat as Binary
 *.mlapp binary
 *.mat binary
@@ -8,8 +9,14 @@
 *.mdl binary
 *.mex* binary
 *.p binary
+
+# Deep Learning & Large Data (Treat as binary even if tracked)
+*.pth filter=lfs diff=lfs merge=lfs -text
+*.onnx binary
+*.h5 binary
+*.nc binary
+
 # Keep these as text but syntax highlight
 *.m text diff=matlab
 *.xml text
 *.json text
-*.pth filter=lfs diff=lfs merge=lfs -text
