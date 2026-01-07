@@ -57,6 +57,25 @@ try
 
     drawnow;
 
+    % Specialized HILIGHTer properties (if present in CSS)
+    if isfield(theme, 'HILIGHTer')
+        data = fig.UserData;
+        if isstruct(data)
+            hProps = theme.HILIGHTer;
+            hFields = fieldnames(hProps);
+            for i = 1:numel(hFields)
+                f = hFields{i};
+                val = hProps.(f);
+                % Convert Hex colors
+                if contains(lower(f), 'color') && ischar(val)
+                    val = hex2rgb(val);
+                end
+                data.Theme.(f) = val;
+            end
+            fig.UserData = data;
+        end
+    end
+
     % Save Preference
     try
         settingsFile = fullfile(fPath, 'settings.mat');

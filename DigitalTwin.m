@@ -12,6 +12,7 @@ fig_height  = 1120;
 fig_width   = 1400;
 
 fig = uifigure('Name', 'HILIGHT FLIM Digital Twin', 'Position', [100 100 fig_width fig_height]);
+fig.CloseRequestFcn = @(src, ev) manageSession(src, 'DigitalTwin', 'closing');
 
 % === App Properties & Theme ===
 setupAppProperties(fig);
@@ -124,15 +125,15 @@ lifetimePanel = uipanel(fig, 'Title', 'Lifetime (τ) sweep', 'FontWeight', 'bold
 
 new_line = panel_height-gui_header-gui_line;
 uilabel(lifetimePanel, 'Text', 'Min',                               'Position', [  10 new_line 30 22]);
-tauMinField = uieditfield(lifetimePanel, 'numeric', 'Value', 0.5,   'Position', [  40 new_line 60 22]);
+tauMinField = uieditfield(lifetimePanel, 'numeric', 'Value', 0.5,   'Position', [  40 new_line 60 22], 'Tag', 'tauMinField');
 uilabel(lifetimePanel, 'Text', 'ns',                                'Position', [ 105 new_line 20 22]);
 
 uilabel(lifetimePanel, 'Text', 'Max',                               'Position', [ 130 new_line 30 22]);
-tauMaxField = uieditfield(lifetimePanel, 'numeric', 'Value', 10,    'Position', [ 160 new_line 60 22]);
+tauMaxField = uieditfield(lifetimePanel, 'numeric', 'Value', 10,    'Position', [ 160 new_line 60 22], 'Tag', 'tauMaxField');
 uilabel(lifetimePanel, 'Text', 'ns',                                'Position', [ 225 new_line 20 22]);
 
 uilabel(lifetimePanel, 'Text', '#steps',                            'Position', [255 new_line 50 22]);
-tauStpField = uieditfield(lifetimePanel, 'numeric', 'Value', 20,    'Position', [300 new_line 60 22]);
+tauStpField = uieditfield(lifetimePanel, 'numeric', 'Value', 20,    'Position', [300 new_line 60 22], 'Tag', 'tauStpField');
 
 % === Monte Carlo Panel ===
 panel_height    = 130;
@@ -159,15 +160,15 @@ gridPanel = uipanel(fig, 'Title', 'Estimation Grid (τ)', 'FontWeight', 'bold', 
 
 new_line = panel_height-gui_header-gui_line;
 uilabel(gridPanel, 'Text', 'Min',                                   'Position', [ 10 new_line 30 22]);
-tauEMinField = uieditfield(gridPanel, 'numeric', 'Value', 0.03,     'Position', [ 40 new_line 60 22]);
+tauEMinField = uieditfield(gridPanel, 'numeric', 'Value', 0.03,     'Position', [ 40 new_line 60 22], 'Tag', 'tauEMinField');
 uilabel(lifetimePanel, 'Text', 'ns',                                'Position', [105 new_line 20 22]);
 
 uilabel(gridPanel, 'Text', 'Max',                                   'Position', [130 new_line 30 22]);
-tauEMaxField = uieditfield(gridPanel, 'numeric', 'Value', 30,       'Position', [160 new_line 60 22]);
+tauEMaxField = uieditfield(gridPanel, 'numeric', 'Value', 30,       'Position', [160 new_line 60 22], 'Tag', 'tauEMaxField');
 uilabel(lifetimePanel, 'Text', 'ns',                                'Position', [225 new_line 20 22]);
 
 uilabel(gridPanel, 'Text', '#steps',                                'Position', [255 new_line 50 22]);
-tauEStpField = uieditfield(gridPanel, 'numeric', 'Value', 2000,     'Position', [300 new_line 60 22]);
+tauEStpField = uieditfield(gridPanel, 'numeric', 'Value', 2000,     'Position', [300 new_line 60 22], 'Tag', 'tauEStpField');
 
 % === Flow Control Panel ===
 panel_height    = 160;
@@ -179,7 +180,7 @@ elapsedLabel    = uilabel(controlPanel, 'Text', 'Elapsed time: 0.0 s', 'Position
 remainingLabel  = uilabel(controlPanel, 'Text', 'Remaining time: N/A', 'Position', [200 new_line 150 22]);
 
 new_line    = new_line-gui_line;
-soundCheck  = uicheckbox(controlPanel, 'Text', 'Play sound when done', 'Position', [30 new_line 200 22], 'Value', true);
+soundCheck  = uicheckbox(controlPanel, 'Text', 'Play sound when done', 'Position', [30 new_line 200 22], 'Value', true, 'Tag', 'soundCheck');
 
 % === Shared axes for results ===
 axF   = uiaxes(fig, 'Position', [880 750 480 250]);
@@ -224,6 +225,9 @@ uibutton(controlPanel, 'Text', 'HILIGHTer', 'Position', [30 new_line panel_width
 uibutton(gatePanel, 'Text', 'Optimize Gates...', 'Position', [10 10 140 20], ...
     'FontSize', 10, 'BackgroundColor', [0.9 0.9 1.0], ...
     'ButtonPushedFcn', @(btn, event) launchOptimizer(TField, fwhmField, profileDropdown, riseField, fallField, PTCheck, PTTField, PTSField, gFields, NGateField, gateDropdown, tauMinField, tauMaxField, tauStpField, rField));
+
+% === Session Check ===
+manageSession(fig, 'DigitalTwin', 'check');
 
 end
 
