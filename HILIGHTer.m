@@ -32,7 +32,8 @@ end
 % === Main Figure ===
 figWidth = 1800;
 figHeight = 1050;
-fig = uifigure('Name', 'HILIGHTer', 'Position', [50 50 figWidth figHeight]);
+fig = uifigure('Name', 'HILIGHTer', 'Position', [50 50 figWidth figHeight], ...
+    'CloseRequestFcn', @(src, ev) manageSession(src, 'HILIGHTer', 'closing'));
 
 % === App Properties & Theme ===
 setupAppProperties(fig);
@@ -57,6 +58,9 @@ try
     dataStruct.runCount = 0;
     dataStruct.irf_source = 'Simulated';
     dataStruct.irf_data = []; % For experimental/estimated IRF
+    dataStruct.functions.refreshAllPlots = @refreshAllPlots;
+    dataStruct.functions.syncAnalysisTabsWithConfig = @syncAnalysisTabsWithConfig;
+    dataStruct.functions.syncAnalysisMethods = @syncAnalysisMethods;
     fig.UserData = dataStruct;
 
     % === Layout Constants ===
@@ -75,278 +79,349 @@ try
     labelW = 85;
 
     % First Line: App Mode
-    uilabel(fig, 'Text', 'App Mode', 'Position', [col1X, toggleY, labelW, 25], 'FontWeight', 'bold');
+    % First Line: App Mode
+    % App Mode Group
+    % User Request: Left aligned to the analysis control tab (col1X).
+    swX = col1X;
     swMode = uiswitch(fig, 'slider', 'Items', {'', ''}, 'ItemsData', {'Simulator', 'Analyser'}, ...
-        'Position', [col1X + labelW, toggleY, 45, 20], ...
+        'Position', [swX, toggleY, 45, 20], ...
         'Tag', 'swMode', ...
         'ValueChangedFcn', @(src, ev) toggleAppMode(fig, src.Value));
     swMode.Value = initialMode;
-    uilabel(fig, 'Text', swMode.Value, 'Position', [col1X + labelW + 60, toggleY, 100, 25], ...
+    swMode.Value = initialMode;
+    uilabel(fig, 'Text', swMode.Value, 'Position', [swX + 50, toggleY, 100, 25], ...
         'Tag', 'lblAppStatus', 'FontWeight', 'bold', 'FontColor', [0 0.45 0.74]);
 
-    % Second Line: Expert Mode
-    toggleY2 = toggleY - 35;
-    uilabel(fig, 'Text', 'Expert Mode', 'Position', [col1X, toggleY2, labelW, 25], 'FontWeight', 'bold');
+    % Expert Mode (Moved to same line, to the right)
+    % Restored to previous position to ensure App Mode visibility
+    offsetX = col1X + 55; % User Request: Move right by 20px (35 + 20)
+
+    % uilabel(fig, 'Text', 'Expert Mode', 'Position', [offsetX, toggleY, labelW, 25], 'FontWeight', 'bold'); % Removed Title
     swExpert = uiswitch(fig, 'slider', 'Items', {'', ''}, 'ItemsData', {'Basic', 'Expert'}, ...
-        'Position', [col1X + labelW, toggleY2, 45, 20], ...
+        'Position', [offsetX + labelW, toggleY, 45, 20], ...
         'Tag', 'swExpert', ...
         'ValueChangedFcn', @(src, ev) toggleExpertMode(fig, src.Value));
     swExpert.Value = 'Basic';
-    uilabel(fig, 'Text', swExpert.Value, 'Position', [col1X + labelW + 60, toggleY2, 100, 25], ...
+    uilabel(fig, 'Text', swExpert.Value, 'Position', [offsetX + labelW + 60, toggleY, 100, 25], ...
         'Tag', 'lblExpertStatus', 'FontWeight', 'bold', 'FontColor', [0.5 0.5 0.5]);
 
     % === Configuration Panel (Top Left) ===
     % === Configuration Panel (Top Left) ===
-    configPanelH = 580;
+    % === Configuration Panel ===
+    configPanelH = 650; % Reduced from 850 (approx 25% shorter)
     configPanel = uipanel(fig, 'Title', 'Simulation Configuration', 'Tag', 'pnlConfig', ...
-        'Position', [col1X, figHeight - configPanelH - margin - 90, col1W, configPanelH]);
+        'Position', [col1X, figHeight - configPanelH - margin - 50, col1W, configPanelH]);
 
-    d.Value = 0.15; d.Message = 'Creating Simulation Configuration...';
+    inputH = 22;
+    currY = configPanelH - 40 - 15; % Moved 15px lower
 
-    % === Analyzer Panel (Alternative to Config) ===
+    % 1. Mode Selector
+    lblMode = uilabel(configPanel, 'Text', 'Mode:', 'Position', [10 currY 40 inputH]);
+    modeDropdown = uidropdown(configPanel, ...
+        'Items', {'Single Lifetime', 'Lifetime Mix', 'FRET (Donor FLIM)', 'seFRET (Donor/Acceptor FLIM)', 'Time resolved anisotropy'}, ...
+        'Value', 'Single Lifetime', ...
+        'Position', [55 currY 210 inputH], 'Tag', 'modeDropdown', ...
+        'ValueChangedFcn', @(src, ev) toggleHILIGHTerModality(fig));
+
+    % 2. Configuration Manager
+    currY = currY - 30;
+    uilabel(configPanel, 'Text', 'Config:', 'Position', [10 currY 45 inputH]);
+    uidropdown(configPanel, 'Items', {'Default', 'Load...', 'Save Current...'}, ...
+        'Position', [55 currY 210 inputH], 'Tag', 'ddConfigMgr', ...
+        'ValueChangedFcn', @(src, ev) manageSimulationConfig(fig, src));
+    % Placeholder for analyzer panel (keep hidden)
     analyzerPanel = uipanel(fig, 'Title', 'Analysis Controls', 'Tag', 'pnlAnalyzer', ...
         'Position', configPanel.Position, 'Visible', 'off');
 
-    % -- Analyzer Panel Contents --
-    currYa = configPanelH - 50;
-    uilabel(analyzerPanel, 'Text', 'Modality:', 'Position', [10 currYa 70 22]);
-    uidropdown(analyzerPanel, 'Items', {'Import Single File'}, ...
-        'Position', [80 currYa 180 22], 'Tag', 'ddModality');
+    % --- Ported Flows GUI Layout ---
+    % Main Grid for Flows
+    flGrid = uigridlayout(analyzerPanel, [4 1]);
+    flGrid.RowHeight = {'1.5x', '1.5x', 90, 50}; % Adapted relative heights
+    flGrid.Padding = [5 5 5 5];
+    flGrid.RowSpacing = 5;
 
-    currYa = currYa - 45;
-    uibutton(analyzerPanel, 'Text', 'LOAD FILE', 'FontWeight', 'bold', ...
-        'Position', [20 currYa 120 20], 'Tag', 'btnLoadFile', ...
+    % 1. Conditions Panel
+    condPanel = uipanel(flGrid, 'Title', 'CONDITIONS', 'FontWeight', 'bold', ...
+        'BackgroundColor', [0.18 0.18 0.20], 'ForegroundColor', [0.9 0.9 0.9]);
+
+    cpGrid = uigridlayout(condPanel, [3 1]);
+    cpGrid.RowHeight = {30, '1x', 30};
+    cpGrid.Padding = [2 2 2 2]; cpGrid.RowSpacing = 2;
+
+    % New Buttons
+    btnGrid = uigridlayout(cpGrid, [1 2]);
+    btnGrid.Padding = [0 0 0 0];
+    uibutton(btnGrid, 'Text', 'Files 📄', 'ButtonPushedFcn', @(s,e) flows_createFromFiles(fig), ...
+        'Tooltip', 'Create a new Experimental Condition group by selecting files.');
+    uibutton(btnGrid, 'Text', 'Folder 📁', 'ButtonPushedFcn', @(s,e) flows_createFromFolder(fig), ...
+        'Tooltip', 'Create a new Experimental Condition group by importing a folder.');
+
+    % List
+    condList = uilistbox(cpGrid, 'Tag', 'condListBox', 'BackgroundColor', [0.12 0.12 0.14], ...
+        'FontColor', [0.9 0.9 0.9], 'ValueChangedFcn', @(s,e) flows_updateFileDisplay(fig), 'Items', {});
+
+    % Tools
+    toolGrid = uigridlayout(cpGrid, [1 5]);
+    toolGrid.Padding = [0 0 0 0]; toolGrid.ColumnSpacing = 1;
+    uibutton(toolGrid, 'Text', '✎', 'ButtonPushedFcn', @(s,e) flows_renameCondition(fig), ...
+        'Tooltip', 'Rename: Change the name of the selected condition group.');
+    uibutton(toolGrid, 'Text', '±', 'ButtonPushedFcn', @(s,e) flows_flagCondition(fig), ...
+        'Tooltip', 'Set Type: Cycle this condition between Experimental, Positive Control, and Negative Control.');
+    uibutton(toolGrid, 'Text', '🗑', 'FontColor', [0.8 0.3 0.3], 'ButtonPushedFcn', @(s,e) flows_deleteCondition(fig), ...
+        'Tooltip', 'Delete: Permanently remove the selected condition group.');
+    uibutton(toolGrid, 'Text', '🔗', 'ButtonPushedFcn', @(s,e) flows_mergeConditions(fig), ...
+        'Tooltip', 'Merge: Combine two or more selected conditions into a single group.');
+    uibutton(toolGrid, 'Text', '❐', 'ButtonPushedFcn', @(s,e) flows_duplicateCondition(fig), ...
+        'Tooltip', 'Duplicate: Create a copy of the selected condition group.');
+
+    % 2. Files Panel
+    filePanel = uipanel(flGrid, 'Title', 'FILES', 'FontWeight', 'bold', ...
+        'BackgroundColor', [0.18 0.18 0.20], 'ForegroundColor', [0.9 0.9 0.9]);
+    fpGrid = uigridlayout(filePanel, [2 1]);
+    fpGrid.RowHeight = {'1x', 30};
+    fpGrid.Padding = [2 2 2 2];
+
+    fileList = uilistbox(fpGrid, 'Tag', 'fileListBox', 'Multiselect', 'on', ...
+        'BackgroundColor', [0.12 0.12 0.14], 'FontColor', [0.9 0.9 0.9], 'Items', {});
+
+    fTools = uigridlayout(fpGrid, [1 3]);
+    fTools.Padding = [0 0 0 0];
+    uibutton(fTools, 'Text', 'Add...', 'ButtonPushedFcn', @(s,e) flows_addFiles(fig), ...
+        'Tooltip', 'Add more files or content directly to the selected condition.');
+    uibutton(fTools, 'Text', '🗑', 'FontColor', [0.8 0.3 0.3], 'ButtonPushedFcn', @(s,e) flows_removeFiles(fig), ...
+        'Tooltip', 'Remove Files: Delete selected file(s) from this condition list.');
+    uibutton(fTools, 'Text', '➡', 'ButtonPushedFcn', @(s,e) flows_moveFiles(fig), ...
+        'Tooltip', 'Move: Move selected files to a different condition group.');
+
+    % 3. Pre-Processing
+    prePanel = uipanel(flGrid, 'Title', 'PRE-PROCESS', 'FontWeight', 'bold', ...
+        'BackgroundColor', [0.18 0.18 0.20], 'ForegroundColor', [0.9 0.9 0.9]);
+    ppGrid = uigridlayout(prePanel, [2 3]);
+    ppGrid.RowHeight = {25, 25};
+    ppGrid.ColumnWidth = {'fit', '1x', 60};
+    ppGrid.Padding = [2 2 2 2];
+
+    % Row 1: Binning
+    uilabel(ppGrid, 'Text', 'Binning:');
+    binType = uidropdown(ppGrid, 'Items', {'None', 'Simple Binning', 'Gaussian Filter'}, ...
+        'Tag', 'flowsBinType', 'ValueChangedFcn', @(s,e) flows_onBinTypeChange(fig, s));
+    binSpin = uispinner(ppGrid, 'Enable', 'off', 'Tag', 'flowsBinSpinner', ...
+        'Tooltip', 'Parameter (Bin Size or Sigma)');
+
+    % Row 2: Channels
+    uilabel(ppGrid, 'Text', 'Channels:');
+    chMode = uidropdown(ppGrid, 'Items', {'Keep All Channels', 'Sum All Channels', 'Force Single Channel'}, ...
+        'Tag', 'flowsChannelMode', 'Tooltip', 'How to handle multi-channel data', ...
+        'ValueChangedFcn', @(s,e) flows_onChannelModeChange(fig, s));
+    chSpin = uispinner(ppGrid, 'Limits', [1 4], 'Value', 1, 'Enable', 'off', ...
+        'Tag', 'flowsChannelSpinner', 'Tooltip', 'Select Channel Index');
+
+    % 4. Run
+    uibutton(flGrid, 'Text', 'Load Data 🚀', 'FontWeight', 'bold', ...
+        'BackgroundColor', [0.2 0.6 0.3], 'FontColor', [1 1 1], 'FontSize', 16, ...
+        'ButtonPushedFcn', @(s,e) flows_runAnalysis(fig), ...
+        'Tooltip', 'Proceed to the Analysis Step');
+
+    % 3. Generate Button
+    currY = currY - 40;
+    uibutton(configPanel, 'Text', 'GENERATE DATA', 'FontWeight', 'bold', ...
+        'Position', [30 currY 220 30], 'Tag', 'btnGenerate', ...
         'BackgroundColor', [0 0.4470 0.7410], 'FontColor', [1 1 1], ...
-        'ButtonPushedFcn', @(btn, event) onLoadFile(fig));
-
-    % -- Enhanced Drag and Drop Area --
-    dropZone = uipanel(analyzerPanel, 'Title', '', ...
-        'Position', [20, 30, 240, 110], ...
-        'BackgroundColor', [0.94 0.96 1.0], ... % Very light blue
-        'BorderType', 'line', ...
-        'HighlightColor', [0 0.45 0.74]); % MATLAB Blue border
-
-    uilabel(dropZone, 'Text', '[ + ]', 'FontSize', 24, ...
-        'FontWeight', 'bold', 'FontColor', [0 0.45 0.74], ...
-        'HorizontalAlignment', 'center', 'Position', [0 60 240 40]);
-
-    % --- Sidebar (Left) ---
-
-    uilabel(dropZone, 'Text', 'DRAG & DROP FILE', 'FontSize', 10, ...
-        'FontWeight', 'bold', 'FontColor', [0.2 0.4 0.6], ...
-        'HorizontalAlignment', 'center', 'Position', [0 35 240 20]);
-
-    uilabel(dropZone, 'Text', '(or click LOAD above)', 'FontSize', 8, ...
-        'FontColor', [0.5 0.5 0.5], ...
-        'HorizontalAlignment', 'center', 'Position', [0 15 240 20]);
-
-    % Enable figure-wide drag and drop logic
-    if isprop(fig, 'WindowFileDroppedFcn')
-        fig.WindowFileDroppedFcn = @(src, event) onFileDropped(fig, event);
-    else
-        % If version is < R2020b, keep visible but update text to reflect status
-        dropZone.BackgroundColor = [0.9 0.9 0.9]; % Grayed out
-        lbl1 = findobj(dropZone, 'Text', 'DRAG & DROP FILE');
-        if ~isempty(lbl1), lbl1.Text = 'DRAG & DROP (Not active)'; end
-        lbl2 = findobj(dropZone, 'Text', '(or click LOAD above)');
-        if ~isempty(lbl2), lbl2.Text = 'Upgrade to R2020b+ for this feature'; end
-    end
-
-    % Apply initial mode visibility
-    if strcmp(initialMode, 'Analyser')
-        configPanel.Visible = 'off';
-        analyzerPanel.Visible = 'on';
-    end
-
-    inputH = 22;
-
-    % === Configuration Panel (Top Left) ===
-    % Config Panel already created above
-    % configPanelH = 450;
-    % configPanel construction removed to avoid duplicate
-
-    % ... (Analyzer Panel skipped, unrelated) ...
-
-    % Apply initial mode visibility: Handled later or above?
-    % The replace block skips 105-159. Adjust StartLine to be specific to the block.
-
-    % -- Mode Selection --
-    currY = configPanelH - 50;
-    lblMode = uilabel(configPanel, 'Text', 'Mode:', 'Position', [10 currY 50 inputH]);
-    modeDropdown = uidropdown(configPanel, ...
-        'Items', {'Lifetime Gradient', 'Lifetime Mix', 'FRET', 'FRET 2-Channel', 'Anisotropy'}, ...
-        'Value', 'Lifetime Gradient', ...
-        'Tooltip', 'Select simulation scenario', ...
-        'Position', [70 currY 200 inputH], 'Tag', 'modeDropdown'); % Use full width
-
-    currY = currY - 35;
-    % -- Image Dimensions (Line 1) --
-    uilabel(configPanel, 'Text', 'Size:', 'Position', [10 currY 40 inputH]);
-    dimXField = uieditfield(configPanel, 'numeric', 'Value', 64, 'Position', [50 currY 40 inputH], 'Tooltip', 'Width', 'Tag', 'dimXField');
-    uilabel(configPanel, 'Text', 'x', 'Position', [92 currY 10 inputH]);
-    dimYField = uieditfield(configPanel, 'numeric', 'Value', 64, 'Position', [105 currY 40 inputH], 'Tooltip', 'Height', 'Tag', 'dimYField');
-
-    uibutton(configPanel, 'Text', 'x2', 'Position', [160 currY 30 inputH], 'Tooltip', 'Double size', ...
-        'ButtonPushedFcn', @(btn, event) adjustSize(dimXField, dimYField, 2));
-    uibutton(configPanel, 'Text', '/2', 'Position', [195 currY 30 inputH], 'Tooltip', 'Halve size', ...
-        'ButtonPushedFcn', @(btn, event) adjustSize(dimXField, dimYField, 0.5));
-
-    currY = currY - 35;
-    % -- Photons & Dwell Time --
-    uilabel(configPanel, 'Text', 'Photons:', 'Position', [10 currY 55 inputH]);
-    photonsField = uieditfield(configPanel, 'numeric', 'Value', dataStruct.config.N_photons, 'Position', [70 currY 50 inputH], 'Tooltip', 'Photons/pixel', 'Tag', 'photonsField');
-
-    uilabel(configPanel, 'Text', 'Dwell (μs):', 'Position', [125 currY 55 inputH]);
-    dwellField = uispinner(configPanel, 'Limits', [0.1 1000000], 'Value', 1000, 'Step', 0.1, ...
-        'Position', [185 currY 70 inputH], 'Tag', 'dwellField', 'Tooltip', 'Pixel dwell time in microseconds');
-
-    currY = currY - 35;
-    % -- Background & Count Rate --
-    uilabel(configPanel, 'Text', 'Bkg:', 'Position', [10 currY 30 inputH]);
-    darkCountsField = uieditfield(configPanel, 'numeric', 'Value', 0, 'Position', [50 currY 50 inputH], 'Tooltip', 'Background counts', 'Tag', 'darkCountsField');
-
-    uilabel(configPanel, 'Text', 'Chans:', 'Position', [110 currY 45 inputH], 'Tag', 'lblNumCh');
-    uispinner(configPanel, 'Limits', [1 2], 'Value', 1, 'Position', [160 currY 50 inputH], 'Tag', 'numChannelsField');
-
-    lblRate = uilabel(configPanel, 'Text', 'Rate: 10.0 MHz', 'Position', [220 currY 150 inputH], ...
-        'Tag', 'lblRate', 'FontColor', [0.3 0.3 0.3], 'FontSize', 10);
-
-    % Update Rate Label
-    rateUpdate = @(src, ev) set(lblRate, 'Text', sprintf('Rate: %.1f MHz', photonsField.Value / dwellField.Value));
-    photonsField.ValueChangedFcn = rateUpdate;
-    dwellField.ValueChangedFcn = rateUpdate;
-    rateUpdate([], []); % Initial
-
-    currY = currY - 45;
-    % -- Generate Button Placeholder --
-    btnY = currY;
-
-    % -- Mode Specific Inputs (Below Generate) --
-    currY = currY - 20; % Reduced spacing
-    paramStartY = currY;
-
-    % 1. FRET Fields
-    fretY = paramStartY;
-    lblFretTau = uilabel(configPanel, 'Text', 'Donor T (ps):', 'Position', [10 fretY 80 inputH], 'Visible', 'off');
-    fretTauField = uieditfield(configPanel, 'numeric', 'Value', 3000, 'Position', [100 fretY 60 inputH], ...
-        'Tag', 'fretTauField', 'Visible', 'off');
-
-    uilabel(configPanel, 'Text', 'Acc T (ps):', 'Position', [170 fretY 70 inputH], 'Visible', 'off', 'Tag', 'lblAccTau');
-    uieditfield(configPanel, 'numeric', 'Value', 2000, 'Position', [240 fretY 60 inputH], ...
-        'Tag', 'fretAcceptorTauField', 'Visible', 'off');
-
-    fretY = fretY - 35;
-    lblMinFRET = uilabel(configPanel, 'Text', 'Min E%:', 'Position', [10 fretY 50 inputH], 'Visible', 'off');
-    minFRETField = uieditfield(configPanel, 'numeric', 'Value', 0, 'Position', [60 fretY 35 inputH], ...
-        'Tag', 'minFRETField', 'Visible', 'off');
-    lblMaxFRET = uilabel(configPanel, 'Text', 'Max E:', 'Position', [100 fretY 50 inputH], 'Visible', 'off');
-    maxFRETField = uieditfield(configPanel, 'numeric', 'Value', 100, 'Position', [150 fretY 35 inputH], ...
-        'Tag', 'maxFRETField', 'Visible', 'off');
-
-    uilabel(configPanel, 'Text', 'Dir.Ex%:', 'Position', [195 fretY 50 inputH], 'Visible', 'off', 'Tag', 'lblDirectEx');
-    uieditfield(configPanel, 'numeric', 'Value', 5, 'Position', [250 fretY 40 inputH], ...
-        'Tag', 'fretDirectExField', 'Visible', 'off');
-
-    fretY = fretY - 35;
-    lblMinFrac = uilabel(configPanel, 'Text', 'Min f%:', 'Position', [10 fretY 50 inputH], 'Visible', 'off');
-    minFracField = uieditfield(configPanel, 'numeric', 'Value', 10, 'Position', [65 fretY 35 inputH], ...
-        'Tag', 'minFracField', 'Visible', 'off');
-    lblMaxFrac = uilabel(configPanel, 'Text', 'Max f:', 'Position', [105 fretY 45 inputH], 'Visible', 'off');
-    maxFracField = uieditfield(configPanel, 'numeric', 'Value', 90, 'Position', [150 fretY 35 inputH], ...
-        'Tag', 'maxFracField', 'Visible', 'off');
-
-    uilabel(configPanel, 'Text', 'Bleed%:', 'Position', [195 fretY 45 inputH], 'Visible', 'off', 'Tag', 'lblBleed');
-    uieditfield(configPanel, 'numeric', 'Value', 10, 'Position', [250 fretY 40 inputH], ...
-        'Tag', 'fretBleedThroughField', 'Visible', 'off');
-
-    % 1b. Anisotropy Fields
-    anisY = paramStartY;
-    uilabel(configPanel, 'Text', 'Lifetime (ps):', 'Position', [10 anisY 80 inputH], 'Visible', 'off', 'Tag', 'lblAnisTau');
-    uieditfield(configPanel, 'numeric', 'Value', 2500, 'Position', [100 anisY 60 inputH], ...
-        'Tag', 'anisLifetimeField', 'Visible', 'off');
-
-    uilabel(configPanel, 'Text', 'Rotation(ps):', 'Position', [170 anisY 80 inputH], 'Visible', 'off', 'Tag', 'lblAnisRot');
-    uieditfield(configPanel, 'numeric', 'Value', 500, 'Position', [250 anisY 50 inputH], ...
-        'Tag', 'anisRotationField', 'Visible', 'off');
-
-    anisY = anisY - 35;
-    uilabel(configPanel, 'Text', 'Initial r0:', 'Position', [10 anisY 70 inputH], 'Visible', 'off', 'Tag', 'lblAnisR0');
-    uieditfield(configPanel, 'numeric', 'Value', 0.4, 'Position', [80 anisY 50 inputH], ...
-        'Tag', 'anisR0Field', 'Visible', 'off');
-
-    uilabel(configPanel, 'Text', 'Variation:', 'Position', [145 anisY 60 inputH], 'Visible', 'off', 'Tag', 'lblAnisVar');
-    uidropdown(configPanel, 'Items', {'None', 'Lifetime Sweep X', 'Lifetime Sweep Y', 'Rotation Sweep X', 'Rotation Sweep Y'}, ...
-        'Position', [210 anisY 90 inputH], 'Tag', 'anisVarAxisDropdown', 'Visible', 'off');
-
-    % 2. Lifetime Fields
-    lifeY = paramStartY;
-    lblTau1 = uilabel(configPanel, 'Text', 'Lifetime 1 (ps):', 'Position', [10 lifeY 90 inputH]);
-    tau1Field = uieditfield(configPanel, 'numeric', 'Value', 1000, 'Position', [100 lifeY 80 inputH], ...
-        'Tooltip', 'Base lifetime 1', 'Tag', 'tau1Field');
-
-    lifeY = lifeY - 35;
-    lblTau2 = uilabel(configPanel, 'Text', 'Lifetime 2 (ps):', 'Position', [10 lifeY 90 inputH]);
-    tau2Field = uieditfield(configPanel, 'numeric', 'Value', 2000, 'Position', [100 lifeY 80 inputH], ...
-        'Tooltip', 'Base lifetime 2', 'Tag', 'tau2Field');
-
-    % 3. Instrument / Advanced Simulation Fields
-    instY = lifeY - 35;
-    instY = instY - 45; % Move down for new fields
-    uilabel(configPanel, 'Text', 'IRF Shift Ch1:', 'Position', [10 instY 80 inputH]);
-    irfShiftField = uispinner(configPanel, 'Limits', [-10000 10000], 'Value', 0, 'Step', 100, ...
-        'Position', [95 instY 70 inputH], 'Tag', 'irfShiftField');
-
-    chkWrap = uicheckbox(configPanel, 'Text', 'Wrap Ch1', 'Position', [175 instY 100 inputH], ...
-        'Value', 0, 'Tag', 'chkWrap', 'Tooltip', 'Simulate pulse train wrap-around');
-
-    instY = instY - 30;
-    uilabel(configPanel, 'Text', 'IRF Shift Ch2:', 'Position', [10 instY 80 inputH]);
-    irfShift2Field = uispinner(configPanel, 'Limits', [-10000 10000], 'Value', 0, 'Step', 100, ...
-        'Position', [95 instY 70 inputH], 'Tag', 'irfShift2Field');
-
-    chkWrap2 = uicheckbox(configPanel, 'Text', 'Wrap Ch2', 'Position', [175 instY 100 inputH], ...
-        'Value', 0, 'Tag', 'chkWrap2', 'Tooltip', 'Simulate pulse train wrap-around for Ch2');
-
-    instY = instY - 35;
-    uilabel(configPanel, 'Text', 'Dead Time (ps):', 'Position', [10 instY 90 inputH]);
-    deadTimeField = uispinner(configPanel, 'Limits', [0 10000], 'Value', 0, 'Step', 100, ...
-        'Position', [105 instY 70 inputH], 'Tag', 'deadTimeField');
-
-    % -- Generate Button (Created Last) --
-    uibutton(configPanel, 'Text', 'GENERATE', 'FontWeight','bold', 'Tooltip', 'Create mock data', ...
-        'Position', [20 btnY 240 18], ... % Narrower vertically
         'ButtonPushedFcn', @(btn, event) onGenerate(fig));
 
+    % === Tab Group for Settings ===
+    % === Tab Group for Settings ===
+    % Moved down 20px and made shorter (shorter by ~25%)
+    tabGroupTop = currY - 30;
+    tabGroupHeight = 435; % Increased from 400 (+35px)
+    simTabGroup = uitabgroup(configPanel, 'Position', [5, tabGroupTop - tabGroupHeight, col1W - 10, tabGroupHeight], 'Tag', 'simTabGroup');
 
-    % Callbacks for instant updating of Instrument Plot
-    tau1Field.ValueChangedFcn = @(src, event) updateInstrumentPlot(fig, tau1Field, tau2Field);
-    tau2Field.ValueChangedFcn = @(src, event) updateInstrumentPlot(fig, tau1Field, tau2Field);
-    irfShiftField.ValueChangedFcn = @(src, event) updateInstrumentPlot(fig, tau1Field, tau2Field);
-    deadTimeField.ValueChangedFcn = @(src, event) updateInstrumentPlot(fig, tau1Field, tau2Field);
-    chkWrap.ValueChangedFcn = @(src, event) updateInstrumentPlot(fig, tau1Field, tau2Field);
+    configPanelBottom = tabGroupTop - tabGroupHeight;
 
-    % Group Lifetime
-    lifetimeGroup = [lblTau1, tau1Field, lblTau2, tau2Field];
-    % Group FRET
-    fretGroup = [lblFretTau, fretTauField, lblMinFRET, minFRETField, lblMaxFRET, maxFRETField, ...
-        lblMinFrac, minFracField, lblMaxFrac, maxFracField];
-    % Group FRET 2-Channel
-    fret2Group = [findobj(configPanel, 'Tag', 'lblAccTau'), findobj(configPanel, 'Tag', 'fretAcceptorTauField'), ...
-        findobj(configPanel, 'Tag', 'lblDirectEx'), findobj(configPanel, 'Tag', 'fretDirectExField'), ...
-        findobj(configPanel, 'Tag', 'lblBleed'), findobj(configPanel, 'Tag', 'fretBleedThroughField')];
-    % Group Anisotropy
-    anisGroup = [findobj(configPanel, 'Tag', 'lblAnisTau'), findobj(configPanel, 'Tag', 'anisLifetimeField'), ...
-        findobj(configPanel, 'Tag', 'lblAnisRot'), findobj(configPanel, 'Tag', 'anisRotationField'), ...
-        findobj(configPanel, 'Tag', 'lblAnisR0'), findobj(configPanel, 'Tag', 'anisR0Field'), ...
-        findobj(configPanel, 'Tag', 'lblAnisVar'), findobj(configPanel, 'Tag', 'anisVarAxisDropdown')];
+    % --- Tab 1: Acquisition (Size, Inst, Photons) ---
+    tabAcq = uitab(simTabGroup, 'Title', 'Acquisition');
 
-    modeDropdown.ValueChangedFcn = @(dd, ~) toggleHILIGHTerModality(dd, lifetimeGroup, fretGroup, fret2Group, anisGroup, configPanel);
-    toggleHILIGHTerModality(modeDropdown, lifetimeGroup, fretGroup, fret2Group, anisGroup, configPanel); % Initial
+    % Dimensions
+    yPos = 350; % Moved up by 30 (was 320) to avoid bottom clipping
+    uilabel(tabAcq, 'Text', 'Dimensions:', 'Position', [10 yPos 80 22], 'FontWeight', 'bold');
+    yPos = yPos - 25;
+    uilabel(tabAcq, 'Text', 'X:', 'Position', [10 yPos 20 22]);
+    spnDimX = uispinner(tabAcq, 'Limits', [1 4096], 'Value', 64, 'Step', 1, ...
+        'Position', [30 yPos 60 22], 'Tag', 'dimXField', 'UserData', 64, ...
+        'ValueChangedFcn', @(src,ev) onDimChange(fig, 'X'));
+
+    uilabel(tabAcq, 'Text', 'Y:', 'Position', [100 yPos 20 22]);
+    spnDimY = uispinner(tabAcq, 'Limits', [1 4096], 'Value', 64, 'Step', 1, ...
+        'Position', [120 yPos 60 22], 'Tag', 'dimYField', 'Enable', 'off', 'UserData', 64, ...
+        'ValueChangedFcn', @(src,ev) onDimChange(fig, 'Y'));
+
+    chkAspect = uicheckbox(tabAcq, 'Text', '1:1', 'Position', [190 yPos 50 22], ...
+        'Value', 1, 'Tag', 'chkAspect', 'ValueChangedFcn', @(src,ev) onDimChange(fig, 'Aspect'));
+
+    % Instrument Settings
+    yPos = yPos - 30;
+    uilabel(tabAcq, 'Text', 'Instrument:', 'Position', [10 yPos 80 22], 'FontWeight', 'bold');
+
+    yPos = yPos - 25;
+    uilabel(tabAcq, 'Text', 'Channels:', 'Position', [10 yPos 60 22]);
+    uispinner(tabAcq, 'Limits', [1 4], 'Value', 1, 'Position', [80 yPos 50 22], 'Tag', 'numChannelsField');
+
+    yPos = yPos - 25;
+    uilabel(tabAcq, 'Text', 'Dwell (us):', 'Position', [10 yPos 60 22]);
+    uispinner(tabAcq, 'Limits', [0.1 1e6], 'Value', 1000, 'Position', [80 yPos 70 22], 'Tag', 'dwellField', ...
+        'ValueChangedFcn', @(src,ev) updateRateDisplay(fig));
+
+    uilabel(tabAcq, 'Text', 'Dead (ns):', 'Position', [160 yPos 60 22]);
+    uispinner(tabAcq, 'Limits', [0 1e5], 'Value', 0, 'Position', [220 yPos 50 22], 'Tag', 'deadTimeField', ...
+        'ValueChangedFcn', @(src,ev) updateRateDisplay(fig));
+
+    % Photons & Rate
+    yPos = yPos - 30;
+    uilabel(tabAcq, 'Text', 'Photons / Pixel:', 'Position', [10 yPos 100 22]);
+    uilib.spnPhotons = uispinner(tabAcq, 'Limits', [1 1e9], 'Value', 1000, 'Step', 1, ...
+        'Position', [120 yPos 80 22], 'Tag', 'photonsField', 'UserData', 1000, ...
+        'ValueChangedFcn', @(src,ev) onPhotonChange(fig));
+
+    yPos = yPos - 25;
+    uicheckbox(tabAcq, 'Text', 'Multihit (Ideal)', 'Position', [10 yPos 120 22], 'Value', 1, 'Tag', 'chkMultihit', ...
+        'Tooltip', 'Count all photons (ideal) or simulate pile-up loss');
+
+    yPos = yPos - 20;
+    uilabel(tabAcq, 'Text', 'Rate: -- MHz', 'Position', [10 yPos 150 22], 'Tag', 'lblRate', 'FontColor', [0.3 0.3 0.3]);
+    yPos = yPos - 15;
+    uilabel(tabAcq, 'Text', 'Lost: -- %', 'Position', [10 yPos 150 22], 'Tag', 'lblPileUp', 'FontColor', [0.8 0 0]);
+
+    % IRF & Wrap
+    yPos = yPos - 30;
+    uilabel(tabAcq, 'Text', 'IRF & Correction:', 'Position', [10 yPos 120 22], 'FontWeight', 'bold');
+
+    yPos = yPos - 25;
+    uicheckbox(tabAcq, 'Text', 'Wrap Decays', 'Position', [10 yPos 100 22], 'Value', 1, 'Tag', 'chkWrap', 'Tooltip', 'Simulate periodic boundary (pulse train)');
+    uicheckbox(tabAcq, 'Text', 'Sync IRFs', 'Position', [120 yPos 80 22], 'Value', 1, 'Tag', 'chkSyncIRF', ...
+        'ValueChangedFcn', @(src,ev) toggleIRFSync(fig));
+
+    yPos = yPos - 25;
+    uilabel(tabAcq, 'Text', 'Shift Ch1 (ps):', 'Position', [10 yPos 80 22]);
+    uispinner(tabAcq, 'Limits', [-5000 5000], 'Value', 0, 'Step', 100, 'Position', [100 yPos 60 22], ...
+        'Tag', 'irfShiftField_Ch1', 'ValueChangedFcn', @(src,ev) toggleIRFSync(fig));
+
+    yPos = yPos - 25;
+    uilabel(tabAcq, 'Text', 'Shift Ch2 (ps):', 'Position', [10 yPos 80 22]);
+    uispinner(tabAcq, 'Limits', [-5000 5000], 'Value', 0, 'Step', 100, 'Position', [100 yPos 60 22], ...
+        'Tag', 'irfShiftField_Ch2', 'Enable', 'off');
+
+    % Background
+    yPos = yPos - 30;
+    uilabel(tabAcq, 'Text', 'Background (cts):', 'Position', [10 yPos 100 22]);
+    uieditfield(tabAcq, 'numeric', 'Value', 0, 'Position', [110 yPos 60 22], 'Tag', 'darkCountsField');
+
+
+    % --- Tab 2: Model & Sweeping ---
+    tabModel = uitab(simTabGroup, 'Title', 'Model & Sweep');
+
+    % --- Tab 3: Debug (Expert Only) ---
+    % --- Tab 3: Debug (Expert Only) ---
+    tabDebug = uitab(simTabGroup, 'Title', 'Debug', 'Tag', 'tabDebug');
+    % Store handle in group UserData so we can retrieve it when unparented
+    if isempty(simTabGroup.UserData), simTabGroup.UserData = struct(); end
+    sGroupData = simTabGroup.UserData;
+    sGroupData.tabDebug = tabDebug;
+    simTabGroup.UserData = sGroupData;
+
+    % Create Test Buttons
+    for i = 1:5
+        uibutton(tabDebug, 'Text', sprintf('Test %d', i), ...
+            'Position', [40, 350 - (i*50), 200, 30], ...
+            'ButtonPushedFcn', @(btn,ev) disp(['Test ' num2str(i) ' Clicked (Placeholder)']));
+    end
+
+    % Model Params Area
+    yPos = 370; % Moved all the way up (was 300)
+    uilabel(tabModel, 'Text', 'Model Parameters:', 'Position', [10 yPos 150 22], 'FontWeight', 'bold');
+
+    % Container for Dynamic Model Inputs
+    % pnlModelParams is positioned relative to the parent tab
+    % Height: 140px
+    pnlModelParams = uipanel(tabModel, 'BorderType', 'none', 'Position', [0 yPos-140 col1W-10 140], 'Tag', 'pnlModelParams');
+
+    % Sweeping Area (Below model params)
+    yPos = yPos - 160; % Start sweeping area at ~210
+    uilabel(tabModel, 'Text', 'Parameter Sweeping:', 'Position', [10 yPos 150 22], 'FontWeight', 'bold');
+
+    % Sweep X
+    yPos = yPos - 25;
+    uicheckbox(tabModel, 'Text', 'Sweep X', 'Position', [10 yPos 70 22], 'Tag', 'chkSweepX', ...
+        'ValueChangedFcn', @(src,ev) updateSweepUI(fig));
+    uidropdown(tabModel, 'Position', [80 yPos 100 22], 'Tag', 'ddSweepParamX', 'Enable', 'off', ...
+        'ValueChangedFcn', @(src,ev) updateSweepUI(fig));
+
+    yPos = yPos - 25;
+    uilabel(tabModel, 'Text', 'Start:', 'Position', [20 yPos 35 22]);
+    uieditfield(tabModel, 'numeric', 'Position', [55 yPos 50 22], 'Tag', 'sweepStartX', 'Enable', 'off');
+    uilabel(tabModel, 'Text', '', 'Position', [108 yPos 25 22], 'Tag', 'lblStartUnitX'); % Unit Label
+
+    uilabel(tabModel, 'Text', 'End:', 'Position', [125 yPos 30 22]);
+    uieditfield(tabModel, 'numeric', 'Position', [155 yPos 50 22], 'Tag', 'sweepEndX', 'Enable', 'off');
+    uilabel(tabModel, 'Text', '', 'Position', [208 yPos 25 22], 'Tag', 'lblEndUnitX'); % Unit Label
+
+    yPos = yPos - 25;
+    uilabel(tabModel, 'Text', 'Pad:', 'Position', [20 yPos 30 22]);
+    uispinner(tabModel, 'Limits', [0 512], 'Value', 0, 'Position', [55 yPos 50 22], 'Tag', 'sweepPadStartX', 'Enable', 'off');
+    uilabel(tabModel, 'Text', '-', 'Position', [115 yPos 10 22]);
+    uispinner(tabModel, 'Limits', [0 512], 'Value', 0, 'Position', [130 yPos 50 22], 'Tag', 'sweepPadEndX', 'Enable', 'off');
+
+    yPos = yPos - 25;
+    uilabel(tabModel, 'Text', 'Gradient:', 'Position', [20 yPos 60 22]);
+    uidropdown(tabModel, 'Items', {'Linear', 'Non-Linear'}, 'Position', [80 yPos 100 22], 'Tag', 'ddSweepTypeX', 'Enable', 'off');
+
+    % Sweep Y
+    yPos = yPos - 35;
+    uicheckbox(tabModel, 'Text', 'Sweep Y', 'Position', [10 yPos 70 22], 'Tag', 'chkSweepY', ...
+        'ValueChangedFcn', @(src,ev) updateSweepUI(fig));
+    uidropdown(tabModel, 'Position', [80 yPos 100 22], 'Tag', 'ddSweepParamY', 'Enable', 'off', ...
+        'ValueChangedFcn', @(src,ev) updateSweepUI(fig));
+
+    yPos = yPos - 25;
+    uilabel(tabModel, 'Text', 'Start:', 'Position', [20 yPos 35 22]);
+    uieditfield(tabModel, 'numeric', 'Position', [55 yPos 50 22], 'Tag', 'sweepStartY', 'Enable', 'off');
+    uilabel(tabModel, 'Text', '', 'Position', [108 yPos 25 22], 'Tag', 'lblStartUnitY'); % Unit Label
+
+    uilabel(tabModel, 'Text', 'End:', 'Position', [125 yPos 30 22]);
+    uieditfield(tabModel, 'numeric', 'Position', [155 yPos 50 22], 'Tag', 'sweepEndY', 'Enable', 'off');
+    uilabel(tabModel, 'Text', '', 'Position', [208 yPos 25 22], 'Tag', 'lblEndUnitY'); % Unit Label
+
+    yPos = yPos - 25;
+    uilabel(tabModel, 'Text', 'Pad:', 'Position', [20 yPos 30 22]);
+    uispinner(tabModel, 'Limits', [0 512], 'Value', 0, 'Position', [55 yPos 50 22], 'Tag', 'sweepPadStartY', 'Enable', 'off');
+    uilabel(tabModel, 'Text', '-', 'Position', [115 yPos 10 22]);
+    uispinner(tabModel, 'Limits', [0 512], 'Value', 0, 'Position', [130 yPos 50 22], 'Tag', 'sweepPadEndY', 'Enable', 'off');
+
+    yPos = yPos - 25;
+    uilabel(tabModel, 'Text', 'Gradient:', 'Position', [20 yPos 60 22]);
+    uidropdown(tabModel, 'Items', {'Linear', 'Non-Linear'}, 'Position', [80 yPos 100 22], 'Tag', 'ddSweepTypeY', 'Enable', 'off');
+
+    % Initial UI State
+    setupModelParams(fig); % Create model fields
+    toggleHILIGHTerModality(fig);
+    updateRateDisplay(fig);
+
+    % Ensure Debug tab is hidden initially if not Expert
+    toggleExpertMode(fig, swExpert.Value);
+
+    % Ensure correct App Mode (Simulator vs Analyser) panels are shown
+    toggleAppMode(fig, initialMode);
+
 
 
     % === Instrument Parameters Panel (Below Config) ===
     % Fill the remaining vertical space in Column 1
-    instPanelH = configPanel.Position(2) - 2*margin;
+    % === Instrument Parameters Panel ===
+    % Fill remaining space, but 2x taller than before means we utilize the space freed by shrinking config
+    % configPanelBottom is where the config controls end.
+    % User Request: Make it 100px shorter, keeping bottom fixed.
+    instPanelH = (configPanelBottom - 2*margin) - 100;
+    if instPanelH < 250, instPanelH = 250; end % Force taller minimum
+
     instPanel = uipanel(fig, 'Title', 'Instrument Parameters', ...
         'Position', [col1X, margin, col1W, instPanelH]);
 
@@ -356,11 +431,16 @@ try
     % (vizSwitch removed from sidebar, will be in tabs)
 
     % --- IRF Source Selection ---
-    yPos = instPanelH - 35;
+    yPos = instPanelH - 55; % Moved down 20px (was -35)
     uilabel(instPanel, 'Text', 'IRF Source:', 'Position', [10, yPos, 80, 22]);
     ddIRFSource = uidropdown(instPanel, 'Items', {'Simulated', 'Estimated', 'Experimental'}, ...
         'Position', [90, yPos, 120, 22], 'Tag', 'ddIRFSource', ...
         'ValueChangedFcn', @(src, ev) onIRFSourceChanged(fig, src.Value));
+
+    % Internal Axes for Instrument/IRF
+    % Auto-resize based on panel height, leaving space for controls at top
+    % yPos starts at top, minus controls (~60px)
+    axInst = uiaxes(instPanel, 'Position', [45 45 col1W-65 yPos-60], 'Tag', 'axInst');
 
     yPos = yPos - 30;
     btnExpIRF = uibutton(instPanel, 'Text', 'Pick from File', 'Position', [10, yPos, 110, 22], ...
@@ -377,12 +457,6 @@ try
     uilabel(instPanel, 'Text', 'FWHM:', 'Position', [110, yPos, 45, 22], 'Tag', 'lblIRFFWHMField', 'Visible', 'off');
     uilabel(instPanel, 'Text', '-', 'Position', [155, yPos, 90, 22], 'Tag', 'lblIRFFWHM', 'Visible', 'off');
 
-    % Plot Ax
-    axInst = uiaxes(instPanel, 'Position', [45 45 col1W-65 instPanelH-155]);
-    axInst.Tag = 'axInst';
-    title(axInst, 'IRF & Gates', 'FontSize', 11, 'FontWeight', 'bold');
-    xlabel(axInst, 'Time (ns)'); ylabel(axInst, 'Counts (norm)');
-    grid(axInst, 'on'); axInst.GridAlpha = 0.3;
 
 
     % === Column 2: Data Projections (Center) ===
@@ -401,9 +475,15 @@ try
     threshY = ctrlY - margin - ctrlH; % New row for threshold controls
     ytW = plotH * 0.3;
     ytX = col2X + plotH + margin;
-    tabDataWidth = col2X + plotH + margin + ytW - col2X + 50;
+    tabDataWidth = col2X + plotH + margin + ytW - col2X + 50; % User Request: Increase width by 50px
 
-    dataTabGroup = uitabgroup(fig, 'Position', [col2X, margin, tabDataWidth, figHeight - 2*margin], 'Tag', 'dataTabGroup');
+    dataPanelH = figHeight - 65 - margin; % User Request: Align top with Analysis Controls (Restore height)
+    pnlData = uipanel(fig, 'Title', 'Data', 'Position', [col2X, margin, tabDataWidth, dataPanelH]);
+
+    % Tab group inside Data Panel
+    % Fill the panel (leave slight margin for border/title)
+    % User Request: Move 3 pixels upwards (Increase height to reduce top margin)
+    dataTabGroup = uitabgroup(pnlData, 'Position', [2, 2, tabDataWidth-4, dataPanelH-27], 'Tag', 'dataTabGroup');
     dataTabGroup.SelectionChangedFcn = @(~,~) onDataTabChange(fig);
 
     % Store layout constants for tab creation
@@ -421,23 +501,54 @@ try
     dataStruct.ytX = ytX;
     fig.UserData = dataStruct;
 
-    % Create initial Channel 1 tab
+    % === NEW DATA INTERFACE ===
+    % Rebuilding Data Frame from scratch
+    % 1. Tab Group with Groups and Image
+    % Using pnlData (already created)
+
+    % Ensure pnlData is cleaned (remove legacy uitabgroup if present from lines above?
+    % The line creating dataTabGroup was: dataTabGroup = uitabgroup(pnlData, ...);
+    % I should reuse THAT tabgroup or clear it.
+    % Actually, I can just repurpose the variable `dataTabGroup` from line 474.
+
+    % BUT, I need to configure the tabs NOW.
+
+    % Tab 1: Groups (Modeled after Flow Analysis)
+    tabGroups = uitab(dataTabGroup, 'Title', 'Groups');
+    % We will call a helper to populate this below (defined at end of file)
+    createGroupsTabInterface(fig, tabGroups);
+
+    % Tab 2: Image (Single Channel View with Nav)
+    tabImage = uitab(dataTabGroup, 'Title', 'Image');
+    fig.UserData.navChannel = 1; % Start at Ch1
+    createImageTabInterface(fig, tabImage, fig.UserData);
+
+    % Commented out legacy per-channel tab creation:
+    % createDataTab(dataTabGroup, 1, dataStruct);
     d.Value = 0.35; d.Message = 'Initializing Visualization Tabs...';
-    createDataTab(dataTabGroup, 1, dataStruct);
 
     % === Column 3: Analysis Results Tabs ===
-    col3X = col2X + tabDataWidth + margin - 50;
-    tabGroup = uitabgroup(fig, 'Position', [col3X, margin, figWidth - col3X - margin, figHeight - 2*margin]);
+    % === Column 3: Analysis Results Tabs ===
+    col3X = col2X + tabDataWidth + margin - 50 + 45; % User Request: Make Analysis 75px larger (Reduce shrinkage)
+
+    % Wrap in Analysis Panel
+    analysisPanelH = dataPanelH; % Align top with Data Frame
+    pnlAnalysis = uipanel(fig, 'Title', 'Analysis', 'Position', [col3X, margin, figWidth - col3X - margin, analysisPanelH]);
+
+    % User Request: Move 7 pixels lower (Reduce height to increase top margin)
+    tabGroup = uitabgroup(pnlAnalysis, 'Position', [2, 2, pnlAnalysis.Position(3)-4, pnlAnalysis.Position(4)-27]);
     tabGroup.Tag = 'analysisTabs';
     tabGroup.SelectionChangedFcn = @(src, event) refreshXYProjection(fig);
 
     % Relative alignment constants for use inside tabs
-    dataStruct.axL = 20;
-    dataStruct.axW = 400;
-    dataStruct.metX = 600;
-    dataStruct.xyY_top = 530;
-    dataStruct.xtH = xtH;
-    fig.UserData = dataStruct;
+    % Update UserData incrementally to avoid overwriting GroupsTab
+    uDat = fig.UserData;
+    uDat.axL = 20;
+    uDat.axW = 400;
+    uDat.metX = 600;
+    uDat.xyY_top = 530;
+    uDat.xtH = xtH;
+    fig.UserData = uDat;
 
     % Initial Analysis tabs (now permanent)
     % Initial Analysis tabs (now permanent)
@@ -509,27 +620,25 @@ try
 
 
     % Initial Instrument Update
-    updateInstrumentPlot(fig, tau1Field, tau2Field);
+    % Initial Instrument Update
+    updateInstrumentPlot(fig);
 
     d.Value = 0.90; d.Message = 'Finalizing Interface Layout...';
 
     % === Analysis Methods Menu ===
-    mAnalysis = uimenu(fig, 'Text', 'Analysis methods');
-    methods = {'Grid MLE', 'Iterative Reconvolution', 'Tail Fitting', 'Phasor Analysis', 'Pattern Matching', 'LiMA', 'Fisher Analysis', 'CellSAM', 'Machine Learning'};
+    % === Analysis Methods Menu ===
+    mAnalysis = uimenu(fig, 'Text', 'Analysis methods', 'Tag', 'mnuAnalysisMethods');
+    methodList = {'Grid MLE', 'Iterative Reconvolution', 'Tail Fitting', 'Phasor Analysis', 'Pattern Matching', 'LiMA', 'Fisher Analysis', 'CellSAM', 'Machine Learning'};
     tabHandles = {tabMLE, tabIter, tabTail, tabPhasor, tabPM, tabLima, tabFisher, tabCellSAM, tabML};
-    items = gobjects(1, length(methods));
+    items = gobjects(1, length(methodList));
 
     % Settings File Path
     settingsFile = fullfile(fileparts(mfilename('fullpath')), 'AppProperties', 'settings.mat');
 
-    % Shifted to end
-
-
     % Load Settings
-    savedMethods = methods; % Default all on
+    savedMethods = methodList; % Default all on
     try
         if exist(settingsFile, 'file')
-            % Check if the variable exists in the file to avoid warnings
             vars = who('-file', settingsFile);
             if any(strcmp(vars, 'activeMethods'))
                 loaded = load(settingsFile, 'activeMethods');
@@ -542,29 +651,45 @@ try
     end
 
     % Create Menu Items
-    for i = 1:length(methods)
-        % Determined Initial State
-        is_active = any(strcmp(savedMethods, methods{i}));
+    for i = 1:length(methodList)
+        is_active = any(strcmp(savedMethods, methodList{i}));
         if is_active
             chk = 'on';
-            tabHandles{i}.Parent = tabGroup;
+            tabHandles{i}.Parent = tabGroup; % Relies on tabGroup defined above
         else
             chk = 'off';
             tabHandles{i}.Parent = [];
         end
 
-        % Add Separator before Phasor Analysis (start of non-parametric)
         sep = 'off';
-        if strcmp(methods{i}, 'Phasor Analysis')
+        if strcmp(methodList{i}, 'Phasor Analysis')
             sep = 'on';
         end
 
-        items(i) = uimenu(mAnalysis, 'Text', methods{i}, 'Checked', chk, 'Separator', sep, ...
-            'MenuSelectedFcn', @(src, ev) toggleTab(src));
+        tagStr = ['mnuMethod_' regexprep(methodList{i}, '\s+', '')];
+        items(i) = uimenu(mAnalysis, 'Text', methodList{i}, 'Checked', chk, 'Separator', sep, ...
+            'Tag', tagStr, 'MenuSelectedFcn', @(src, ev) toggleTab(src));
     end
+
+    % Initialize Flows Data (User Request: Default to empty)
+    if isfield(fig.UserData, 'Flows')
+        fig.UserData.Flows = [];
+    end
+    dFlows = struct('Conditions', {{}});
+    dFlows.config = struct('spatialBinning', 0, 'binType', 'None');
+    fs = fig.UserData;
+    fs.Flows = dFlows;
+    fig.UserData = fs;
+
+    % Refresh Lists (Ensure empty)
+    flows_refreshCondList(fig);
+    groupsTab_refreshUI(fig);
 
     d.Value = 1.0;
     close(d);
+
+    % === Check for Previous Session ===
+    manageSession(fig, 'HILIGHTer', 'check');
 catch ME
     if exist('d','var') && isvalid(d), close(d); end
     rethrow(ME);
@@ -573,6 +698,13 @@ end
 % --- Nested Helper Functions ---
     function toggleTab(src)
         if strcmp(src.Checked, 'on'), src.Checked = 'off'; else, src.Checked = 'on'; end
+        syncAnalysisMethods();
+        saveAnalysisSettings();
+    end
+
+    function syncAnalysisMethods(fig)
+        % fig arg optional if called internally, but needed if called from manageSession
+        if ~iscell(tabHandles), return; end % Safety check
         for k = 1:length(tabHandles)
             if strcmp(items(k).Checked, 'on')
                 tabHandles{k}.Parent = tabGroup;
@@ -580,13 +712,12 @@ end
                 tabHandles{k}.Parent = [];
             end
         end
-        saveAnalysisSettings();
     end
 
     function saveAnalysisSettings()
         activeMethods = {};
-        for k = 1:length(methods)
-            if strcmp(items(k).Checked, 'on'), activeMethods{end+1} = methods{k}; end
+        for k = 1:length(methodList)
+            if strcmp(items(k).Checked, 'on'), activeMethods{end+1} = methodList{k}; end
         end
         try
             if exist(settingsFile, 'file'), save(settingsFile, 'activeMethods', '-append');
@@ -594,43 +725,80 @@ end
         catch
         end
     end
-
 end
 
 
 function onGenerate(fig)
 try
-    fprintf('Starting Generate Data...\n');
-    f = uiprogressdlg(fig, 'Title', 'Generating Synthetic Data', 'Message', 'Initializing...', 'Indeterminate', 'on');
+    d = uiprogressdlg(fig, 'Title', 'Generating Data', 'Indeterminate', 'on');
 
-    % Retrieve config and params via Tags
     data = fig.UserData;
     config = data.config;
 
-    modeDD = findobj(fig, 'Tag', 'modeDropdown');
-    dimXF  = findobj(fig, 'Tag', 'dimXField');
-    dimYF  = findobj(fig, 'Tag', 'dimYField');
-    photF  = findobj(fig, 'Tag', 'photonsField');
-    dwellS = findobj(fig, 'Tag', 'dwellField');
-    backF  = findobj(fig, 'Tag', 'darkCountsField');
-
-    Mode = modeDD.Value;
+    % --- Read Simulation Settings ---
+    dimXF = findobj(fig, 'Tag', 'dimXField');
+    dimYF = findobj(fig, 'Tag', 'dimYField');
     nX = dimXF.Value; nY = dimYF.Value;
-    N_generated = photF.Value;
-    N_dark = backF.Value;
-    dwellTime_us = dwellS.Value;
 
-    % Instrument Configuration
-    irf_shift1 = findobj(fig, 'Tag', 'irfShiftField').Value;
-    irf_shift2 = findobj(fig, 'Tag', 'irfShift2Field').Value;
-    bWrap1 = findobj(fig, 'Tag', 'chkWrap').Value;
-    bWrap2 = findobj(fig, 'Tag', 'chkWrap2').Value;
-    dead_time = findobj(fig, 'Tag', 'deadTimeField').Value;
+    phF = findobj(fig, 'Tag', 'photonsField');
+    dwS = findobj(fig, 'Tag', 'dwellField');
+    dtS = findobj(fig, 'Tag', 'deadTimeField');
+    chS = findobj(fig, 'Tag', 'numChannelsField');
+
+    % N_ph is now treated as TOTAL Counts (Signal + Background)
+    N_total = phF.Value;
+    dwell_us = dwS.Value;
+    dead_ns = dtS.Value;
+    nC = chS.Value;
+
+    N_bg_total = getVal('darkCountsField');
+
+    % Calculate Signal and Background per gate
+    N_sig = max(0, N_total - N_bg_total);
+    % bg_per_gate will be calculated after n_gates is known
+
+    bWrap = getVal('chkWrap');
+    bMultihit = getVal('chkMultihit');
+
+    % IRF Shifts
+    irf1 = getVal('irfShiftField_Ch1');
+    chkSync = findobj(fig, 'Tag', 'chkSyncIRF');
+    if isvalid(chkSync) && chkSync.Value
+        irf2 = irf1;
+    else
+        irf2 = getVal('irfShiftField_Ch2');
+    end
+
+    % Sync Config for Analysis
+    config.irf_shift = irf1; % Use Ch1 shift as global fitting shift for now (or per-channel?)
+    % Note: fitting assumes one shift. We'll save irf1.
+    config.bWrap = bWrap;
+    config.dead_time = dead_ns;
+    config.bPulseTrain = bWrap; % Align naming
+    % config.N_gates is set in setup? If user changes dwell, N_gates doesn't change.
+
+    modeDD = findobj(fig, 'Tag', 'modeDropdown');
+    Mode = modeDD.Value;
+
+    T = config.T; if isempty(T) || T <= 0, T = 12.5; end
 
     % Setup Time and Gates
-    dt = config.dt; if isempty(dt) || dt <= 0, dt = 0.05; end
-    T = config.T;   if isempty(T)  || T  <= 0, T = 12.5; end
-    t_vec = 0:dt:T;
+    % Simulation Time Resolution
+    % Ensure dt is fine enough to avoid aliasing with gates
+    % If gates are, say, 12.5ns/256 ~ 48ps, and dt=50ps, we get Moiré/beating.
+    % We generally want dt <= gate_width / 4
+    n_gates_actual = config.N_gates;
+    if isempty(n_gates_actual), n_gates_actual = 64; end % Fallback
+
+    min_gate_width = T / n_gates_actual;
+    target_dt = min_gate_width / 5;
+
+    % Cap at reasonable limit (e.g. 1ps) to prevent memory explode
+    if target_dt < 0.001, target_dt = 0.001; end
+
+    % Override config.dt for simulation generation loop (internal only)
+    dt_sim = target_dt;
+    t_vec = 0:dt_sim:T;
 
     actual_gate_edges = config.gate_edges;
     if isempty(actual_gate_edges), actual_gate_edges = linspace(0, T, config.N_gates + 1); end
@@ -644,164 +812,150 @@ try
     irf_custom = [];
     if ~strcmp(data.irf_source, 'Simulated'), irf_custom = data.irf_data; end
 
-    % Initialize Multi-Channel probabilities [Y, X, G, nC]
-    if ismember(Mode, {'FRET 2-Channel', 'Anisotropy'})
-        nC = 2;
-    else
-        nC = findobj(fig, 'Tag', 'numChannelsField').Value;
-    end
+    % Initialize
+    if contains(Mode, 'seFRET') || contains(Mode, 'Anisotropy'), nC = 2; end
     P_model_Full = zeros(nY, nX, nG, nC);
 
-    if strcmp(Mode, 'FRET') || strcmp(Mode, 'FRET 2-Channel')
-        % --- FRET Modalities ---
-        tD_ns = findobj(fig, 'Tag', 'fretTauField').Value / 1000;
-        tA_ps = findobj(fig, 'Tag', 'fretAcceptorTauField').Value;
-        tA_ns = tA_ps / 1000;
+    % --- Generate Parameter Maps ---
+    Tau1 = getParameterMap(fig, 'Lifetime 1', getVal('tau1Field')/1000, nX, nY, 1/1000);
+    Tau2 = getParameterMap(fig, 'Lifetime 2', getVal('tau2Field')/1000, nX, nY, 1/1000);
+    Alpha = getParameterMap(fig, 'Mix Fraction', getVal('alphaField')/100, nX, nY, 1/100);
 
-        EMin = findobj(fig, 'Tag', 'minFRETField').Value / 100;
-        EMax = findobj(fig, 'Tag', 'maxFRETField').Value / 100;
-        fMin = findobj(fig, 'Tag', 'minFracField').Value / 100;
-        fMax = findobj(fig, 'Tag', 'maxFracField').Value / 100;
+    tD = getParameterMap(fig, 'Donor Tau', getVal('fretTauField')/1000, nX, nY, 1/1000);
+    tA = getParameterMap(fig, 'Acceptor Tau', getVal('fretAcceptorTauField')/1000, nX, nY, 1/1000);
+    E_fret = getParameterMap(fig, 'FRET E', getVal('fretEField')/100, nX, nY, 1/100);
+    f_fret = getParameterMap(fig, 'Frac FRET', getVal('fretFracField')/100, nX, nY, 1/100);
+    dirEx = getVal('fretDirectExField')/100;
+    bleed = getVal('fretBleedThroughField')/100;
 
-        [Map_E, Map_f] = meshgrid(linspace(EMin, EMax, nX), linspace(fMin, fMax, nY));
+    tAnis = getParameterMap(fig, 'Anis Tau', getVal('anisLifetimeField')/1000, nX, nY, 1/1000);
+    Rot = getParameterMap(fig, 'Rotation', getVal('anisRotationField')/1000, nX, nY, 1/1000);
+    r0_map = getParameterMap(fig, 'r0', getVal('anisR0Field'), nX, nY, 1);
 
+    if contains(Mode, 'FRET') || contains(Mode, 'seFRET')
         % Ch1: Donor
-        P_D_basis = DTpmod(nG, tD_ns, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-            config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift1, bWrap1, dead_time, irf_custom);
+        P_D = runMod(tD, irf1);
+        tDA = tD .* (1 - E_fret);
+        P_DA = runMod(tDA, irf1);
 
-        unique_tDA = tD_ns * (1 - linspace(EMin, EMax, nX));
-        P_DA_basis_set = DTpmod(nG, unique_tDA, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-            config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift1, bWrap1, dead_time, irf_custom);
-
-        % Combine Ch1: (1-f)*P_D + f*P_DA
-        f_v = linspace(fMin, fMax, nY)';
-        P_Ch1 = (1 - f_v) .* reshape(P_D_basis, 1, 1, nG) + f_v .* permute(reshape(P_DA_basis_set, nG, nX), [3 2 1]);
+        % Mix
+        f_3d = repmat(f_fret, 1, 1, nG);
+        P_Ch1 = (1 - f_3d) .* P_D + f_3d .* P_DA;
         P_model_Full(:,:,:,1) = P_Ch1;
 
-        if strcmp(Mode, 'FRET 2-Channel')
-            % Ch2: Acceptor (Sensitized Emission)
-            dirEx = findobj(fig, 'Tag', 'fretDirectExField').Value / 100;
-            bleed = findobj(fig, 'Tag', 'fretBleedThroughField').Value / 100;
+        if contains(Mode, 'seFRET') || nC > 1
+            P_A = runMod(tA, irf2);
+            P_DA_ch2 = runMod(tDA, irf2);
 
-            P_A_basis = DTpmod(nG, tA_ns, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-                config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift2, bWrap2, dead_time, irf_custom);
-
-            P_DA_basis_set_Ch2 = DTpmod(nG, unique_tDA, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-                config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift2, bWrap2, dead_time, irf_custom);
-
-            unique_B = tA_ns ./ (tA_ns - unique_tDA + 1e-12);
-            P_Sens = unique_B .* (reshape(P_A_basis, nG, 1) - P_DA_basis_set_Ch2);
+            B = tA ./ (tA - tDA + 1e-12);
+            B_3d = repmat(B, 1, 1, nG);
+            P_Sens = B_3d .* (P_A - P_DA_ch2);
             P_Sens(P_Sens < 0) = 0;
 
-            P_Ch1_for_bleed = (1 - f_v) .* reshape(P_D_basis, 1, 1, nG) + f_v .* permute(reshape(P_DA_basis_set_Ch2, nG, nX), [3 2 1]);
-            P_model_Full(:,:,:,2) = (f_v .* permute(reshape(P_Sens, nG, nX), [3 2 1])) + (dirEx .* reshape(P_A_basis, 1, 1, nG)) + (bleed .* P_Ch1_for_bleed);
-        elseif nC > 1
-            % FRET Mono-channel mode but user asked for 2 channels (e.g. redundant donor channels)
-            P_DA_basis_set_Ch2 = DTpmod(nG, unique_tDA, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-                config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift2, bWrap2, dead_time, irf_custom);
-            P_model_Full(:,:,:,2) = (1 - f_v) .* reshape(P_D_basis, 1, 1, nG) + f_v .* permute(reshape(P_DA_basis_set_Ch2, nG, nX), [3 2 1]);
-        end
-        data.GroundTruthE = Map_E; data.GroundTruthFrac = Map_f;
-
-    elseif strcmp(Mode, 'Anisotropy')
-        t_anis = findobj(fig, 'Tag', 'anisLifetimeField').Value / 1000;
-        phi = findobj(fig, 'Tag', 'anisRotationField').Value / 1000;
-        r0 = findobj(fig, 'Tag', 'anisR0Field').Value;
-        varAxis = findobj(fig, 'Tag', 'anisVarAxisDropdown').Value;
-
-        tau_grid = t_anis * ones(nY, nX);
-        phi_grid = phi * ones(nY, nX);
-
-        if contains(varAxis, 'Sweep X')
-            vec = linspace(1, 4000, nX)/1000;
-            if contains(varAxis, 'Lifetime'), tau_grid = repmat(vec, nY, 1); else, phi_grid = repmat(vec, nY, 1); end
-        elseif contains(varAxis, 'Sweep Y')
-            vec = linspace(1, 4000, nY)'/1000;
-            if contains(varAxis, 'Lifetime'), tau_grid = repmat(vec, 1, nX); else, phi_grid = repmat(vec, 1, nX); end
+            % Simplify bleed
+            P_A_ch2 = runMod(tA, irf2);
+            P_Total2 = f_3d .* P_Sens + dirEx * P_A_ch2 + bleed * P_Ch1;
+            P_model_Full(:,:,:,2) = P_Total2;
         end
 
-        for y = 1:nY
-            for x = 1:nX
-                tau = tau_grid(y,x); p = phi_grid(y,x); te = 1 / (1/tau + 1/p);
-                P_tau = DTpmod(nG, tau, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-                    config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift1, bWrap1, dead_time, irf_custom);
-                P_te = DTpmod(nG, te, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-                    config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift1, bWrap1, dead_time, irf_custom);
-                P_model_Full(y,x,:,1) = (1/3) * (P_tau + 2*r0*P_te);
+        data.GroundTruthE = E_fret;
+        data.GroundTruthFrac = f_fret;
+        data.GroundTruthAlpha = f_fret;
 
-                P_tau2 = DTpmod(nG, tau, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-                    config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift2, bWrap2, dead_time, irf_custom);
-                P_te2 = DTpmod(nG, te, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-                    config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift2, bWrap2, dead_time, irf_custom);
-                P_model_Full(y,x,:,2) = (1/3) * (P_tau2 - r0*P_te2);
-            end
-        end
-        data.GroundTruthTaus = tau_grid;
+    elseif contains(Mode, 'Anisotropy')
+        te = 1 ./ (1./tAnis + 1./Rot);
+
+        P_tau = runMod(tAnis, irf1);
+        P_te  = runMod(te, irf1);
+        r0_3d = repmat(r0_map, 1, 1, nG);
+
+        P_model_Full(:,:,:,1) = (1/3) * (P_tau + 2*r0_3d.*P_te);
+        P_tau2 = runMod(tAnis, irf2);
+        P_te2  = runMod(te, irf2);
+        P_model_Full(:,:,:,2) = (1/3) * (P_tau2 - r0_3d.*P_te2);
+
+        data.GroundTruthTaus = tAnis;
 
     else
-        % Standard Gradient/Mix
-        tau1_ns = findobj(fig, 'Tag', 'tau1Field').Value / 1000;
-        tau2_ns = findobj(fig, 'Tag', 'tau2Field').Value / 1000;
-        if strcmp(Mode, 'Lifetime Gradient')
-            unique_taus = linspace(tau1_ns, tau2_ns, nX);
-            P_model = DTpmod(nG, unique_taus, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-                config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift1, bWrap1, dead_time, irf_custom);
-            P_model_Full(:,:,:,1) = repmat(permute(reshape(P_model, nG, nX), [3 2 1]), nY, 1, 1);
+        % Lifetime
+        P1 = runMod(Tau1, irf1);
+        P_model_Full(:,:,:,1) = P1;
+
+        if contains(Mode, 'Mix') || any(Alpha(:)>0)
+            P2 = runMod(Tau2, irf1);
+            a_3d = repmat(Alpha, 1, 1, nG);
+            P_model_Full(:,:,:,1) = (1 - a_3d) .* P1 + a_3d .* P2;
+
             if nC > 1
-                P_model2 = DTpmod(nG, unique_taus, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-                    config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift2, bWrap2, dead_time, irf_custom);
-                P_model_Full(:,:,:,2) = repmat(permute(reshape(P_model2, nG, nX), [3 2 1]), nY, 1, 1);
+                P1_2 = runMod(Tau1, irf2);
+                P2_2 = runMod(Tau2, irf2);
+                P_model_Full(:,:,:,2) = (1 - a_3d) .* P1_2 + a_3d .* P2_2;
             end
+            data.GroundTruthAlpha = Alpha;
         else
-            taus_base = [tau1_ns, tau2_ns];
-            P_base = DTpmod(nG, taus_base, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-                config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift1, bWrap1, dead_time, irf_custom);
-            alpha = linspace(0, 1, nX);
-            P_mix = P_base(:, 1) * (1 - alpha) + P_base(:, 2) * alpha;
-            P_model_Full(:,:,:,1) = repmat(permute(reshape(P_mix, nG, nX), [3 2 1]), nY, 1, 1);
             if nC > 1
-                P_base2 = DTpmod(nG, taus_base, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-                    config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift2, bWrap2, dead_time, irf_custom);
-                P_mix2 = P_base2(:, 1) * (1 - alpha) + P_base2(:, 2) * alpha;
-                P_model_Full(:,:,:,2) = repmat(permute(reshape(P_mix2, nG, nX), [3 2 1]), nY, 1, 1);
+                P_model_Full(:,:,:,2) = runMod(Tau1, irf2);
             end
-            unique_taus = tau1_ns * (1 - alpha) + tau2_ns * alpha;
         end
-        data.GroundTruthTaus = unique_taus;
+        if contains(Mode, 'Mix')
+            data.GroundTruthTaus = Tau1 .* (1-Alpha) + Tau2 .* Alpha;
+        else
+            data.GroundTruthTaus = Tau1;
+        end
     end
 
     % --- Noise and Pile-up ---
     RawData_Full = zeros(nY, nX, nG, nC);
     Trep = T; if isfield(config, 'PT_Trep') && config.PT_Trep > 0, Trep = config.PT_Trep; end
-    num_pulses = (dwellTime_us * 1000) / Trep;
+    num_pulses = (dwell_us * 1000) / Trep;
 
     for c = 1:nC
         Pc = P_model_Full(:,:,:,c);
         P_sum = sum(Pc, 3); P_sum(P_sum == 0) = 1;
         Pc_norm = Pc ./ P_sum;
 
-        mu = N_generated / num_pulses;
-        P_cdf_prev = cumsum(Pc_norm, 3);
-        P_cdf_prev = cat(3, zeros(nY, nX, 1), P_cdf_prev(:,:,1:end-1));
+        bg_per_gate = N_bg_total / (nG * nC); % Assuming BG is split or per channel?
+        % Actually usually BG is specified per channel. Let's assume N_bg_total is per channel.
+        bg_per_gate = N_bg_total / nG;
 
-        ExpCounts = num_pulses * exp(-mu * P_cdf_prev) .* (1 - exp(-mu * Pc_norm)) + N_dark;
-        RawData_Full(:,:,:,c) = poissrnd(ExpCounts);
+        if bMultihit
+            ExpCounts = N_sig * Pc_norm + bg_per_gate;
+            RawData_Full(:,:,:,c) = poissrnd(ExpCounts);
+        else
+            mu = N_sig / num_pulses;
+            P_cdf_prev = cumsum(Pc_norm, 3);
+            P_cdf_prev = cat(3, zeros(nY, nX, 1), P_cdf_prev(:,:,1:end-1));
+            ExpCounts = num_pulses * exp(-mu * P_cdf_prev) .* (1 - exp(-mu * Pc_norm)) + bg_per_gate;
+            RawData_Full(:,:,:,c) = poissrnd(ExpCounts);
+        end
     end
 
     data.RawData = RawData_Full;
     data.ProcData = cell(nC, 1);
+    data.config = config; % Save updated config
     fig.UserData = data;
+    close(d);
 
     syncAnalysisTabsWithConfig(fig);
     for c = 1:nC, processChannelData(fig, c); end
     refreshAllPlots(fig);
-    fprintf('Data generation complete.\n');
-    close(f);
+
 catch ME
-    if exist('f', 'var') && isvalid(f), close(f); end
-    fprintf(2, 'Error in onGenerate: %s\n', ME.message);
+    if exist('d','var') && isvalid(d), close(d); end
     uialert(fig, ['Generate Failed: ' ME.message], 'Error');
 end
+
+    function v = getVal(t)
+        o=findobj(fig,'Tag',t);
+        if isempty(o),v=0;else,v=o.Value;end
+    end
+
+    function P = runMod(t_map, shift)
+        vec_t = t_map(:);
+        P_flat = DTpmod(nG, vec_t, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+            config.bPulseTrain, config.PT_Trep, config.PT_sigma, shift, bWrap, dead_ns, irf_custom);
+        P = permute(reshape(P_flat, nG, nX, nY), [3 2 1]);
+    end
 end
 
 function refreshAllPlots(fig)
@@ -1641,6 +1795,7 @@ if isempty(tab.UserData) || ~isfield(tab.UserData, 'mapAxes')
         % Map Axis
         ax = uiaxes(t, 'Position', [5, histH + 50, axW, mapH], 'Tag', ['ax_' p '_' tagAlgo]);
         set(ax, 'XTick', [], 'YTick', [], 'Box', 'on', 'LineWidth', 2);
+        axis(ax, 'image'); axis(ax, 'tight');
         disableDefaultInteractions(ax); % Prevent mouse drag zoom/pan
         colormap(ax, 'jet');
         mapAxes.(p) = ax;
@@ -2038,7 +2193,12 @@ try
     fitData(fitData < 0) = 0; % Floor to 0
 
     % Extract Global Params
-    irf_shift = 0; if isfield(config, 'irf_shift'), irf_shift = config.irf_shift; end
+    % Extract Global Params
+    irf_shift = 0;
+    if isfield(config, 'irf_shift')
+        % IRF Shift is stored in ps (from UI), but fitting models (DTpmod) typically work in ns
+        irf_shift = config.irf_shift / 1000;
+    end
     bWrap = false; if isfield(config, 'bWrap'), bWrap = config.bWrap; end
     dead_time = 0; if isfield(config, 'dead_time'), dead_time = config.dead_time; end
 
@@ -2089,7 +2249,7 @@ try
         P_model_grid = DTpmod(nGates, tau_grid, t, gate_interp_fns, ...
             config.fwhm, config.profile, config.rise_time, config.fall_time, ...
             config.bPulseTrain, config.PT_Trep, config.PT_sigma, ...
-            irf_shift, config.bWrap, config.dead_time, irf_custom);
+            irf_shift, bWrap, dead_time, irf_custom);
 
         flatData = reshape(fitData, nY*nX, nGates)';
         N_detections = sum(flatData, 1);
@@ -2154,7 +2314,7 @@ try
         P_basis = DTpmod(nGates, tau_search, t, gate_interp_fns, ...
             config.fwhm, config.profile, config.rise_time, config.fall_time, ...
             config.bPulseTrain, config.PT_Trep, config.PT_sigma, ...
-            irf_shift, config.bWrap, config.dead_time, irf_custom);
+            irf_shift, bWrap, dead_time, irf_custom);
 
         % Calculate DOF
         % N_points = (end_gate - start_gate + 1)
@@ -3154,10 +3314,11 @@ else
 end
 end
 
-function updateInstrumentPlot(fig, tau1Field, tau2Field)
+function updateInstrumentPlot(fig)
 % UPDATEINSTRUMENTPLOT - Refresh the instrument settings plot
 axInstrument = findobj(fig, 'Tag', 'axInst');
 if isempty(axInstrument), return; end
+if numel(axInstrument) > 1, axInstrument = axInstrument(1); end
 
 data = fig.UserData;
 if ~isfield(data, 'config'), return; end
@@ -3176,16 +3337,23 @@ if strcmp(data.irf_source, 'Simulated')
         config.bPulseTrain, config.PT_Trep, config.PT_sigma);
 
     % Apply IRF Shift for visualization
-    irfShiftField = findobj(fig, 'Tag', 'irfShiftField');
+    % Apply IRF Shift for visualization
+    irfShiftField = findobj(fig, 'Tag', 'irfShiftField_Ch1');
     if ~isempty(irfShiftField)
         shift_ns = irfShiftField.Value / 1000;
         dt_v = t(2) - t(1);
         shift_b = round(shift_ns / dt_v);
         irf = circshift(irf, [0, shift_b]);
+        % Zero padding if shifting
         if shift_b > 0
             irf(1:min(shift_b, end)) = 0;
         elseif shift_b < 0
             irf(max(1, end+shift_b):end) = 0;
+        end
+        % Wrap check
+        chkWrap = findobj(fig, 'Tag', 'chkWrap');
+        if ~isempty(chkWrap) && chkWrap.Value
+            % (Simple wrap visualization not strictly implemented here for display, but could be)
         end
     end
 else
@@ -3225,24 +3393,49 @@ title(axInstrument, 'Instrument & Decays', 'FontWeight', 'bold');
 plot(axInstrument, t, irf, 'r-', 'LineWidth', 2, 'DisplayName', 'IRF');
 
 % Plot Decays if fields provided (Visualization of settings)
-if nargin >= 3 && ~isempty(tau1Field) && ~isempty(tau2Field)
+tau1Field = findobj(fig, 'Tag', 'tau1Field');
+tau2Field = findobj(fig, 'Tag', 'tau2Field');
+
+if ~isempty(tau1Field)
     try
         % Handle potentially empty or non-numeric values
         if isnumeric(tau1Field), v1=tau1Field; else, v1=tau1Field.Value; end
-        if isnumeric(tau2Field), v2=tau2Field; else, v2=tau2Field.Value; end
 
         tau1 = v1 / 1000; % ps to ns
-        tau2 = v2 / 1000;
 
         % Simple exponential decay for viz
         d1 = exp(-t/tau1); d1 = d1/max(d1);
-        d2 = exp(-t/tau2); d2 = d2/max(d2);
 
-        plot(axInstrument, t, d1, 'b--', 'LineWidth', 1, 'DisplayName', sprintf('\\tau_1=%.1gns', tau1));
-        plot(axInstrument, t, d2, 'g:', 'LineWidth', 1.5, 'DisplayName', sprintf('\\tau_2=%.1gns', tau2));
+        plot(axInstrument, t, d1, 'b--', 'LineWidth', 1, 'DisplayName', sprintf('\\tau_1=%.1gns (Exp)', tau1));
+
+        % Calculated expected decay (PDF) for visualization
+        % Create simple decay
+        decay_ideal = exp(-t/tau1);
+        decay_ideal(t < 0) = 0;
+
+        % Normalize IRF for conv
+        irf_norm = irf / sum(irf);
+
+        % Convolve
+        decay_conv = conv(decay_ideal, irf_norm, 'full');
+        decay_conv = decay_conv(1:length(t));
+
+        % Scale for display (to match IRF peak or arbitrary)
+        if max(decay_conv) > 0, decay_conv = decay_conv / max(decay_conv); end
+
+        plot(axInstrument, t, decay_conv, 'k-', 'LineWidth', 2, 'DisplayName', sprintf('Model PDF (%.1fns)', tau1));
+
+        if ~isempty(tau2Field) && isvalid(tau2Field) && strcmp(tau2Field.Visible, 'on')
+            if isnumeric(tau2Field), v2=tau2Field; else, v2=tau2Field.Value; end
+            tau2 = v2 / 1000;
+            d2 = exp(-t/tau2); d2 = d2/max(d2);
+            plot(axInstrument, t, d2, 'g:', 'LineWidth', 1.5, 'DisplayName', sprintf('\\tau_2=%.1gns', tau2));
+        end
     catch
     end
 end
+% Add Legend at bottom
+legend(axInstrument, 'Location', 'south');
 
 % Plot Gates (Smart Density)
 edges = config.gate_edges;
@@ -3377,7 +3570,8 @@ gate_edges = config.gate_edges;
 gate_centers = 0.5 * (gate_edges(1:end-1) + gate_edges(2:end));
 irf_shift = 0; if isfield(config, 'irf_shift'), irf_shift = config.irf_shift; end
 
-% Check if we are inside a Result Tab Group
+% Check if we are inside a Result Tab Group with Pixel Analysis support
+if ~isfield(meta, 'axPix'), return; end
 axPixel = meta.axPix;
 axPixelRes = meta.axPixRes;
 
@@ -3892,92 +4086,128 @@ switch lower(algo)
 end
 end
 
-function createNewFisherTab(fig, t, activeChanIdx)
+function createNewFisherTab(fig, tab, activeChanIdx)
+data = fig.UserData;
+config = data.config;
+axL = data.axL; axW = data.axW; metX = data.metX; xyY_top = data.xyY_top;
 
-if isempty(t.UserData)
-    meta = struct(); % Initialize meta
-    meta.activeChanIdx = activeChanIdx;
-    % === Layout Configuration ===
-    leftCol = 40;
-    mapSize = 350;
-    fppSize = 450;
+if isempty(tab.UserData) || ~isfield(tab.UserData, 'mapAxes')
+    % --- Vertical Layout Constants (60/40 Split) ---
+    hTop = 580; hBot = 380;
+    topY = 980 - hTop;
+    botY = 10;
 
-    mapY = 40;
-    topY = mapY + mapSize + 80;
+    % --- Map Tab Group (Top 60%) ---
+    mapH = 350; histH = 150;
+    mapTgW = axW + 90;
+    mapTgH = hTop;
+    mapTgY = topY;
 
-    % 1. Fisher Projective Plane (Top Left)
-    axFPP = uiaxes(t, 'Position', [leftCol, topY, fppSize, fppSize]);
-    axFPP.Tag = 'axFPP';
+    algo = 'Fisher Analysis';
+    tagAlgo = 'Fisher';
+    mapTg = uitabgroup(tab, 'Position', [axL, mapTgY, mapTgW, mapTgH], 'Tag', ['mapTg_', tagAlgo], ...
+        'SelectionChangedFcn', @(src, ev) syncMapDisplay(tab));
+
+    mapAxes = struct(); mapHists = struct(); mapSpins = struct();
+    pNames = {'Photons', 'Alpha', 'Delta'};
+    dNames = {'Photons', 'Mixing (\alpha)', 'Residual (\delta)'};
+
+    for i = 1:numel(pNames)
+        p = pNames{i};
+        t = uitab(mapTg, 'Title', dNames{i}, 'Tag', ['tab_' p '_' tagAlgo]);
+
+        ax = uiaxes(t, 'Position', [5, histH + 50, axW, mapH], 'Tag', ['ax_' p '_' tagAlgo]);
+        set(ax, 'XTick', [], 'YTick', [], 'Box', 'on', 'LineWidth', 2);
+        axis(ax, 'image'); axis(ax, 'tight');
+        disableDefaultInteractions(ax); colormap(ax, 'parula');
+        mapAxes.(p) = ax;
+
+        cb = colorbar(ax);
+        cb.Ticks = []; cb.Location = 'eastoutside'; cb.Units = 'pixels';
+        axPos = ax.Position; cbW = 20; cbH = axPos(4) * 0.5;
+        cbX = axPos(1) + axPos(3) + 10; cbY = axPos(2) + (axPos(4) - cbH)/2;
+        cb.Position = [cbX, cbY, cbW, cbH];
+        cb.Label.String = dNames{i};
+
+        axH = uiaxes(t, 'Position', [10, 10, axW-10, histH], 'Tag', ['hist_' p '_' tagAlgo]);
+        set(axH, 'Box', 'on', 'YTick', [], 'HitTest', 'on');
+        disableDefaultInteractions(axH);
+        mapHists.(p) = axH;
+
+        spX = cbX;
+        uilabel(t, 'Text', 'Max', 'Position', [spX, cbY + cbH + 28, 65, 20]);
+        spMax = uispinner(t, 'Position', [spX, cbY + cbH + 5, 65, 22], 'Tag', ['spnCMax_' p], ...
+            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Max', src.Value, p));
+
+        uilabel(t, 'Text', 'Min', 'Position', [spX, cbY - 45, 65, 20]);
+        spMin = uispinner(t, 'Position', [spX, cbY - 25, 65, 22], 'Tag', ['spnCMin_' p], ...
+            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Min', src.Value, p));
+
+        uilabel(t, 'Text', 'Bins:', 'Position', [axW + 15, 40, 40, 20]);
+        spBins = uispinner(t, 'Limits', [2 1024], 'Value', 128, 'Position', [axW + 15, 15, 65, 22], 'Tag', ['spnBins_' p], ...
+            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Bins', src.Value, p));
+
+        ylabel(axH, 'Pixels', 'FontWeight', 'bold');
+        axH.YLabel.ButtonDownFcn = @(src, ev) toggleHistYScale(src);
+        xlabel(axH, dNames{i}, 'FontWeight', 'bold');
+        axH.XLabel.ButtonDownFcn = @(src, ev) toggleHistXScale(src);
+
+        mapSpins.(p).Max = spMax; mapSpins.(p).Min = spMin; mapSpins.(p).Bins = spBins;
+    end
+
+    % --- Controls Panel (Top Right) ---
+    paramPanel = uipanel(tab, 'Title', 'Fisher Analysis Controls', 'Tag', 'pnlFisherCtrl', ...
+        'Position', [metX - 60, topY, 375, hTop]);
+
+    currY = hTop - 40;
+    uilabel(paramPanel, 'Text', '1. Define References', 'FontWeight', 'bold', 'Position', [15, currY, 200, 22]);
+    currY = currY - 35;
+    uibutton(paramPanel, 'Text', 'Set Ref 1 (Red)', 'FontColor', [0.8 0 0], 'Position', [15, currY, 125, 30], ...
+        'Tag', 'btnRef1', 'ButtonPushedFcn', @(btn, event) addFisherROI(fig, 1));
+    uibutton(paramPanel, 'Text', 'Set Ref 2 (Blue)', 'FontColor', [0 0 0.8], 'Position', [150, currY, 125, 30], ...
+        'Tag', 'btnRef2', 'ButtonPushedFcn', @(btn, event) addFisherROI(fig, 2));
+
+    currY = currY - 60;
+    uilabel(paramPanel, 'Text', '2. Run Analysis', 'FontWeight', 'bold', 'Position', [15, currY, 200, 22]);
+    currY = currY - 30;
+    chkAnscombe = uicheckbox(paramPanel, 'Text', 'Anscombe Transform', 'Position', [15, currY, 200, 22], 'Tag', 'chkAnscombe');
+
+    currY = currY - 50;
+    uibutton(paramPanel, 'Text', 'Calculate Transforms', 'FontWeight', 'bold', ...
+        'BackgroundColor', [0.2 0.2 0.2], 'FontColor', [1 1 1], ...
+        'Position', [15, currY, 260, 40], ...
+        'ButtonPushedFcn', @(btn, event) runFisherAnalysis(fig));
+
+    % --- Results Tabs (Bottom 40%) ---
+    resTabGroupW = metX - axL + 375 - 60;
+    resTabGroup = uitabgroup(tab, 'Position', [axL, botY, resTabGroupW, hBot], 'Tag', ['resTabGroup_', tagAlgo]);
+    tabFPP = uitab(resTabGroup, 'Title', 'Projective Plane', 'Tag', 'tabFPP');
+    tabGT = uitab(resTabGroup, 'Title', 'Ground Truth', 'Tag', 'tabGT');
+
+    axFPP = uiaxes(tabFPP, 'Position', [20, 20, 400, 320]);
     title(axFPP, 'Fisher Projective Plane');
     xlabel(axFPP, 'Fisher Mixing Component (\alpha)');
     ylabel(axFPP, 'Fisher Orthogonal Residual (\delta)');
     grid(axFPP, 'on'); box(axFPP, 'on');
 
-    % 2. Controls Panel (Top Right)
-    ctrlX = leftCol + fppSize + 40;
-    ctrlW = 320;
-    ctrlH = 300;
-    ctrlY = (topY + fppSize) - ctrlH;
+    axGT = uiaxes(tabGT, 'Position', [20, 20, 400, 320]);
+    title(axGT, 'Ground Truth Comparison');
 
-    ctrlPanel = uipanel(t, 'Title', 'Fisher Analysis Controls', ...
-        'Position', [ctrlX, ctrlY, ctrlW, ctrlH], ...
-        'FontSize', 12, 'FontWeight', 'bold', 'Tag', 'pnlFisherCtrl');
-
-    % -- Panel Contents --
-    cY = ctrlH - 60;
-    uilabel(ctrlPanel, 'Text', '1. Define References', 'FontWeight', 'bold', 'Position', [15, cY, 200, 22]);
-
-    cY = cY - 35;
-    uibutton(ctrlPanel, 'Text', 'Set Ref 1 (Red)', 'FontColor', [0.8 0 0], 'Position', [15, cY, 125, 30], ...
-        'Tag', 'btnRef1', 'ButtonPushedFcn', @(btn, event) addFisherROI(fig, 1));
-
-    uibutton(ctrlPanel, 'Text', 'Set Ref 2 (Blue)', 'FontColor', [0 0 0.8], 'Position', [150, cY, 125, 30], ...
-        'Tag', 'btnRef2', 'ButtonPushedFcn', @(btn, event) addFisherROI(fig, 2));
-
-    cY = cY - 50;
-    uilabel(ctrlPanel, 'Text', '2. Run Analysis', 'FontWeight', 'bold', 'Position', [15, cY, 200, 22]);
-
-    cY = cY - 25;
-    % Checkbox Anscombe
-    chkAns = uicheckbox(ctrlPanel, 'Text', 'Anscombe Transform', ...
-        'Position', [15, cY, 200, 22], ...
-        'Tooltip', 'Apply 2*sqrt(x + 3/8) to stabilize variance before fitting.', ...
-        'Tag', 'chkAnscombe');
-
-    cY = cY - 45;
-    uibutton(ctrlPanel, 'Text', 'Calculate Transforms', 'FontWeight', 'bold', ...
-        'BackgroundColor', [0.2 0.2 0.2], 'FontColor', [1 1 1], ...
-        'Position', [15, cY, 260, 40], ...
-        'ButtonPushedFcn', @(btn, event) runFisherAnalysis(fig));
-
-    % 3. Maps (Bottom Row)
-    axAlpha = uiaxes(t, 'Position', [leftCol, mapY, mapSize, mapSize]);
-    title(axAlpha, 'Mixing Map (\alpha)');
-    axis(axAlpha, 'image'); colorbar(axAlpha);
-    axAlpha.Tag = 'axAlpha';
-
-    axDelta = uiaxes(t, 'Position', [leftCol + mapSize + 60, mapY, mapSize, mapSize]);
-    title(axDelta, 'Residual Map (\delta)');
-    axis(axDelta, 'image'); colorbar(axDelta);
-    axDelta.Tag = 'axDelta';
-
-    % Store handles in UserData
-    meta.axFPP = axFPP;
-    meta.axAlpha = axAlpha;
-    meta.axDelta = axDelta;
-    meta.ref1 = [];
-    meta.ref2 = [];
-    meta.refROIs = {[], []}; % Store handles
-    meta.chkAnscombe = chkAns;
+    % Store in meta
+    meta = struct();
     meta.algo = 'Fisher Analysis';
     meta.activeChanIdx = activeChanIdx;
+    meta.mapTg = mapTg;
+    meta.mapAxes = mapAxes;
+    meta.mapHists = mapHists;
+    meta.mapSpins = mapSpins;
+    meta.axFPP = axFPP;
+    meta.axGT = axGT;
+    meta.chkAnscombe = chkAnscombe;
+    meta.ref1 = []; meta.ref2 = []; meta.refROIs = {[], []};
+    meta.Maps = struct();
 
-    % Multi-channel support
-    if ~isfield(meta, 'ChanMaps'), meta.ChanMaps = cell(1, 4); end
-    if ~isfield(meta, 'ChanIRFs'), meta.ChanIRFs = cell(1, 4); end
-    if ~isfield(meta, 'Maps'), meta.Maps = struct(); end
-
-    t.UserData = meta;
+    tab.UserData = meta;
 end
 end
 
@@ -4070,8 +4300,7 @@ try
     t.UserData = meta; % Save to Tab
 
     % Update UI
-    pnl = findobj(t, 'Tag', 'pnlFisherCtrl');
-    btn = findobj(pnl, 'Tag', tagName);
+    btn = findobj(t, 'Tag', tagName);
     if ~isempty(btn)
         btn.Text = lbl;
         btn.FontWeight = 'bold';
@@ -4088,7 +4317,6 @@ t = findobj(fig, 'Tag', 'analysisTabs').SelectedTab;
 meta = t.UserData;
 data = fig.UserData;
 
-% Defensive check
 if isempty(meta) || ~isfield(meta, 'ref1') || ~isfield(meta, 'ref2')
     uialert(fig, 'Fisher analysis state is invalid. Please reset.', 'Error');
     return;
@@ -4102,23 +4330,21 @@ end
 try
     P1 = meta.ref1(:);
     P2 = meta.ref2(:);
-
     activeChanIdx = meta.activeChanIdx;
     RawData = getChannelData(fig, activeChanIdx);
 
     % Apply Mask
     mask = getChannelMask(fig, activeChanIdx);
     if ~isempty(mask)
-        % mask is logical 1 for Background.
-        % We set RawData to 0 where mask is 1.
-        % RawData is [Y, X, T]. Mask is [Y, X].
-        % Expand mask to 3D
         [nY, nX, nGates] = size(RawData);
         mask3D = repmat(mask, 1, 1, nGates);
         RawData(mask3D) = 0;
     else
         [nY, nX, nGates] = size(RawData);
     end
+
+    % Photons Map
+    meta.Maps.Photons = sum(RawData, 3);
 
     % Check Anscombe
     if isfield(meta, 'chkAnscombe') && isvalid(meta.chkAnscombe) && meta.chkAnscombe.Value
@@ -4129,86 +4355,58 @@ try
 
     % 1. Fisher Mixing Component (FMC)
     A = [(P1 - P2)'; P2'];
-    % Weighting D (Inverse Variance ~ 1/Counts)
-    % Approximate variance by mean expected counts of a mix
     p_ref = 0.5 * P1 + 0.5 * P2;
     D_inv = diag(1 ./ (p_ref + 1e-9));
-
-    % Solve Generalized Least Squares
-    % beta = (A D^-1 A')^-1 (A D^-1 y)  <-- Standard?
-    % Target: Minimize (y - Ax)'D(y - Ax) subject to ...
-    % Here we follow the logic: Project into Fisher Discriminant Direction
-
-    % FMC vector f_FMC is the direction that maximizes separation relative to variance
-    % For 2-component: f ~ D^-1 (P1 - P2)
-
-    % Let's use the efficient projection implementation
-    % f = D_inv * (P1 - P2);
-    % But we want normalized outputs. The previous implementation used a constrained solve
-    % Let's stick to the previous linear algebra which seemed intended for this:
-
     b = [1; 0];
     M_mat = A * D_inv * A';
     beta = M_mat \ b;
     f_FMC = D_inv * A' * beta;
-
     Alpha_est = f_FMC' * flatData;
 
     % 2. Fisher Orthogonal Residual (FOR)
-    % Project out Model Space
     [U_S, ~] = qr([P1, P2], 0);
     Proj_S = U_S * U_S';
     Residuals = flatData - Proj_S * flatData;
-
-    % PCA on Residuals
     [u_res, ~, ~] = svds(Residuals, 1);
-
-    % Align sign for consistency (arbitrary but stable)
     if sum(u_res) < 0, u_res = -u_res; end
-
     f_FOR = u_res;
     Delta_est = f_FOR' * flatData;
 
-    % 3. Visualization
-
-    % Scatter Plot (Downsampled)
-    if numel(Alpha_est) > 5000
-        idx = randperm(numel(Alpha_est), 5000);
-        a_plt = Alpha_est(idx);
-        d_plt = Delta_est(idx);
-    else
-        a_plt = Alpha_est;
-        d_plt = Delta_est;
-    end
-
-    plot(meta.axFPP, a_plt, d_plt, '.', 'MarkerSize', 4, 'Color', [0.3 0.3 0.3]);
-    title(meta.axFPP, 'Fisher Projective Plane');
-    xlabel(meta.axFPP, 'FMC (\alpha)'); ylabel(meta.axFPP, 'FOR (\delta)');
-    grid(meta.axFPP, 'on'); box(meta.axFPP, 'on');
-
-    % Overlay Reference Points on Scatter
-    hold(meta.axFPP, 'on');
-    % Ref 1 is theoretically Alpha=1, Delta=0
-    plot(meta.axFPP, 1, 0, 'ro', 'MarkerSize', 10, 'LineWidth', 2, 'DisplayName', 'Ref 1');
-    % Ref 2 is theoretically Alpha=0, Delta=0
-    plot(meta.axFPP, 0, 0, 'bo', 'MarkerSize', 10, 'LineWidth', 2, 'DisplayName', 'Ref 2');
-    hold(meta.axFPP, 'off');
-
-    % Maps
+    % 3. Update Results
     meta.Maps.Alpha = reshape(Alpha_est, nY, nX);
     meta.Maps.Delta = reshape(Delta_est, nY, nX);
 
-    imagesc(meta.axAlpha, meta.Maps.Alpha);
-    title(meta.axAlpha, 'Mixing Map (\alpha)'); axis(meta.axAlpha, 'image'); colorbar(meta.axAlpha);
-    colormap(meta.axAlpha, 'parula');
+    % Update FPP
+    cla(meta.axFPP); hold(meta.axFPP, 'on');
+    if numel(Alpha_est) > 5000
+        idx = randperm(numel(Alpha_est), 5000);
+        plot(meta.axFPP, Alpha_est(idx), Delta_est(idx), '.', 'MarkerSize', 4, 'Color', [0.3 0.3 0.3]);
+    else
+        plot(meta.axFPP, Alpha_est, Delta_est, '.', 'MarkerSize', 4, 'Color', [0.3 0.3 0.3]);
+    end
+    plot(meta.axFPP, 1, 0, 'ro', 'MarkerSize', 10, 'LineWidth', 2, 'DisplayName', 'Ref 1');
+    plot(meta.axFPP, 0, 0, 'bo', 'MarkerSize', 10, 'LineWidth', 2, 'DisplayName', 'Ref 2');
+    hold(meta.axFPP, 'off');
 
-    imagesc(meta.axDelta, meta.Maps.Delta);
-    title(meta.axDelta, 'Residual Map (\delta)'); axis(meta.axDelta, 'image'); colorbar(meta.axDelta);
-    colormap(meta.axDelta, 'jet');
+    % Update GT Tab if Simulator Mode
+    if isfield(data, 'GroundTruthAlpha') && ~isempty(data.GroundTruthAlpha)
+        cla(meta.axGT); hold(meta.axGT, 'on');
+        gtA = data.GroundTruthAlpha(:);
+        estA = meta.Maps.Alpha(:);
+        % Scatter GT vs Est
+        if numel(gtA) > 2000
+            idx = randperm(numel(gtA), 2000);
+            plot(meta.axGT, gtA(idx), estA(idx), '.', 'Color', [0.4 0.6 0.8]);
+        else
+            plot(meta.axGT, gtA, estA, '.');
+        end
+        plot(meta.axGT, [0 1], [0 1], 'r--'); % Identity line
+        xlabel(meta.axGT, 'Ground Truth \alpha'); ylabel(meta.axGT, 'Estimated \alpha');
+        grid(meta.axGT, 'on');
+    end
 
-    meta.AlphaMap = meta.Maps.Alpha; % Legacy keep for now
-    meta.DeltaMap = meta.Maps.Delta; % Legacy keep for now
     t.UserData = meta;
+    syncMapDisplay(t);
 
 catch ME
     uialert(fig, ['Analysis Failed: ' ME.message], 'Error');
@@ -4248,11 +4446,43 @@ function toggleExpertMode(fig, mode)
 lbl = findobj(fig, 'Tag', 'lblExpertStatus');
 if ~isempty(lbl), lbl.Text = mode; end
 
-% Logic for Expert Mode can be expanded here
+% Logic for Expert Mode
 if strcmpi(mode, 'Expert')
     lbl.FontColor = [0.8 0 0]; % Red for Expert
 else
-    lbl.FontColor = [0.5 0.5 0.5]; % Gray for Basic
+    lbl.FontColor = [0.5 0.5 0.5];
+end
+
+% Find Debug Tab and Wrapper
+tabGroup = findobj(fig, 'Tag', 'simTabGroup');
+tabDebug = [];
+% Try to retrieve from UserData first (reliable if unparented)
+if ~isempty(tabGroup) && isstruct(tabGroup.UserData) && isfield(tabGroup.UserData, 'tabDebug')
+    tabDebug = tabGroup.UserData.tabDebug;
+end
+% Fallback search
+if isempty(tabDebug)
+    tabDebug = findall(fig, 'Tag', 'tabDebug');
+end
+
+% Buttons
+btnExp = findobj(fig, 'Tag', 'btnExpIRF');
+btnEst = findobj(fig, 'Tag', 'btnEstIRF');
+
+if strcmp(mode, 'Expert')
+    % Show Debug Tab
+    if ~isempty(tabDebug)
+        set(tabDebug, 'Parent', tabGroup);
+    end
+    set(btnExp, 'Visible', 'on');
+    set(btnEst, 'Visible', 'on');
+else
+    % Hide Debug Tab
+    if ~isempty(tabDebug)
+        set(tabDebug, 'Parent', []);
+    end
+    set(btnExp, 'Visible', 'off');
+    set(btnEst, 'Visible', 'off');
 end
 end
 
@@ -5091,31 +5321,104 @@ end
 end
 
 
-function toggleHILIGHTerModality(dropdown, lifeG, fretG, fret2G, anisG, pnl)
-% Reset all
-allG = [lifeG, fretG, fret2G, anisG];
-for i = 1:numel(allG)
-    if ~isempty(allG(i)) && isvalid(allG(i)), allG(i).Visible = 'off'; end
+function toggleHILIGHTerModality(fig)
+% Finds fields by Tag
+pnl = findobj(fig, 'Tag', 'pnlModelParams');
+if isempty(pnl), return; end
+
+gLife = findobj(pnl, 'Tag', 'gLife');
+gFret = findobj(pnl, 'Tag', 'gFret');
+gAnis = findobj(pnl, 'Tag', 'gAnis');
+
+groups = [gLife, gFret, gAnis];
+for i=1:numel(groups), if ~isempty(groups(i)), groups(i).Visible = 'off'; end; end
+
+dd = findobj(fig, 'Tag', 'modeDropdown');
+if isempty(dd), return; end
+val = dd.Value;
+
+% Update Sweep Dropdowns
+ddSx = findobj(fig, 'Tag', 'ddSweepParamX');
+ddSy = findobj(fig, 'Tag', 'ddSweepParamY');
+sweepItems = {};
+
+lblCh = findobj(fig, 'Tag', 'lblNumCh');
+spnCh = findobj(fig, 'Tag', 'numChannelsField');
+if ~isempty(lblCh), lblCh.Visible = 'on'; end
+if ~isempty(spnCh), spnCh.Visible = 'on'; end
+
+if contains(val, 'FRET (Donor') % FRET
+    if ~isempty(gFret), gFret.Visible = 'on'; end
+    % Toggle sub-elements based on user request
+    % "Donor FLIM does not require acceptor lifetime parameters, direct excitation or bleed through"
+    % Hide Acceptor Tau, Direct Ex, Bleed
+    set(findobj(gFret, 'Tag', 'fretAcceptorTauField'), 'Visible', 'off');
+    set(findobj(gFret, 'Tag', 'lblAccTau'), 'Visible', 'off');
+    set(findobj(gFret, 'Tag', 'fretDirectExField'), 'Visible', 'off');
+    set(findobj(gFret, 'Tag', 'lblDirectEx'), 'Visible', 'off');
+    set(findobj(gFret, 'Tag', 'fretBleedThroughField'), 'Visible', 'off');
+    set(findobj(gFret, 'Tag', 'lblBleed'), 'Visible', 'off');
+
+    sweepItems = {'Donor Tau', 'FRET E', 'Frac FRET'};
+
+elseif contains(val, 'seFRET') % FRET 2-Channel
+    if ~isempty(gFret), gFret.Visible = 'on'; end
+    % Ensure All Visible
+    set(findall(gFret, 'Type', 'uilabel'), 'Visible', 'on');
+    set(findall(gFret, 'Type', 'uieditfield'), 'Visible', 'on');
+    set(findall(gFret, 'Type', 'uinumericfield'), 'Visible', 'on');
+
+    sweepItems = {'Donor Tau', 'Acceptor Tau', 'FRET E', 'Frac FRET', 'Direct Ex', 'Bleed Through'};
+    % Explicitly hide Num Channels (forced 2)
+    if ~isempty(lblCh), lblCh.Visible = 'off'; end
+    if ~isempty(spnCh), spnCh.Visible = 'off'; end
+    % Also force Num Channels to 2?
+    if ~isempty(spnCh), spnCh.Value = 2; end
+
+elseif contains(val, 'Anisotropy')
+    if ~isempty(gAnis), gAnis.Visible = 'on'; end
+    sweepItems = {'Anis Tau', 'Rotation', 'r0'};
+    if ~isempty(lblCh), lblCh.Visible = 'off'; end
+    if ~isempty(spnCh), spnCh.Visible = 'off'; end
+
+else % Lifetime Gradient or Mix
+    if ~isempty(gLife), gLife.Visible = 'on'; end
+    % Check single vs mix
+    t2 = findobj(gLife, 'Tag', 'tau2Field');
+    alp = findobj(gLife, 'Tag', 'alphaField');
+    lblT2 = findobj(gLife, 'Type', 'uilabel', 'Text', 'Lifetime 2 (ps):');
+    lblAlp = findobj(gLife, 'Type', 'uilabel', 'Text', 'Mix Fraction (%):');
+
+    if strcmp(val, 'Single Lifetime')
+        % Hide second component fields entirely
+        if ~isempty(t2), t2.Visible = 'off'; end
+        if ~isempty(alp), alp.Visible = 'off'; end
+        if ~isempty(lblT2), lblT2.Visible = 'off'; end
+        if ~isempty(lblAlp), lblAlp.Visible = 'off'; end
+
+        sweepItems = {'Lifetime 1'};
+    else
+        % Show fields for mix/other modes
+        if ~isempty(t2), t2.Visible = 'on'; t2.Enable = 'on'; end
+        if ~isempty(alp), alp.Visible = 'on'; alp.Enable = 'on'; end
+        if ~isempty(lblT2), lblT2.Visible = 'on'; end
+        if ~isempty(lblAlp), lblAlp.Visible = 'on'; end
+
+        sweepItems = {'Lifetime 1', 'Lifetime 2', 'Mix Fraction'};
+    end
 end
 
-lblCh = findobj(pnl, 'Tag', 'lblNumCh');
-spnCh = findobj(pnl, 'Tag', 'numChannelsField');
-
-val = dropdown.Value;
-if strcmp(val, 'FRET')
-    set(fretG, 'Visible', 'on');
-    set([lblCh, spnCh], 'Visible', 'on');
-elseif strcmp(val, 'FRET 2-Channel')
-    set(fretG, 'Visible', 'on');
-    set(fret2G, 'Visible', 'on');
-    set([lblCh, spnCh], 'Visible', 'off');
-elseif strcmp(val, 'Anisotropy')
-    set(anisG, 'Visible', 'on');
-    set([lblCh, spnCh], 'Visible', 'off');
-else
-    set(lifeG, 'Visible', 'on');
-    set([lblCh, spnCh], 'Visible', 'on');
+if ~isempty(ddSx)
+    ddSx.Items = sweepItems;
+    if ~ismember(ddSx.Value, sweepItems) && ~isempty(sweepItems), ddSx.Value = sweepItems{1}; end
 end
+
+if ~isempty(ddSy)
+    ddSy.Items = sweepItems;
+    if ~ismember(ddSy.Value, sweepItems) && ~isempty(sweepItems), ddSy.Value = sweepItems{1}; end
+end
+
+updateSweepUI(fig);
 end
 
 function updateCLimFit(tab, type, val, pName)
@@ -5242,10 +5545,13 @@ try
                 meta.mapSpins.(pName).Max.Value = lims(2);
             end
         end
-    end
-
-    % --- Handle Non-Parametric Tabs Refresh ---
-    if isfield(meta, 'Maps')
+        % Photons/Alpha/Delta Colormaps
+        switch lower(pName)
+            case 'photons', colormap(ax, 'parula');
+            case 'alpha', colormap(ax, 'parula');
+            case 'delta', colormap(ax, 'jet');
+            otherwise, colormap(ax, 'jet');
+        end
         % LiMA
         if isfield(meta, 'axMu') && isfield(meta.Maps, 'Mu')
             h = findobj(meta.axMu, 'Type', 'image');
@@ -5338,7 +5644,7 @@ xLabels = struct('TauAvg', 'Lifetime (ns)', 'Intensity', 'Intensity (counts)', .
     'Chi2', 'Chi-Squared', 'Back', 'Background (counts)', 'Photons', 'Total Photons', ...
     'Tau1', 'Tau 1 (ns)', 'Tau2', 'Tau 2 (ns)', 'Tau3', 'Tau 3 (ns)', ...
     'Frac1', 'Fraction 1 (%)', 'Frac2', 'Fraction 2 (%)', 'Frac3', 'Fraction 3 (%)', ...
-    'Beta', 'Beta Factor');
+    'Beta', 'Beta Factor', 'Alpha', 'Mixing Component (\alpha)', 'Delta', 'Residual (\delta)');
 
 xLab = '--'; if isfield(xLabels, pName), xLab = xLabels.(pName); end
 
@@ -5888,6 +6194,1339 @@ meta = tab.UserData;
 % Best relies on getIRFFromSource doing it.
 
 % Actually, getIRFFromSource updates the labels!
-% See lines 5628-5633 in HILIGHTer.m (from previous view)
 % So just calling getIRFFromSource is enough.
+end
+
+% === Simulation UI Helper Functions ===
+
+function manageSimulationConfig(fig, dropdown)
+val = dropdown.Value;
+dropdown.Value = 'Default'; % Reset
+switch val
+    case 'Load...'
+        [file, path] = uigetfile('*.mat', 'Load Config');
+        if isequal(file, 0), return; end
+        try
+            d = load(fullfile(path, file), 'simConfig');
+            if isfield(d, 'simConfig')
+                % logic to populate fields from struct
+                % Requires mapping struct fields to UI tags
+                uialert(fig, 'Config Loaded (Placeholder)', 'Info');
+            end
+        catch
+            uialert(fig, 'Invalid config file', 'Error');
+        end
+    case 'Save Current...'
+        [file, path] = uiputfile('*.mat', 'Save Config');
+        if isequal(file, 0), return; end
+        simConfig = struct(); % Placeholder
+        save(fullfile(path, file), 'simConfig');
+end
+end
+
+function onDimChange(fig, type)
+dx = findobj(fig, 'Tag', 'dimXField');
+dy = findobj(fig, 'Tag', 'dimYField');
+asp = findobj(fig, 'Tag', 'chkAspect');
+
+src = [];
+if strcmp(type, 'X'), src = dx; elseif strcmp(type, 'Y'), src = dy; end
+
+% Enforce Power of 2 Stepping
+if ~isempty(src)
+    if isempty(src.UserData), src.UserData = src.Value; end
+
+    newVal = src.Value;
+    oldVal = src.UserData;
+
+    if newVal ~= oldVal
+        % Determine if this was a step click (1 step) or manual entry
+        % Step is 1 in spinner properties
+        if abs(newVal - oldVal) <= 1.5
+            if newVal > oldVal
+                % Power Up
+                val = 2^(floor(log2(oldVal)) + 1);
+            else
+                % Power Down
+                val = 2^(ceil(log2(oldVal)) - 1);
+            end
+        else
+            % Manual Entry: Snap nearest
+            val = 2^round(log2(newVal));
+        end
+
+        % Clamp limits
+        val = max(1, min(4096, val));
+        src.Value = val;
+        src.UserData = val;
+    end
+end
+
+if strcmp(type, 'Aspect')
+    if asp.Value
+        dy.Enable = 'off';
+        dy.Value = dx.Value;
+        dy.UserData = dx.Value;
+    else
+        dy.Enable = 'on';
+    end
+elseif strcmp(type, 'X')
+    if asp.Value
+        dy.Value = dx.Value;
+        dy.UserData = dx.Value;
+    end
+end
+end
+
+function onPhotonChange(fig)
+ph = findobj(fig, 'Tag', 'photonsField');
+if isempty(ph), return; end
+
+if isempty(ph.UserData), ph.UserData = ph.Value; end
+
+newVal = ph.Value;
+oldVal = ph.UserData;
+
+if newVal ~= oldVal
+    % Determine increment direction
+    % Spinner step is 1, so check relative change
+    if abs(newVal - oldVal) <= 1.5 % Likely a spinner click
+        if newVal > oldVal
+            % Power Up: e.g. 100 -> 1000
+            val = 10^(floor(log10(oldVal)) + 1);
+        else
+            % Power Down
+            val = 10^(ceil(log10(oldVal)) - 1);
+        end
+    else
+        % Manual entry: Accept value
+        val = newVal;
+    end
+
+    % Clamp
+    val = max(1, val);
+    ph.Value = val;
+    ph.UserData = val;
+end
+
+updateRateDisplay(fig);
+end
+
+function updateRateDisplay(fig)
+ph = findobj(fig, 'Tag', 'photonsField');
+dw = findobj(fig, 'Tag', 'dwellField');
+dt = findobj(fig, 'Tag', 'deadTimeField');
+lr = findobj(fig, 'Tag', 'lblRate');
+lp = findobj(fig, 'Tag', 'lblPileUp');
+
+if isempty(ph) || isempty(dw), return; end
+
+rateMHz = ph.Value / dw.Value;
+lr.Text = sprintf('Rate: %.1f MHz', rateMHz);
+
+rd = rateMHz * dt.Value * 1e-3;
+loss = (1 - 1/(1 + rd)) * 100;
+lp.Text = sprintf('Lost: %.1f %%', loss);
+end
+
+function toggleIRFSync(fig)
+chk = findobj(fig, 'Tag', 'chkSyncIRF');
+s1 = findobj(fig, 'Tag', 'irfShiftField_Ch1');
+s2 = findobj(fig, 'Tag', 'irfShiftField_Ch2');
+
+if chk.Value
+    s2.Enable = 'off';
+    s2.Value = s1.Value;
+else
+    s2.Enable = 'on';
+end
+end
+
+function updateSweepUI(fig)
+chkX = findobj(fig, 'Tag', 'chkSweepX');
+chkY = findobj(fig, 'Tag', 'chkSweepY');
+
+controlsX = {findobj(fig, 'Tag', 'ddSweepParamX'), findobj(fig, 'Tag', 'sweepStartX'), ...
+    findobj(fig, 'Tag', 'sweepEndX'), findobj(fig, 'Tag', 'sweepPadStartX'), ...
+    findobj(fig, 'Tag', 'sweepPadEndX'), findobj(fig, 'Tag', 'ddSweepTypeX')};
+
+controlsY = {findobj(fig, 'Tag', 'ddSweepParamY'), findobj(fig, 'Tag', 'sweepStartY'), ...
+    findobj(fig, 'Tag', 'sweepEndY'), findobj(fig, 'Tag', 'sweepPadStartY'), ...
+    findobj(fig, 'Tag', 'sweepPadEndY'), findobj(fig, 'Tag', 'ddSweepTypeY')};
+
+set([controlsX{:}], 'Enable', 'off');
+set([controlsY{:}], 'Enable', 'off');
+
+if isvalid(chkX) && chkX.Value, set([controlsX{:}], 'Enable', 'on'); end
+if isvalid(chkY) && chkY.Value, set([controlsY{:}], 'Enable', 'on'); end
+
+ddX = findobj(fig, 'Tag', 'ddSweepParamX');
+ddY = findobj(fig, 'Tag', 'ddSweepParamY');
+
+pnl = findobj(fig, 'Tag', 'pnlModelParams');
+if isempty(pnl), return; end
+
+% Re-enable all fields that are currently visible
+% This fixes the issue where unchecking sweep didn't re-enable the field
+visFields = findobj(pnl, 'Type', 'uieditfield', 'Visible', 'on');
+if ~isempty(visFields), set(visFields, 'Enable', 'on'); end
+visSpinners = findobj(pnl, 'Type', 'uispinner', 'Visible', 'on');
+if ~isempty(visSpinners), set(visSpinners, 'Enable', 'on'); end
+
+% Ensure specific fields like Lifetime 1 are definitely enabled if visible
+tau1 = findobj(pnl, 'Tag', 'tau1Field');
+if ~isempty(tau1) && strcmp(tau1.Visible, 'on'), tau1.Enable = 'on'; end
+
+% Helper to get unit string
+getUnit = @(tag) getUnitForParam(tag);
+
+if isvalid(chkX) && chkX.Value && ~isempty(ddX.Value)
+    tag = getTagForParam(ddX.Value, fig);
+    f = findobj(pnl, 'Tag', tag);
+    if ~isempty(f), f.Enable = 'off'; end
+
+    % Update Units X
+    uStr = getUnit(tag);
+    lblSU = findobj(fig, 'Tag', 'lblStartUnitX');
+    lblEU = findobj(fig, 'Tag', 'lblEndUnitX');
+    if ~isempty(lblSU), lblSU.Text = uStr; end
+    if ~isempty(lblEU), lblEU.Text = uStr; end
+else
+    % Clear Units
+    lblSU = findobj(fig, 'Tag', 'lblStartUnitX');
+    lblEU = findobj(fig, 'Tag', 'lblEndUnitX');
+    if ~isempty(lblSU), lblSU.Text = ''; end
+    if ~isempty(lblEU), lblEU.Text = ''; end
+end
+
+if isvalid(chkY) && chkY.Value && ~isempty(ddY.Value)
+    tag = getTagForParam(ddY.Value, fig);
+    f = findobj(pnl, 'Tag', tag);
+    if ~isempty(f), f.Enable = 'off'; end
+
+    % Update Units Y
+    uStr = getUnit(tag);
+    lblSU = findobj(fig, 'Tag', 'lblStartUnitY');
+    lblEU = findobj(fig, 'Tag', 'lblEndUnitY');
+    if ~isempty(lblSU), lblSU.Text = uStr; end
+    if ~isempty(lblEU), lblEU.Text = uStr; end
+else
+    % Clear Units
+    lblSU = findobj(fig, 'Tag', 'lblStartUnitY');
+    lblEU = findobj(fig, 'Tag', 'lblEndUnitY');
+    if ~isempty(lblSU), lblSU.Text = ''; end
+    if ~isempty(lblEU), lblEU.Text = ''; end
+end
+
+end
+
+function u = getUnitForParam(tag)
+u = '';
+if contains(tag, 'tau') || contains(tag, 'Tau') || contains(tag, 'Time'), u = 'ps'; end
+if contains(tag, 'frac') || contains(tag, 'Frac') || contains(tag, 'alpha') ...
+        || contains(tag, 'EField') || contains(tag, 'Direct') || contains(tag, 'Bleed'), u = '%'; end
+if contains(tag, 'rotation') || contains(tag, 'Rotation'), u = 'ps'; end
+if contains(tag, 'R0'), u = ''; end
+end
+
+function tag = getTagForParam(paramName, fig)
+tag = '';
+switch paramName
+    case 'Lifetime 1', tag = 'tau1Field';
+    case 'Lifetime 2', tag = 'tau2Field';
+    case 'Mix Fraction', tag = 'alphaField';
+    case 'Donor Tau', tag = 'fretTauField';
+    case 'Acceptor Tau', tag = 'fretAcceptorTauField';
+    case 'FRET E', tag = 'fretEField';
+    case 'Frac FRET', tag = 'fretFracField';
+    case 'Anis Tau', tag = 'anisLifetimeField';
+    case 'Rotation', tag = 'anisRotationField';
+    case 'r0', tag = 'anisR0Field';
+end
+end
+
+function setupModelParams(fig)
+pnl = findobj(fig, 'Tag', 'pnlModelParams');
+if isempty(pnl), return; end
+delete(pnl.Children);
+
+inputH = 22;
+
+% --- 1. Lifetime Fields ---
+% --- 1. Lifetime Fields ---
+% Height matches pnlModelParams (140)
+gLife = uipanel(pnl, 'BorderType', 'none', 'Position', [0 0 280 140], 'Tag', 'gLife', 'Visible', 'off');
+currY = 110; % Reset top Y for 140px height
+uilabel(gLife, 'Text', 'Lifetime 1 (ps):', 'Position', [10 currY 90 inputH]);
+uieditfield(gLife, 'numeric', 'Value', 1000, 'Position', [100 currY 80 inputH], 'Tag', 'tau1Field', 'Tooltip', 'Lifetime 1');
+
+currY = currY - 35;
+uilabel(gLife, 'Text', 'Lifetime 2 (ps):', 'Position', [10 currY 90 inputH]);
+uieditfield(gLife, 'numeric', 'Value', 2000, 'Position', [100 currY 80 inputH], 'Tag', 'tau2Field', 'Tooltip', 'Lifetime 2');
+
+currY = currY - 35;
+uilabel(gLife, 'Text', 'Mix Fraction (%):', 'Position', [10 currY 90 inputH]);
+uieditfield(gLife, 'numeric', 'Value', 50, 'Position', [100 currY 80 inputH], 'Tag', 'alphaField', 'Tooltip', 'Fraction of Component 2');
+
+% --- 2. FRET Fields ---
+gFret = uipanel(pnl, 'BorderType', 'none', 'Position', [0 0 280 140], 'Tag', 'gFret', 'Visible', 'off');
+currY = 110;
+uilabel(gFret, 'Text', 'Donor T (ps):', 'Position', [10 currY 80 inputH]);
+uieditfield(gFret, 'numeric', 'Value', 2500, 'Position', [100 currY 60 inputH], 'Tag', 'fretTauField');
+
+uilabel(gFret, 'Text', 'Acc T (ps):', 'Position', [170 currY 60 inputH]);
+uieditfield(gFret, 'numeric', 'Value', 1500, 'Position', [230 currY 50 inputH], 'Tag', 'fretAcceptorTauField');
+
+currY = currY - 35;
+uilabel(gFret, 'Text', 'FRET E (%):', 'Position', [10 currY 80 inputH]);
+uieditfield(gFret, 'numeric', 'Value', 50, 'Position', [100 currY 60 inputH], 'Tag', 'fretEField');
+
+uilabel(gFret, 'Text', 'Frac FRET(%):', 'Position', [170 currY 80 inputH]);
+uieditfield(gFret, 'numeric', 'Value', 50, 'Position', [250 currY 30 inputH], 'Tag', 'fretFracField');
+
+currY = currY - 35;
+uilabel(gFret, 'Text', 'Dir.Ex (%):', 'Position', [10 currY 80 inputH]);
+uieditfield(gFret, 'numeric', 'Value', 5, 'Position', [100 currY 60 inputH], 'Tag', 'fretDirectExField');
+
+uilabel(gFret, 'Text', 'Bleed (%):', 'Position', [170 currY 80 inputH]);
+uieditfield(gFret, 'numeric', 'Value', 10, 'Position', [250 currY 30 inputH], 'Tag', 'fretBleedThroughField');
+
+% --- 3. Anisotropy Fields ---
+gAnis = uipanel(pnl, 'BorderType', 'none', 'Position', [0 0 280 140], 'Tag', 'gAnis', 'Visible', 'off');
+currY = 110;
+uilabel(gAnis, 'Text', 'Lifetime (ps):', 'Position', [10 currY 80 inputH]);
+uieditfield(gAnis, 'numeric', 'Value', 2500, 'Position', [100 currY 60 inputH], 'Tag', 'anisLifetimeField');
+
+currY = currY - 35;
+uilabel(gAnis, 'Text', 'Rotation(ps):', 'Position', [10 currY 80 inputH]);
+uieditfield(gAnis, 'numeric', 'Value', 500, 'Position', [100 currY 60 inputH], 'Tag', 'anisRotationField');
+
+currY = currY - 35;
+uilabel(gAnis, 'Text', 'Initial r0:', 'Position', [10 currY 80 inputH]);
+uieditfield(gAnis, 'numeric', 'Value', 0.4, 'Position', [100 currY 60 inputH], 'Tag', 'anisR0Field');
+end
+
+function map = getParameterMap(fig, pName, baseVal, nX, nY, scale)
+% Base
+map = repmat(baseVal, nY, nX);
+if nargin < 6, scale = 1; end
+
+% Check Sweeps
+cx = findobj(fig, 'Tag', 'chkSweepX');
+dx = findobj(fig, 'Tag', 'ddSweepParamX');
+cy = findobj(fig, 'Tag', 'chkSweepY');
+dy = findobj(fig, 'Tag', 'ddSweepParamY');
+
+if isvalid(cx) && cx.Value && (strcmp(dx.Value, pName) || contains(dx.Value, pName))
+    % Sweep X (Now generates vertical gradient per user request "other way round")
+    sx = findobj(fig, 'Tag', 'sweepStartX').Value;
+    ex = findobj(fig, 'Tag', 'sweepEndX').Value;
+    ps = findobj(fig, 'Tag', 'sweepPadStartX').Value;
+    pe = findobj(fig, 'Tag', 'sweepPadEndX').Value;
+    type = findobj(fig, 'Tag', 'ddSweepTypeX').Value;
+
+    % Use nY for length, transpose to column, repeat across X
+    grad = createGradient(sx, ex, nY, ps, pe, type) * scale;
+    map = repmat(grad', 1, nX);
+end
+
+if isvalid(cy) && cy.Value && (strcmp(dy.Value, pName) || contains(dy.Value, pName))
+    % Sweep Y (Now generates horizontal gradient per user request "other way round")
+    sy = findobj(fig, 'Tag', 'sweepStartY').Value;
+    ey = findobj(fig, 'Tag', 'sweepEndY').Value;
+    ps = findobj(fig, 'Tag', 'sweepPadStartY').Value;
+    pe = findobj(fig, 'Tag', 'sweepPadEndY').Value;
+    type = findobj(fig, 'Tag', 'ddSweepTypeY').Value;
+
+    % Use nX for length, repeat rows
+    grad = createGradient(sy, ey, nX, ps, pe, type) * scale;
+    map = repmat(grad, nY, 1);
+end
+end
+
+function g = createGradient(s, e, N, padS, padE, type)
+nGrad = N - padS - padE;
+if nGrad < 1
+    % Just padS and padE (truncate)
+    g = [repmat(s, 1, padS), repmat(e, 1, padE)];
+    if length(g)>N, g=g(1:N); end
+    if length(g)<N, g(end+1:N)=e; end
+    return;
+end
+
+if strcmp(type, 'Non-Linear')
+    % Quadratic
+    t = linspace(0, 1, nGrad);
+    vals = s + (e - s) * (t.^2);
+else
+    vals = linspace(s, e, nGrad);
+end
+
+g = [repmat(s, 1, padS), vals, repmat(e, 1, padE)];
+end
+
+
+% === FLOWS PORTED FUNCTIONALITY ===
+
+function d = flows_getData(fig)
+dAll = fig.UserData;
+if ~isfield(dAll, 'Flows') || isempty(dAll.Flows)
+    dAll.Flows = struct('Conditions', {{}});
+    fig.UserData = dAll;
+end
+d = dAll.Flows;
+end
+
+function flows_setData(fig, d)
+dAll = fig.UserData;
+dAll.Flows = d;
+fig.UserData = dAll;
+end
+
+function flows_refreshCondList(fig)
+d = flows_getData(fig);
+items = {};
+for i = 1:numel(d.Conditions)
+    prefix = "";
+    if strcmp(d.Conditions{i}.Type, 'Positive Control'), prefix = "✓ [P] ";
+    elseif strcmp(d.Conditions{i}.Type, 'Negative Control'), prefix = "✗ [N] ";
+    else, prefix = "○ [E] ";
+    end
+    items{end+1} = sprintf('%s%s (%d)', prefix, d.Conditions{i}.Name, numel(d.Conditions{i}.Files));
+end
+% Find Listbox in the new panel
+lb = findobj(fig, 'Tag', 'condListBox');
+if ~isempty(lb), lb.Items = items; end
+end
+
+function idx = flows_getSelectedCondIndex(fig)
+lb = findobj(fig, 'Tag', 'condListBox');
+if isempty(lb), idx = []; return; end
+val = lb.Value;
+if isempty(val), idx = []; return; end
+idx = find(strcmp(lb.Items, val));
+end
+
+function flows_updateFileDisplay(fig)
+idx = flows_getSelectedCondIndex(fig);
+lbFiles = findobj(fig, 'Tag', 'fileListBox');
+if isempty(lbFiles), return; end
+
+if isempty(idx)
+    lbFiles.Items = {};
+    return;
+end
+d = flows_getData(fig);
+files = d.Conditions{idx}.Files;
+dispFiles = {};
+for i = 1:numel(files)
+    [p, n, e] = fileparts(files{i});
+    [~, parent] = fileparts(p);
+    dispFiles{end+1} = sprintf('[%s] %s%s', parent, n, e);
+end
+lbFiles.Items = dispFiles;
+lbFiles.UserData = files; % Store raw paths in listbox userdata for easy access
+end
+
+function flows_promptConditionName(fig, newFiles)
+d = flows_getData(fig);
+newName = char(inputdlg('Enter Name for New Condition:', 'Create Condition', [1 50], {['Group_' datestr(now, 'HHMMSS')]}));
+if isempty(newName), return; end
+
+newCond = struct('Name', newName, 'Type', 'Experimental', 'Files', {newFiles(:)});
+d.Conditions{end+1} = newCond;
+flows_setData(fig, d);
+
+flows_refreshCondList(fig);
+% Auto-select
+lb = findobj(fig, 'Tag', 'condListBox');
+if ~isempty(lb) && ~isempty(lb.Items)
+    lb.Value = lb.Items{end};
+    flows_updateFileDisplay(fig);
+end
+end
+
+function flows_createFromFiles(fig)
+[files, path] = uigetfile({'*.sdt;*.SDT;*.ptu', 'TCSPC Files (*.sdt, *.ptu)'}, 'Select Files', 'MultiSelect', 'on');
+if isequal(files, 0), return; end
+if ischar(files), files = {files}; end
+fullPaths = cellfun(@(f) fullfile(path, f), files, 'UniformOutput', false);
+flows_promptConditionName(fig, fullPaths);
+end
+
+function flows_createFromFolder(fig)
+folder = uigetdir(pwd, 'Select Folder');
+if isequal(folder, 0), return; end
+dDir = dir(fullfile(folder, '**', '*.*'));
+dDir = dDir(~[dDir.isdir]);
+% Filter basic extensions if needed, but taking all for now as per Flows
+paths = arrayfun(@(x) fullfile(x.folder, x.name), dDir, 'UniformOutput', false);
+if isempty(paths), return; end
+flows_promptConditionName(fig, paths(:));
+end
+
+function flows_renameCondition(fig)
+idx = flows_getSelectedCondIndex(fig); if isempty(idx), return; end
+d = flows_getData(fig);
+answer = inputdlg('Rename Condition:', 'Manage', [1 50], {d.Conditions{idx}.Name});
+if ~isempty(answer)
+    d.Conditions{idx}.Name = char(answer);
+    flows_setData(fig, d);
+    flows_refreshCondList(fig);
+end
+end
+
+function flows_flagCondition(fig)
+idx = flows_getSelectedCondIndex(fig); if isempty(idx), return; end
+d = flows_getData(fig);
+types = {'Experimental', 'Positive Control', 'Negative Control'};
+currType = d.Conditions{idx}.Type;
+if contains(currType, 'Experimental'), currType = 'Experimental'; end
+cIdx = find(strcmp(types, currType));
+if isempty(cIdx), cIdx = 1; end
+d.Conditions{idx}.Type = types{mod(cIdx, 3)+1};
+flows_setData(fig, d);
+flows_refreshCondList(fig);
+end
+
+function flows_deleteCondition(fig)
+idx = flows_getSelectedCondIndex(fig); if isempty(idx), return; end
+d = flows_getData(fig);
+d.Conditions(idx) = [];
+flows_setData(fig, d);
+flows_refreshCondList(fig);
+flows_updateFileDisplay(fig);
+end
+
+function flows_mergeConditions(fig)
+lb = findobj(fig, 'Tag', 'condListBox');
+if isempty(lb) || numel(lb.Items) < 2, return; end
+[sel, ok] = listdlg('ListString', lb.Items, 'PromptString', 'Select to merge:', 'Name', 'Merge');
+if ~ok || numel(sel) < 2, return; end
+
+d = flows_getData(fig);
+for i = 2:numel(sel)
+    d.Conditions{sel(1)}.Files = unique([d.Conditions{sel(1)}.Files; d.Conditions{sel(i)}.Files]);
+end
+d.Conditions(sel(2:end)) = [];
+flows_setData(fig, d);
+flows_refreshCondList(fig);
+flows_updateFileDisplay(fig);
+end
+
+function flows_duplicateCondition(fig)
+idx = flows_getSelectedCondIndex(fig); if isempty(idx), return; end
+d = flows_getData(fig);
+newC = d.Conditions{idx};
+newC.Name = [newC.Name '_Copy'];
+d.Conditions{end+1} = newC;
+flows_setData(fig, d);
+flows_refreshCondList(fig);
+end
+
+function flows_addFiles(fig)
+cIdx = flows_getSelectedCondIndex(fig); if isempty(cIdx), return; end
+[f, p] = uigetfile({'*.sdt;*.SDT;*.ptu', 'TCSPC Files'}, 'Import', 'MultiSelect', 'on');
+if isequal(f,0), return; end
+if ischar(f), f = {f}; end
+d = flows_getData(fig);
+d.Conditions{cIdx}.Files = unique([d.Conditions{cIdx}.Files; fullfile(p, f(:))]);
+flows_setData(fig, d);
+flows_updateFileDisplay(fig);
+flows_refreshCondList(fig);
+end
+
+function flows_removeFiles(fig)
+cIdx = flows_getSelectedCondIndex(fig); if isempty(cIdx), return; end
+lbFiles = findobj(fig, 'Tag', 'fileListBox');
+sel = lbFiles.Value; if isempty(sel), return; end
+if ischar(sel), sel = {sel}; end
+
+d = flows_getData(fig);
+uPaths = lbFiles.UserData;
+pathsToRemove = {};
+for i = 1:numel(sel)
+    m = find(strcmp(lbFiles.Items, sel{i}));
+    if ~isempty(m), pathsToRemove = [pathsToRemove; uPaths(m)]; end
+end
+d.Conditions{cIdx}.Files = setdiff(d.Conditions{cIdx}.Files, pathsToRemove);
+flows_setData(fig, d);
+flows_updateFileDisplay(fig);
+flows_refreshCondList(fig);
+end
+
+function flows_moveFiles(fig)
+cIdx = flows_getSelectedCondIndex(fig); if isempty(cIdx), return; end
+lbFiles = findobj(fig, 'Tag', 'fileListBox');
+sel = lbFiles.Value; if isempty(sel), return; end
+
+d = flows_getData(fig);
+names = cellfun(@(c) c.Name, d.Conditions, 'UniformOutput', false);
+[dIdx, ok] = listdlg('ListString', names, 'SelectionMode', 'single', 'PromptString', 'Move to:');
+if ~ok || isequal(dIdx, cIdx), return; end
+
+uPaths = lbFiles.UserData;
+pathsToMove = {};
+if ischar(sel), sel = {sel}; end
+for i = 1:numel(sel)
+    m = find(strcmp(lbFiles.Items, sel{i}));
+    if ~isempty(m), pathsToMove = [pathsToMove; uPaths(m)]; end
+end
+d.Conditions{cIdx}.Files = setdiff(d.Conditions{cIdx}.Files, pathsToMove);
+d.Conditions{dIdx}.Files = unique([d.Conditions{dIdx}.Files; pathsToMove(:)]);
+flows_setData(fig, d);
+flows_updateFileDisplay(fig);
+flows_refreshCondList(fig);
+end
+
+function flows_onBinTypeChange(fig, dd)
+spn = findobj(fig, 'Tag', 'flowsBinSpinner');
+if isempty(spn), return; end
+switch dd.Value
+    case 'Simple Binning'
+        spn.Limits = [1 10]; spn.Value = 1; spn.Enable = 'on';
+    case 'Gaussian Filter'
+        spn.Limits = [0.1 10]; spn.Value = 1.0; spn.Step = 0.1; spn.Enable = 'on';
+    otherwise
+        spn.Enable = 'off';
+end
+end
+
+function flows_runAnalysis(fig)
+d = flows_getData(fig);
+if isempty(d.Conditions), uialert(fig, 'No conditions defined!', 'Error'); return; end
+
+% Prepare Config
+dd = findobj(fig, 'Tag', 'flowsBinType');
+spn = findobj(fig, 'Tag', 'flowsBinSpinner');
+binType = 'None'; binVal = 0;
+if ~isempty(dd), binType = dd.Value; end
+if ~isempty(spn), binVal = spn.Value; end
+d.config.spatialBinning = binVal;
+d.config.binType = binType;
+
+% Channel Config
+ddCh = findobj(fig, 'Tag', 'flowsChannelMode');
+spnCh = findobj(fig, 'Tag', 'flowsChannelSpinner');
+chMode = 'Keep All Channels'; chVal = 1;
+if ~isempty(ddCh), chMode = ddCh.Value; end
+if ~isempty(spnCh), chVal = spnCh.Value; end
+d.config.channelMode = chMode;
+d.config.channelVal = chVal;
+
+% Check duplicate load
+if isfield(d.Conditions{1}, 'Analysis') && ~isempty(d.Conditions{1}.Analysis)
+    ans = uiconfirm(fig, 'Data seems to be already loaded. Reload?', 'Load Data', ...
+        'Options', {'Reload', 'Keep Existing'}, 'DefaultOption', 'Keep Existing');
+    if strcmp(ans, 'Keep Existing')
+        groupsTab_refreshUI(fig);
+        return;
+    end
+end
+
+totalFiles = 0;
+for i = 1:numel(d.Conditions), totalFiles = totalFiles + numel(d.Conditions{i}.Files); end
+if totalFiles == 0, uialert(fig, 'No files to load!', 'Error'); return; end
+
+prog = uiprogressdlg(fig, 'Title', 'Loading Data', 'Message', 'Initializing...', 'Cancelable', true);
+
+try
+    % Ensure read_SDT
+    if exist('read_SDT', 'file')~=2 && exist('AppProperties/read_SDT.m', 'file')==2
+        addpath('AppProperties');
+    end
+
+    count = 0;
+    for i = 1:numel(d.Conditions)
+        files = d.Conditions{i}.Files;
+        d.Conditions{i}.Analysis = struct();
+
+        for f = 1:numel(files)
+            if prog.CancelRequested, error('UserCancelled'); end
+            count = count + 1;
+            [~, fname, ~] = fileparts(files{f});
+            prog.Message = sprintf('Loading %s (%d/%d)...', fname, count, totalFiles);
+            prog.Value = count / totalFiles;
+
+            try
+                if exist('read_SDT', 'file') == 2
+                    [sdt, cfg] = read_SDT(files{f});
+                    d.Conditions{i}.Analysis(f).Config = cfg;
+
+                    % Channel Processing
+                    if exist('chMode', 'var')
+                        if strcmp(chMode, 'Sum All Channels')
+                            sdt = sum(sdt, 4); % Sum (Result is 1 Channel)
+                        elseif strcmp(chMode, 'Force Single Channel')
+                            if chVal <= size(sdt, 4)
+                                sdt = sdt(:,:,:,chVal);
+                            else
+                                warning('Requested Channel %d exceeds data channels (%d). Using all.', chVal, size(sdt,4));
+                            end
+                        end
+                    end
+
+                    % Pre-Processing
+                    if ~strcmp(d.config.binType, 'None') && d.config.spatialBinning > 0
+                        param = d.config.spatialBinning;
+                        [nY, nX, nT, nC] = size(sdt);
+                        if strcmp(d.config.binType, 'Simple Binning')
+                            scale = 1/param;
+                            tmp = imresize(sdt(:,:,1,1), scale, 'box');
+                            [newY, newX] = size(tmp);
+                            newSDT = zeros(newY, newX, nT, nC, 'like', sdt);
+                            for c=1:nC, for t=1:nT, newSDT(:,:,t,c) = imresize(sdt(:,:,t,c), scale, 'box') * (param^2); end; end
+                            sdt = newSDT;
+                        elseif strcmp(d.config.binType, 'Gaussian Filter')
+                            for c=1:nC, for t=1:nT, sdt(:,:,t,c) = imgaussfilt(sdt(:,:,t,c), param); end; end
+                        end
+                    end
+
+                    d.Conditions{i}.Analysis(f).Data = sdt;
+                else
+                    warning('read_SDT function not found.');
+                    d.Conditions{i}.Analysis(f).Data = [];
+                end
+            catch err
+                warning('Failed to load %s: %s', fname, err.message);
+            end
+        end
+    end
+
+    % Save Data & Refresh UI
+    flows_setData(fig, d);
+    close(prog);
+    groupsTab_refreshUI(fig);
+    refreshUnifiedPlots(fig);
+    uialert(fig, 'Data Loaded Successfully!', 'Success');
+
+catch ME
+    close(prog);
+    if ~strcmp(ME.message, 'UserCancelled')
+        uialert(fig, ['Load Failed: ' ME.message], 'Error');
+    end
+end
+end
+
+% === NEW DATA FRAME HELPERS ===
+
+function createGroupsTabInterface(fig, parentTab)
+% Modeled accurately after FlowsAnalysis.m LEFT PANEL
+
+% Initialize State for this tab if needed
+if ~isfield(fig.UserData, 'GroupsTab')
+    fig.UserData.GroupsTab = struct('CurrentChannel', 1, 'ControlOpacity', 0.3, 'ExpOpacity', 0.3);
+end
+
+% Main Layout: 3 Rows (Toolbar, Controls, Experiments)
+grid = uigridlayout(parentTab, [3 1]);
+grid.RowHeight = {50, '1x', '1x'};
+grid.Padding = [5 5 5 5];
+grid.RowSpacing = 5;
+
+% --- 1. Toolbar (Channel Selection) ---
+toolGrid = uigridlayout(grid, [1 3]);
+toolGrid.ColumnWidth = {60, '1x', 150};
+toolGrid.Padding = [0 0 0 0];
+
+uilabel(toolGrid, 'Text', 'Channel:', 'FontWeight', 'bold');
+
+% Channel Radio Group (Dynamic based on data?)
+% We'll create a container that we populate dynamically
+bg = uibuttongroup(toolGrid, 'BorderType', 'none', 'BackgroundColor', [0.94 0.94 0.94], ...
+    'Tag', 'groupsTab_ChannelGrp', 'SelectionChangedFcn', @(s,e) groupsTab_onChannelChange(fig, e));
+% Initial dummy buttons (will be refreshed)
+uiradiobutton(bg, 'Text', 'Ch 1', 'Position', [5 5 50 30], 'Tag', '1');
+
+uibutton(toolGrid, 'Text', 'Filtering / Threshold ⚡', ...
+    'BackgroundColor', [0.6 0.2 0.8], 'FontColor', 'white', ...
+    'ButtonPushedFcn', @(s,e) safeOpenThreshold(fig));
+
+% --- 2. Controls Panel ---
+ctrlP = uipanel(grid, 'Title', 'CONTROLS', 'BackgroundColor', [0.2 0.25 0.2], 'ForegroundColor', 'white');
+cGrid = uigridlayout(ctrlP, [1 2]);
+cGrid.ColumnWidth = {150, '1x'};
+
+% Left Side: Selector
+cSide = uigridlayout(cGrid, [3 1]);
+cSide.RowHeight = {20, 25, '1x'};
+uilabel(cSide, 'Text', 'Select Group:', 'FontColor', 'white');
+uidropdown(cSide, 'Items', {'None'}, 'Tag', 'groupsTab_ddCtrl', ...
+    'ValueChangedFcn', @(s,e) groupsTab_updateTabs(fig, 'Ctrl'));
+
+% Right Side: Tabs
+uitabgroup(cGrid, 'Tag', 'groupsTab_tgCtrl');
+
+% --- 3. Experimental Panel ---
+expP = uipanel(grid, 'Title', 'EXPERIMENTAL CONDITIONS', 'BackgroundColor', [0.2 0.2 0.25], 'ForegroundColor', 'white');
+eGrid = uigridlayout(expP, [1 2]);
+eGrid.ColumnWidth = {150, '1x'};
+
+% Left Side: Selector
+eSide = uigridlayout(eGrid, [3 1]);
+eSide.RowHeight = {20, 25, '1x'};
+uilabel(eSide, 'Text', 'Select Group:', 'FontColor', 'white');
+uidropdown(eSide, 'Items', {'None'}, 'Tag', 'groupsTab_ddExp', ...
+    'ValueChangedFcn', @(s,e) groupsTab_updateTabs(fig, 'Exp'));
+
+% Right Side: Tabs
+uitabgroup(eGrid, 'Tag', 'groupsTab_tgExp');
+
+% Initial Update
+groupsTab_refreshUI(fig);
+end
+
+function groupsTab_refreshUI(fig)
+d = flows_getData(fig);
+
+% 1. Channels
+bg = findobj(fig, 'Tag', 'groupsTab_ChannelGrp');
+if ~isempty(bg)
+    delete(bg.Children);
+    nCh = 1;
+    % Try to find channel count from first file
+    if ~isempty(d.Conditions) && isfield(d.Conditions{1}, 'Analysis') && ~isempty(d.Conditions{1}.Analysis)
+        dat = d.Conditions{1}.Analysis(1).Data;
+        if ~isempty(dat), nCh = size(dat, 4); end
+    end
+    % Create Buttons
+    btnW = 60; spacing = 5;
+    for i = 1:nCh
+        xPos = 5 + (i-1)*(btnW + spacing);
+        rb = uiradiobutton(bg, 'Text', sprintf('Ch %d', i), ...
+            'Tag', num2str(i), 'Position', [xPos, 5, btnW, 30]);
+        if i == fig.UserData.GroupsTab.CurrentChannel, rb.Value = true; end
+    end
+end
+
+% 2. Dropdowns
+ctrlGroups = {}; expGroups = {};
+if ~isempty(d.Conditions)
+    for i = 1:numel(d.Conditions)
+        if contains(d.Conditions{i}.Type, 'Control', 'IgnoreCase', true)
+            ctrlGroups{end+1} = d.Conditions{i}.Name;
+        else
+            expGroups{end+1} = d.Conditions{i}.Name;
+        end
+    end
+end
+if isempty(ctrlGroups), ctrlGroups = {'None'}; end
+if isempty(expGroups), expGroups = {'None'}; end
+
+ddC = findobj(fig, 'Tag', 'groupsTab_ddCtrl');
+if ~isempty(ddC), ddC.Items = ctrlGroups; end
+
+ddE = findobj(fig, 'Tag', 'groupsTab_ddExp');
+if ~isempty(ddE), ddE.Items = expGroups; end
+
+% 3. Update Tabs Content based on selection
+groupsTab_updateTabs(fig, 'Ctrl');
+groupsTab_updateTabs(fig, 'Exp');
+end
+
+function groupsTab_updateTabs(fig, type)
+d = flows_getData(fig);
+chan = fig.UserData.GroupsTab.CurrentChannel;
+
+tagDD = ['groupsTab_dd' type];
+tagTG = ['groupsTab_tg' type];
+
+dd = findobj(fig, 'Tag', tagDD);
+tg = findobj(fig, 'Tag', tagTG);
+if isempty(dd) || isempty(tg), return; end
+
+val = dd.Value; delete(tg.Children);
+if strcmp(val, 'None'), return; end
+
+% Find Condition Index
+cIdx = 0;
+for i = 1:numel(d.Conditions)
+    if strcmp(d.Conditions{i}.Name, val), cIdx = i; break; end
+end
+if cIdx == 0, return; end
+
+% Populate Tabs
+cond = d.Conditions{cIdx};
+if ~isfield(cond, 'Analysis') || isempty(cond.Analysis), return; end
+
+for i = 1:numel(cond.Analysis)
+    [~, fname, ~] = fileparts(cond.Files{i});
+    t = uitab(tg, 'Title', fname);
+    g = uigridlayout(t, [1 1]); g.Padding = [0 0 0 0];
+    ax = uiaxes(g, 'BackgroundColor', 'black');
+
+    rawData = cond.Analysis(i).Data;
+    if ~isempty(rawData) && chan <= size(rawData, 4)
+        img = sum(rawData(:,:,:,chan), 3);
+        imagesc(ax, img); colormap(ax, 'turbo');
+        axis(ax, 'image', 'off');
+        colorbar(ax, 'Color', 'white');
+    else
+        title(ax, 'No Data', 'Color', 'white');
+    end
+end
+end
+
+function groupsTab_onChannelChange(fig, event)
+fig.UserData.GroupsTab.CurrentChannel = str2double(event.NewValue.Tag);
+groupsTab_updateTabs(fig, 'Ctrl');
+groupsTab_updateTabs(fig, 'Exp');
+end
+
+function createImageTabInterface(fig, parentTab, ds)
+% Main Layout
+mainGrid = uigridlayout(parentTab, [3 1]);
+mainGrid.RowHeight = {40, 40, '1x'};
+mainGrid.Padding = [0 0 0 0];
+mainGrid.RowSpacing = 0;
+
+% --- 1. File Navigation Bar ---
+fileBar = uipanel(mainGrid);
+fileGrid = uigridlayout(fileBar, [1 4]);
+fileGrid.ColumnWidth = {150, 40, 40, '1x'};
+fileGrid.Padding = [2 2 2 2];
+
+uidropdown(fileGrid, 'Tag', 'ddImgGroup', 'Items', {'No Groups'}, 'ValueChangedFcn', @(s,e) navFile(fig, 'group'));
+uibutton(fileGrid, 'Text', '◀', 'ButtonPushedFcn', @(s,e) navFile(fig, 'prev'), 'Tooltip', 'Prev File');
+uibutton(fileGrid, 'Text', '▶', 'ButtonPushedFcn', @(s,e) navFile(fig, 'next'), 'Tooltip', 'Next File');
+uidropdown(fileGrid, 'Tag', 'ddImgFile', 'Items', {'No Files'}, 'ValueChangedFcn', @(s,e) navFile(fig, 'file'));
+
+% --- 2. Channel Navigation Bar ---
+topBar = uipanel(mainGrid);
+navLayout = uigridlayout(topBar, [1 6]);
+navLayout.ColumnWidth = {40, 40, '1x', 40, 40, 100};
+navLayout.Padding = [2 2 2 2];
+
+uibutton(navLayout, 'Text', '⏮', 'ButtonPushedFcn', @(s,e) navChannel(fig, 'first'), 'Tooltip', 'First Channel');
+uibutton(navLayout, 'Text', '◀', 'ButtonPushedFcn', @(s,e) navChannel(fig, 'prev'), 'Tooltip', 'Previous Channel');
+uilabel(navLayout, 'Text', 'Channel 1', 'HorizontalAlignment', 'center', 'Tag', 'lblNavChannel', 'FontWeight', 'bold');
+uibutton(navLayout, 'Text', '▶', 'ButtonPushedFcn', @(s,e) navChannel(fig, 'next'), 'Tooltip', 'Next Channel');
+uibutton(navLayout, 'Text', '⏭', 'ButtonPushedFcn', @(s,e) navChannel(fig, 'last'), 'Tooltip', 'Last Channel');
+uidropdown(navLayout, 'Items', {'Channel 1', 'Channel 2', 'Channel 3', 'Channel 4'}, 'Tag', 'ddNavChannel', ...
+    'ValueChangedFcn', @(s,e) navChannel(fig, 'jump'));
+
+% --- 2. Visualization Panel ---
+plotArea = uipanel(mainGrid, 'BorderType', 'none', 'Tag', 'dataPlotArea');
+
+% New Layout: Grid for Plots & Controls
+pGrid = uigridlayout(plotArea, [4 2]);
+% Rows: XY Area (Large), XT Area (Medium), Hist Area (Medium), Bottom Controls (Small)
+pGrid.RowHeight = {'1x', 100, 100, 40};
+pGrid.ColumnWidth = {'1x', 140}; % Scan Area (Flexible), Controls (Fixed)
+pGrid.Padding = [5 5 5 5];
+pGrid.RowSpacing = 5;
+
+% 1. XY Projection (Top Left)
+axXY = uiaxes(pGrid, 'Tag', 'axXY_Unified', 'BackgroundColor', 'black');
+axXY.Layout.Row = 1; axXY.Layout.Column = 1;
+disableDefaultInteractivity(axXY);
+axXY.Toolbar.Visible = 'off';
+
+% 2. XT Projection (Row 2, Full Width)
+axXT = uiaxes(pGrid, 'Tag', 'axXT_Unified', 'BackgroundColor', 'black');
+axXT.Layout.Row = 2; axXT.Layout.Column = [1 2];
+disableDefaultInteractivity(axXT);
+axXT.Toolbar.Visible = 'off';
+
+% 3. Histogram (Row 3, Left)
+axHist = uiaxes(pGrid, 'Tag', 'axHist_Unified', 'BackgroundColor', 'white');
+axHist.Layout.Row = 3; axHist.Layout.Column = 1;
+disableDefaultInteractivity(axHist);
+axHist.Toolbar.Visible = 'off';
+
+% 4. Contrast Controls (Row 3, Right)
+ctrlHist = uigridlayout(pGrid, [4 2]);
+ctrlHist.Layout.Row = 3; ctrlHist.Layout.Column = 2;
+ctrlHist.RowHeight = {20, 22, 20, 22};
+ctrlHist.ColumnWidth = {'fit', '1x'};
+ctrlHist.Padding = [0 0 0 0];
+
+uilabel(ctrlHist, 'Text', 'Contrast:');
+uilabel(ctrlHist, 'Text', '');
+uilabel(ctrlHist, 'Text', 'Min');
+spnMin = uispinner(ctrlHist, 'Tag', 'spnMin_Unified', 'Value', 0, 'Limits', [0 Inf], 'ValueChangedFcn', @(s,e) refreshUnifiedPlots(fig));
+uilabel(ctrlHist, 'Text', 'Max');
+spnMax = uispinner(ctrlHist, 'Tag', 'spnMax_Unified', 'Value', 1000, 'Limits', [0 Inf], 'ValueChangedFcn', @(s,e) refreshUnifiedPlots(fig));
+
+% 5. Bottom Controls (Row 4, Full Width)
+btmGrid = uigridlayout(pGrid, [1 7]);
+btmGrid.Layout.Row = 4; btmGrid.Layout.Column = [1 2];
+btmGrid.ColumnWidth = {'fit', 60, 40, 40, 50, 80, '1x'};
+btmGrid.Padding = [0 0 0 0];
+
+uilabel(btmGrid, 'Text', 'Threshold:');
+uispinner(btmGrid, 'Tag', 'spnThresh_Unified', 'Value', 10, 'Limits', [0 Inf]);
+uibutton(btmGrid, 'Text', 'Set');
+uibutton(btmGrid, 'Text', 'Auto');
+uibutton(btmGrid, 'Text', 'Reset');
+uibutton(btmGrid, 'Text', 'Edit Mask');
+
+binPanel = uipanel(btmGrid, 'BorderType', 'none');
+binGrid = uigridlayout(binPanel, [1 2]);
+binGrid.Padding = [0 0 0 0];
+uilabel(binGrid, 'Text', 'Binning:', 'HorizontalAlignment', 'right');
+uidropdown(binGrid, 'Items', {'Off', '2x2', '3x3', '4x4'}, 'Tag', 'ddBinning_Unified');
+
+% Store Handles
+uiData.axXY = axXY;
+uiData.axXT = axXT;
+uiData.axHist = axHist;
+uiData.spnMin = spnMin;
+uiData.spnMax = spnMax;
+plotArea.UserData = uiData;
+end
+
+function navChannel(fig, action)
+d = flows_getData(fig);
+curr = d.navChannel;
+maxCh = 1;
+
+% Get Max Ch from current data
+if isfield(d, 'currentData') && ~isempty(d.currentData)
+    maxCh = size(d.currentData, 4);
+elseif isfield(d, 'RawData') && ~isempty(d.RawData)
+    maxCh = size(d.RawData, 4);
+end
+
+switch action
+    case 'next', curr = min(curr + 1, maxCh);
+    case 'prev', curr = max(curr - 1, 1);
+    case 'first', curr = 1;
+    case 'last', curr = maxCh;
+    case 'jump'
+        dd = findobj(fig, 'Tag', 'ddNavChannel');
+        val = dd.Value;
+        parsed = sscanf(val, 'Channel %d');
+        if ~isempty(parsed), curr = parsed; end
+end
+d.navChannel = curr;
+flows_setData(fig, d);
+
+% Update Label & Dropdown
+lbl = findobj(fig, 'Tag', 'lblNavChannel');
+if ~isempty(lbl), lbl.Text = sprintf('Channel %d', curr); end
+dd = findobj(fig, 'Tag', 'ddNavChannel');
+if ~isempty(dd), dd.Value = sprintf('Channel %d', curr); end
+
+% Refresh plots
+refreshUnifiedPlots(fig);
+end
+
+function refreshUnifiedPlots(fig)
+d = flows_getData(fig); % Use correct accessor
+plotArea = findobj(fig, 'Tag', 'dataPlotArea');
+if isempty(plotArea), return; end
+uiData = plotArea.UserData;
+
+axXY = uiData.axXY;
+axXT = uiData.axXT;
+axHist = uiData.axHist;
+
+% Update Dropdowns (Group/File)
+ddGrp = findobj(fig, 'Tag', 'ddImgGroup');
+ddFile = findobj(fig, 'Tag', 'ddImgFile');
+
+% Ensure indices exist
+if ~isfield(d, 'navGroup'), d.navGroup = 1; end
+if ~isfield(d, 'navFile'), d.navFile = 1; end
+if ~isfield(d, 'navChannel'), d.navChannel = 1; end
+
+currentData = [];
+
+% Debug output (optional, remove later if spammy)
+% disp(['Refreshing Image Tab. Groups: ' num2str(numel(d.Conditions))]);
+
+if isfield(d, 'Conditions') && ~isempty(d.Conditions)
+    grpNames = cellfun(@(x) x.Name, d.Conditions, 'UniformOutput', false);
+    ddGrp.Items = grpNames;
+
+    % Validate navGroup
+    if d.navGroup > numel(grpNames), d.navGroup = 1; end
+    ddGrp.Value = grpNames{d.navGroup};
+
+    % Files
+    if isfield(d.Conditions{d.navGroup}, 'Files')
+        files = d.Conditions{d.navGroup}.Files;
+        fileNames = {};
+        for k=1:numel(files), [~,n,~]=fileparts(files{k}); fileNames{end+1}=n; end
+        if isempty(fileNames), fileNames = {'No Files'}; end
+        ddFile.Items = fileNames;
+
+        % Validate navFile
+        if d.navFile > numel(fileNames), d.navFile = 1; end
+        if ~strcmpi(fileNames{1}, 'No Files')
+            ddFile.Value = fileNames{d.navFile};
+
+            % DATA
+            if isfield(d.Conditions{d.navGroup}, 'Analysis') && numel(d.Conditions{d.navGroup}.Analysis) >= d.navFile
+                currentData = d.Conditions{d.navGroup}.Analysis(d.navFile).Data;
+            end
+        else
+            ddFile.Value = 'No Files';
+        end
+    else
+        ddFile.Items = {'No Files'};
+    end
+else
+    ddGrp.Items = {'No Groups'};
+    ddFile.Items = {'No Files'};
+end
+
+% Persist current data for channel nav
+d.currentData = currentData;
+% We don't necessarily need to save back here unless we fixed indices, but good practice if state is self-correcting
+flows_setData(fig, d);
+
+% Plotting
+if isempty(currentData)
+    cla(axXY); title(axXY, 'No Data', 'Color', 'white'); axis(axXY, 'off');
+    cla(axXT); axis(axXT, 'off');
+    cla(axHist); axis(axHist, 'off');
+    return;
+end
+
+ch = d.navChannel;
+if ch > size(currentData, 4), ch = 1; d.navChannel=1; flows_setData(fig, d); end
+
+dataCh = currentData(:,:,:,ch);
+
+% 1. XY Projection (Sum over time)
+imgXY = sum(dataCh, 3);
+
+% Auto-Scale Contrast (if spinners default or invalid)
+mn = uiData.spnMin.Value; mx = uiData.spnMax.Value;
+if (mn == 0 && mx == 1000) || (mx <= mn)
+    mn = min(imgXY(:)); mx = max(imgXY(:));
+    if mx <= mn, mx = mn + 1; end
+    if isnan(mn), mn=0; end; if isnan(mx), mx=1; end;
+    uiData.spnMin.Value = mn; uiData.spnMax.Value = mx;
+end
+
+% Plot XY
+imagesc(axXY, imgXY);
+colormap(axXY, getAppColormap());
+colorbar(axXY);
+axis(axXY, 'image', 'off');
+clim(axXY, [mn mx]);
+title(axXY, sprintf('Channel %d - XY Projection', ch), 'Color', 'white');
+
+% 2. XT Projection (Sum over Y -> X, Time)
+imgXT = squeeze(sum(dataCh, 1))';
+imagesc(axXT, imgXT);
+colormap(axXT, getAppColormap());
+axis(axXT, 'normal', 'off');
+title(axXT, 'XT Projection', 'Color', 'white');
+
+% 3. Histogram
+histogram(axHist, imgXY(:), 50, 'FaceColor', [0.8 0.8 0.8], 'EdgeColor', 'none');
+xlim(axHist, [mn mx]);
+title(axHist, 'Intensity Histogram');
+axHist.XColor = 'black'; axHist.YColor = 'black';
+grid(axHist, 'on');
+end
+
+function cmap = getAppColormap()
+cmap = turbo(256);
+end
+
+function loadSelectedToControls(fig)
+uialert(fig, 'Loaded into Analysis Controls (Placeholder)', 'Info');
+end
+
+function loadSelectedToExp(fig)
+uialert(fig, 'Loaded into Experimental Conditions (Placeholder)', 'Info');
+end
+
+function openGroupsThresholdGUI(parentFig)
+% Create Modal Dialog
+dWidth = 500; dHeight = 400;
+dlg = uifigure('Name', 'Threshold Settings', 'Position', [100 100 dWidth dHeight], ...
+    'WindowStyle', 'modal', 'Resize', 'off', 'Color', 'white');
+movegui(dlg, 'center');
+
+% Layout
+mainGrid = uigridlayout(dlg, [4 1]);
+mainGrid.RowHeight = {40, '1x', 50, 40};
+mainGrid.Padding = [10 10 10 10];
+
+% Header
+uilabel(mainGrid, 'Text', 'Intensity Threshold Configuration', 'FontSize', 16, 'FontWeight', 'bold', ...
+    'HorizontalAlignment', 'center');
+
+% Histogram Axis
+axAndControl = uigridlayout(mainGrid, [1 2]);
+axAndControl.ColumnWidth = {'1x', 120};
+axAndControl.Padding = [0 0 0 0];
+
+ax = uiaxes(axAndControl);
+title(ax, 'Intensity Distribution');
+xlabel(ax, 'Photons');
+ylabel(ax, 'Count');
+
+% Controls (Right of Hist)
+ctrlP = uipanel(axAndControl, 'BorderType', 'none');
+cGrid = uigridlayout(ctrlP, [5 1]);
+cGrid.RowHeight = {22, 22, 22, 22, '1x'};
+cGrid.Padding = [0 0 0 0];
+uilabel(cGrid, 'Text', 'Thresholds:', 'FontWeight', 'bold');
+
+uilabel(cGrid, 'Text', 'Min:');
+spnMin = uispinner(cGrid, 'Limits', [0 Inf], 'Value', 0, 'Tag', 'thMin');
+
+uilabel(cGrid, 'Text', 'Max:');
+spnMax = uispinner(cGrid, 'Limits', [0 Inf], 'Value', 10000, 'Tag', 'thMax');
+
+% Histogram Data Loading
+d = flows_getData(parentFig);
+allData = [];
+% Aggregate data for histogram
+if ~isempty(d.Conditions)
+    for i = 1:numel(d.Conditions)
+        if isfield(d.Conditions{i}, 'Analysis')
+            for f = 1:numel(d.Conditions{i}.Analysis)
+                tmp = d.Conditions{i}.Analysis(f).Data;
+                if ~isempty(tmp)
+                    % Use sum projection for intensity
+                    img = sum(tmp, 3);
+                    allData = [allData; img(:)];
+                end
+            end
+        end
+    end
+end
+
+if isempty(allData)
+    title(ax, 'No Data Available');
+else
+    histogram(ax, allData, 100, 'FaceColor', [0.4 0.4 0.4]);
+    grid(ax, 'on');
+
+    mn = min(allData); mx = max(allData);
+    if isfield(d.config, 'thresholdMin'), mn = d.config.thresholdMin; end
+    if isfield(d.config, 'thresholdMax'), mx = d.config.thresholdMax; end
+
+    spnMin.Value = mn;
+    spnMax.Value = mx;
+end
+
+% Draw Lines
+% Draw Lines
+updateThresholdLines(ax, spnMin.Value, spnMax.Value);
+
+spnMin.ValueChangedFcn = @(s,e) updateThresholdLines(ax, spnMin.Value, spnMax.Value);
+spnMax.ValueChangedFcn = @(s,e) updateThresholdLines(ax, spnMin.Value, spnMax.Value);
+
+% Footer Buttons
+btnGrid = uigridlayout(mainGrid, [1 3]);
+uibutton(btnGrid, 'Text', 'Auto Threshold', 'ButtonPushedFcn', @(s,e) autoThreshold(spnMin, spnMax, allData, ax));
+uibutton(btnGrid, 'Text', 'Cancel', 'ButtonPushedFcn', @(s,e) delete(dlg));
+uibutton(btnGrid, 'Text', 'APPLY', 'FontWeight', 'bold', 'BackgroundColor', [0.2 0.6 0.2], 'FontColor', 'white', ...
+    'ButtonPushedFcn', @(s,e) applyThreshold(parentFig, dlg, spnMin.Value, spnMax.Value));
+
+    function updateThresholdLines(theAx, mn, mx)
+        try
+            delete(findobj(theAx, 'Tag', 'thLine'));
+            yl = get(theAx, 'YLim');
+            line(theAx, [mn mn], yl, 'Color', 'r', 'LineWidth', 2, 'Tag', 'thLine');
+            line(theAx, [mx mx], yl, 'Color', 'r', 'LineWidth', 2, 'Tag', 'thLine');
+        catch
+        end
+    end
+
+    function autoThreshold(sMin, sMax, data, ax)
+        if isempty(data), return; end
+        sMin.Value = prctile(data, 1);
+        sMax.Value = prctile(data, 99);
+        updateThresholdLines(ax, sMin.Value, sMax.Value);
+    end
+
+    function applyThreshold(fig, dlg, mn, mx)
+        d = flows_getData(fig);
+        d.config.thresholdMin = mn;
+        d.config.thresholdMax = mx;
+        flows_setData(fig, d);
+
+        delete(dlg);
+        groupsTab_refreshUI(fig);
+        uialert(fig, 'Thresholds Updated.', 'Success');
+    end
+end
+
+function manageSession(fig, ~, action)
+if strcmp(action, 'closing')
+    % Prompt for Save
+    selection = uiconfirm(fig, 'Save session before closing?', 'Close HILIGHTer', ...
+        'Options', {'Save', 'Don''t Save', 'Cancel'}, ...
+        'DefaultOption', 1, 'CancelOption', 3);
+
+    switch selection
+        case 'Save'
+            saved = saveSessionData(fig);
+            if saved, delete(fig); end
+        case 'Don''t Save'
+            delete(fig);
+        case 'Cancel'
+            return;
+    end
+end
+end
+
+function saved = saveSessionData(fig)
+saved = false;
+data = fig.UserData;
+[file, path] = uiputfile('*.mat', 'Save Session Data', 'HILIGHTer_Session.mat');
+if isequal(file, 0), return; end
+
+try
+    save(fullfile(path, file), 'data');
+    saved = true;
+catch ME
+    uialert(fig, ['Save Failed: ' ME.message], 'Error');
+end
+end
+
+function safeOpenThreshold(fig)
+try
+    openGroupsThresholdGUI(fig);
+catch ME
+    uialert(fig, ME.message, 'Threshold Error');
+end
+end
+
+function navFile(fig, action)
+d = flows_getData(fig);
+% Ensure nav state exists
+if ~isfield(d, 'navGroup'), d.navGroup = 1; end
+if ~isfield(d, 'navFile'), d.navFile = 1; end
+if ~isfield(d, 'navChannel'), d.navChannel = 1; end
+
+nGrps = numel(d.Conditions);
+if nGrps == 0
+    refreshUnifiedPlots(fig);
+    return;
+end
+
+switch action
+    case 'group'
+        dd = findobj(fig, 'Tag', 'ddImgGroup');
+        idx = find(strcmp(dd.Items, dd.Value), 1);
+        if ~isempty(idx), d.navGroup = idx; end
+        d.navFile = 1; % Reset file on group change
+    case 'prevGroup'
+        d.navGroup = max(d.navGroup - 1, 1);
+        d.navFile = 1;
+    case 'file'
+        dd = findobj(fig, 'Tag', 'ddImgFile');
+        idx = find(strcmp(dd.Items, dd.Value), 1);
+        if ~isempty(idx), d.navFile = idx; end
+    case 'prevFile'
+        d.navFile = max(d.navFile - 1, 1);
+    case 'nextFile'
+        if ~isempty(d.Conditions) && isfield(d.Conditions{d.navGroup}, 'Files')
+            nFiles = numel(d.Conditions{d.navGroup}.Files);
+            d.navFile = min(d.navFile + 1, nFiles);
+        end
+end
+flows_setData(fig, d); % Save updated state
+refreshUnifiedPlots(fig);
 end

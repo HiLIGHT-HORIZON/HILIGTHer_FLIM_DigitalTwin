@@ -105,12 +105,15 @@ else
     % HILIGHTer - Refresh plots and tabs
     try
         % Data tabs might need to be recreated if nC changed
+        % Data tabs might need to be recreated if nC changed
         if isfield(fig.UserData, 'RawData') && ~isempty(fig.UserData.RawData)
-            [~,~,~,nC] = size(fig.UserData.RawData);
-            % Call setupDataTabs if needed (though it's called in refreshAllPlots)
-            feval('refreshAllPlots', fig);
-            % We might also need to sync analysis tabs
-            feval('syncAnalysisTabsWithConfig', fig);
+            % Check if we have function handles to refresh the UI
+            if isfield(fig.UserData, 'functions')
+                f = fig.UserData.functions;
+                if isfield(f, 'refreshAllPlots'), f.refreshAllPlots(fig); end
+                if isfield(f, 'syncAnalysisTabsWithConfig'), f.syncAnalysisTabsWithConfig(fig); end
+                if isfield(f, 'syncAnalysisMethods'), f.syncAnalysisMethods(fig); end
+            end
         end
     catch
     end
