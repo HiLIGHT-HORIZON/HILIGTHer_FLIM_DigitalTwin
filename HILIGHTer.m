@@ -1,4 +1,4 @@
-function HILIGHTer(configStruct)
+﻿function HILIGHTer(configStruct)
 % Add AppProperties to path to ensure shared utilities are available
 addpath(fullfile(fileparts(mfilename('fullpath')), 'AppProperties'));
 
@@ -97,7 +97,7 @@ try
 
     % === Configuration Panel (Top Left) ===
     % === Configuration Panel (Top Left) ===
-    configPanelH = 450;
+    configPanelH = 580;
     configPanel = uipanel(fig, 'Title', 'Simulation Configuration', 'Tag', 'pnlConfig', ...
         'Position', [col1X, figHeight - configPanelH - margin - 90, col1W, configPanelH]);
 
@@ -174,10 +174,10 @@ try
     currY = configPanelH - 50;
     lblMode = uilabel(configPanel, 'Text', 'Mode:', 'Position', [10 currY 50 inputH]);
     modeDropdown = uidropdown(configPanel, ...
-        'Items', {'Lifetime Gradient', 'Lifetime Mix', 'FRET'}, ...
+        'Items', {'Lifetime Gradient', 'Lifetime Mix', 'FRET', 'FRET 2-Channel', 'Anisotropy'}, ...
         'Value', 'Lifetime Gradient', ...
         'Tooltip', 'Select simulation scenario', ...
-        'Position', [70 currY 200 inputH]); % Use full width
+        'Position', [70 currY 200 inputH], 'Tag', 'modeDropdown'); % Use full width
 
     currY = currY - 35;
     % -- Image Dimensions (Line 1) --
@@ -205,7 +205,10 @@ try
     uilabel(configPanel, 'Text', 'Bkg:', 'Position', [10 currY 30 inputH]);
     darkCountsField = uieditfield(configPanel, 'numeric', 'Value', 0, 'Position', [50 currY 50 inputH], 'Tooltip', 'Background counts', 'Tag', 'darkCountsField');
 
-    lblRate = uilabel(configPanel, 'Text', 'Rate: 10.0 MHz', 'Position', [110 currY 150 inputH], ...
+    uilabel(configPanel, 'Text', 'Chans:', 'Position', [110 currY 45 inputH], 'Tag', 'lblNumCh');
+    uispinner(configPanel, 'Limits', [1 2], 'Value', 1, 'Position', [160 currY 50 inputH], 'Tag', 'numChannelsField');
+
+    lblRate = uilabel(configPanel, 'Text', 'Rate: 10.0 MHz', 'Position', [220 currY 150 inputH], ...
         'Tag', 'lblRate', 'FontColor', [0.3 0.3 0.3], 'FontSize', 10);
 
     % Update Rate Label
@@ -224,25 +227,56 @@ try
 
     % 1. FRET Fields
     fretY = paramStartY;
-    lblFretTau = uilabel(configPanel, 'Text', 'Tau (ps):', 'Position', [10 fretY 60 inputH], 'Visible', 'off');
-    fretTauField = uieditfield(configPanel, 'numeric', 'Value', 3000, 'Position', [70 fretY 60 inputH], ...
+    lblFretTau = uilabel(configPanel, 'Text', 'Donor T (ps):', 'Position', [10 fretY 80 inputH], 'Visible', 'off');
+    fretTauField = uieditfield(configPanel, 'numeric', 'Value', 3000, 'Position', [100 fretY 60 inputH], ...
         'Tag', 'fretTauField', 'Visible', 'off');
 
-    fretY = fretY - 35;
-    lblMinFRET = uilabel(configPanel, 'Text', 'Min FRET%:', 'Position', [10 fretY 70 inputH], 'Visible', 'off');
-    minFRETField = uieditfield(configPanel, 'numeric', 'Value', 0, 'Position', [80 fretY 40 inputH], ...
-        'Tag', 'minFRETField', 'Visible', 'off');
-    lblMaxFRET = uilabel(configPanel, 'Text', 'Max:', 'Position', [130 fretY 40 inputH], 'Visible', 'off');
-    maxFRETField = uieditfield(configPanel, 'numeric', 'Value', 100, 'Position', [170 fretY 40 inputH], ...
-        'Tag', 'maxFRETField', 'Visible', 'off');
+    uilabel(configPanel, 'Text', 'Acc T (ps):', 'Position', [170 fretY 70 inputH], 'Visible', 'off', 'Tag', 'lblAccTau');
+    uieditfield(configPanel, 'numeric', 'Value', 2000, 'Position', [240 fretY 60 inputH], ...
+        'Tag', 'fretAcceptorTauField', 'Visible', 'off');
 
     fretY = fretY - 35;
-    lblMinFrac = uilabel(configPanel, 'Text', 'Min Frac%:', 'Position', [10 fretY 70 inputH], 'Visible', 'off');
-    minFracField = uieditfield(configPanel, 'numeric', 'Value', 0, 'Position', [80 fretY 40 inputH], ...
+    lblMinFRET = uilabel(configPanel, 'Text', 'Min E%:', 'Position', [10 fretY 50 inputH], 'Visible', 'off');
+    minFRETField = uieditfield(configPanel, 'numeric', 'Value', 0, 'Position', [60 fretY 35 inputH], ...
+        'Tag', 'minFRETField', 'Visible', 'off');
+    lblMaxFRET = uilabel(configPanel, 'Text', 'Max E:', 'Position', [100 fretY 50 inputH], 'Visible', 'off');
+    maxFRETField = uieditfield(configPanel, 'numeric', 'Value', 100, 'Position', [150 fretY 35 inputH], ...
+        'Tag', 'maxFRETField', 'Visible', 'off');
+
+    uilabel(configPanel, 'Text', 'Dir.Ex%:', 'Position', [195 fretY 50 inputH], 'Visible', 'off', 'Tag', 'lblDirectEx');
+    uieditfield(configPanel, 'numeric', 'Value', 5, 'Position', [250 fretY 40 inputH], ...
+        'Tag', 'fretDirectExField', 'Visible', 'off');
+
+    fretY = fretY - 35;
+    lblMinFrac = uilabel(configPanel, 'Text', 'Min f%:', 'Position', [10 fretY 50 inputH], 'Visible', 'off');
+    minFracField = uieditfield(configPanel, 'numeric', 'Value', 10, 'Position', [65 fretY 35 inputH], ...
         'Tag', 'minFracField', 'Visible', 'off');
-    lblMaxFrac = uilabel(configPanel, 'Text', 'Max:', 'Position', [130 fretY 40 inputH], 'Visible', 'off');
-    maxFracField = uieditfield(configPanel, 'numeric', 'Value', 100, 'Position', [170 fretY 40 inputH], ...
+    lblMaxFrac = uilabel(configPanel, 'Text', 'Max f:', 'Position', [105 fretY 45 inputH], 'Visible', 'off');
+    maxFracField = uieditfield(configPanel, 'numeric', 'Value', 90, 'Position', [150 fretY 35 inputH], ...
         'Tag', 'maxFracField', 'Visible', 'off');
+
+    uilabel(configPanel, 'Text', 'Bleed%:', 'Position', [195 fretY 45 inputH], 'Visible', 'off', 'Tag', 'lblBleed');
+    uieditfield(configPanel, 'numeric', 'Value', 10, 'Position', [250 fretY 40 inputH], ...
+        'Tag', 'fretBleedThroughField', 'Visible', 'off');
+
+    % 1b. Anisotropy Fields
+    anisY = paramStartY;
+    uilabel(configPanel, 'Text', 'Lifetime (ps):', 'Position', [10 anisY 80 inputH], 'Visible', 'off', 'Tag', 'lblAnisTau');
+    uieditfield(configPanel, 'numeric', 'Value', 2500, 'Position', [100 anisY 60 inputH], ...
+        'Tag', 'anisLifetimeField', 'Visible', 'off');
+
+    uilabel(configPanel, 'Text', 'Rotation(ps):', 'Position', [170 anisY 80 inputH], 'Visible', 'off', 'Tag', 'lblAnisRot');
+    uieditfield(configPanel, 'numeric', 'Value', 500, 'Position', [250 anisY 50 inputH], ...
+        'Tag', 'anisRotationField', 'Visible', 'off');
+
+    anisY = anisY - 35;
+    uilabel(configPanel, 'Text', 'Initial r0:', 'Position', [10 anisY 70 inputH], 'Visible', 'off', 'Tag', 'lblAnisR0');
+    uieditfield(configPanel, 'numeric', 'Value', 0.4, 'Position', [80 anisY 50 inputH], ...
+        'Tag', 'anisR0Field', 'Visible', 'off');
+
+    uilabel(configPanel, 'Text', 'Variation:', 'Position', [145 anisY 60 inputH], 'Visible', 'off', 'Tag', 'lblAnisVar');
+    uidropdown(configPanel, 'Items', {'None', 'Lifetime Sweep X', 'Lifetime Sweep Y', 'Rotation Sweep X', 'Rotation Sweep Y'}, ...
+        'Position', [210 anisY 90 inputH], 'Tag', 'anisVarAxisDropdown', 'Visible', 'off');
 
     % 2. Lifetime Fields
     lifeY = paramStartY;
@@ -257,12 +291,21 @@ try
 
     % 3. Instrument / Advanced Simulation Fields
     instY = lifeY - 35;
-    uilabel(configPanel, 'Text', 'IRF Shift (ps):', 'Position', [10 instY 80 inputH]);
+    instY = instY - 45; % Move down for new fields
+    uilabel(configPanel, 'Text', 'IRF Shift Ch1:', 'Position', [10 instY 80 inputH]);
     irfShiftField = uispinner(configPanel, 'Limits', [-10000 10000], 'Value', 0, 'Step', 100, ...
         'Position', [95 instY 70 inputH], 'Tag', 'irfShiftField');
 
-    chkWrap = uicheckbox(configPanel, 'Text', 'Wrap Tails', 'Position', [175 instY 100 inputH], ...
+    chkWrap = uicheckbox(configPanel, 'Text', 'Wrap Ch1', 'Position', [175 instY 100 inputH], ...
         'Value', 0, 'Tag', 'chkWrap', 'Tooltip', 'Simulate pulse train wrap-around');
+
+    instY = instY - 30;
+    uilabel(configPanel, 'Text', 'IRF Shift Ch2:', 'Position', [10 instY 80 inputH]);
+    irfShift2Field = uispinner(configPanel, 'Limits', [-10000 10000], 'Value', 0, 'Step', 100, ...
+        'Position', [95 instY 70 inputH], 'Tag', 'irfShift2Field');
+
+    chkWrap2 = uicheckbox(configPanel, 'Text', 'Wrap Ch2', 'Position', [175 instY 100 inputH], ...
+        'Value', 0, 'Tag', 'chkWrap2', 'Tooltip', 'Simulate pulse train wrap-around for Ch2');
 
     instY = instY - 35;
     uilabel(configPanel, 'Text', 'Dead Time (ps):', 'Position', [10 instY 90 inputH]);
@@ -272,8 +315,7 @@ try
     % -- Generate Button (Created Last) --
     uibutton(configPanel, 'Text', 'GENERATE', 'FontWeight','bold', 'Tooltip', 'Create mock data', ...
         'Position', [20 btnY 240 18], ... % Narrower vertically
-        'ButtonPushedFcn', @(btn, event) onGenerate(fig, modeDropdown, dimXField, dimYField, tau1Field, tau2Field, photonsField, darkCountsField, ...
-        fretTauField, minFRETField, maxFRETField, minFracField, maxFracField, irfShiftField, chkWrap, deadTimeField, dwellField));
+        'ButtonPushedFcn', @(btn, event) onGenerate(fig));
 
 
     % Callbacks for instant updating of Instrument Plot
@@ -283,15 +325,23 @@ try
     deadTimeField.ValueChangedFcn = @(src, event) updateInstrumentPlot(fig, tau1Field, tau2Field);
     chkWrap.ValueChangedFcn = @(src, event) updateInstrumentPlot(fig, tau1Field, tau2Field);
 
-    % Callbacks for Modality Toggle
-    % Group Lifetime (Only Lifetime Params)
+    % Group Lifetime
     lifetimeGroup = [lblTau1, tau1Field, lblTau2, tau2Field];
     % Group FRET
     fretGroup = [lblFretTau, fretTauField, lblMinFRET, minFRETField, lblMaxFRET, maxFRETField, ...
         lblMinFrac, minFracField, lblMaxFrac, maxFracField];
+    % Group FRET 2-Channel
+    fret2Group = [findobj(configPanel, 'Tag', 'lblAccTau'), findobj(configPanel, 'Tag', 'fretAcceptorTauField'), ...
+        findobj(configPanel, 'Tag', 'lblDirectEx'), findobj(configPanel, 'Tag', 'fretDirectExField'), ...
+        findobj(configPanel, 'Tag', 'lblBleed'), findobj(configPanel, 'Tag', 'fretBleedThroughField')];
+    % Group Anisotropy
+    anisGroup = [findobj(configPanel, 'Tag', 'lblAnisTau'), findobj(configPanel, 'Tag', 'anisLifetimeField'), ...
+        findobj(configPanel, 'Tag', 'lblAnisRot'), findobj(configPanel, 'Tag', 'anisRotationField'), ...
+        findobj(configPanel, 'Tag', 'lblAnisR0'), findobj(configPanel, 'Tag', 'anisR0Field'), ...
+        findobj(configPanel, 'Tag', 'lblAnisVar'), findobj(configPanel, 'Tag', 'anisVarAxisDropdown')];
 
-    modeDropdown.ValueChangedFcn = @(dd, ~) toggleHILIGHTerModality(dd, lifetimeGroup, fretGroup);
-    toggleHILIGHTerModality(modeDropdown, lifetimeGroup, fretGroup); % Initial
+    modeDropdown.ValueChangedFcn = @(dd, ~) toggleHILIGHTerModality(dd, lifetimeGroup, fretGroup, fret2Group, anisGroup, configPanel);
+    toggleHILIGHTerModality(modeDropdown, lifetimeGroup, fretGroup, fret2Group, anisGroup, configPanel); % Initial
 
 
     % === Instrument Parameters Panel (Below Config) ===
@@ -354,7 +404,7 @@ try
     tabDataWidth = col2X + plotH + margin + ytW - col2X + 50;
 
     dataTabGroup = uitabgroup(fig, 'Position', [col2X, margin, tabDataWidth, figHeight - 2*margin], 'Tag', 'dataTabGroup');
-    dataTabGroup.SelectionChangedFcn = @(~,~) refreshXYProjection(fig);
+    dataTabGroup.SelectionChangedFcn = @(~,~) onDataTabChange(fig);
 
     % Store layout constants for tab creation
     dataStruct.plotH = plotH;
@@ -548,260 +598,209 @@ end
 end
 
 
-function onGenerate(fig, modeDropdown, dimXField, dimYField, tau1Field, tau2Field, photonsField, darkCountsField, ...
-    fretTauField, minFRETField, maxFRETField, minFracField, maxFracField, irfShiftField, chkWrap, deadTimeField, dwellField)
+function onGenerate(fig)
 try
     fprintf('Starting Generate Data...\n');
     f = uiprogressdlg(fig, 'Title', 'Generating Synthetic Data', 'Message', 'Initializing...', 'Indeterminate', 'on');
 
-    % Retrieve config and params
+    % Retrieve config and params via Tags
     data = fig.UserData;
     config = data.config;
 
-    % New UI Params
-    irf_shift = irfShiftField.Value;
-    bWrap = chkWrap.Value;
-    dead_time = deadTimeField.Value;
+    modeDD = findobj(fig, 'Tag', 'modeDropdown');
+    dimXF  = findobj(fig, 'Tag', 'dimXField');
+    dimYF  = findobj(fig, 'Tag', 'dimYField');
+    photF  = findobj(fig, 'Tag', 'photonsField');
+    dwellS = findobj(fig, 'Tag', 'dwellField');
+    backF  = findobj(fig, 'Tag', 'darkCountsField');
 
-    % Persist simulation params to config for analysis consistency
-    data.config.irf_shift = irf_shift;
-    data.config.bWrap = bWrap;
-    data.config.dead_time = dead_time;
-    fig.UserData = data;
-    config = data.config;
+    Mode = modeDD.Value;
+    nX = dimXF.Value; nY = dimYF.Value;
+    N_generated = photF.Value;
+    N_dark = backF.Value;
+    dwellTime_us = dwellS.Value;
 
-    Mode = modeDropdown.Value;
-    isFRET = strcmp(Mode, 'FRET');
+    % Instrument Configuration
+    irf_shift1 = findobj(fig, 'Tag', 'irfShiftField').Value;
+    irf_shift2 = findobj(fig, 'Tag', 'irfShift2Field').Value;
+    bWrap1 = findobj(fig, 'Tag', 'chkWrap').Value;
+    bWrap2 = findobj(fig, 'Tag', 'chkWrap2').Value;
+    dead_time = findobj(fig, 'Tag', 'deadTimeField').Value;
 
-    nX = dimXField.Value;
-    nY = dimYField.Value;
-    tau1_ns = max(tau1Field.Value, 1) / 1000; % convert ps to ns, guard against 0
-    tau2_ns = max(tau2Field.Value, 1) / 1000;
-    N_generated = photonsField.Value;
-    if isempty(N_generated) || N_generated <= 0, N_generated = 1e4; photonsField.Value = 1e4; end
-    N_dark = darkCountsField.Value;
-
-    fprintf('Settings: Size=[%d,%d], T1=%.2fns, T2=%.2fns, Photons=%.1e, Bkg=%.1e\n', ...
-        nX, nY, tau1_ns, tau2_ns, N_generated, N_dark);
-
-    % Setup Time and Gates (Reuse logic)
+    % Setup Time and Gates
     dt = config.dt; if isempty(dt) || dt <= 0, dt = 0.05; end
-    T = config.T; if isempty(T) || T <= 0, T = 12.5; end
-    t = 0:dt:T;
+    T = config.T;   if isempty(T)  || T  <= 0, T = 12.5; end
+    t_vec = 0:dt:T;
 
-    % Reconstruct Gate Interp Functions
     actual_gate_edges = config.gate_edges;
-    if isempty(actual_gate_edges)
-        actual_gate_edges = linspace(0, T, config.N_gates + 1);
-    end
-    % Ensure gates are within simulation time
-    if ~isempty(actual_gate_edges)
-        actual_gate_edges(actual_gate_edges > T) = T;
-    end
+    if isempty(actual_gate_edges), actual_gate_edges = linspace(0, T, config.N_gates + 1); end
+    actual_gate_edges(actual_gate_edges > T) = T;
 
-    gate_profiles = DTgates(t, max(config.r, 1e-4), actual_gate_edges);
+    gate_profiles = DTgates(t_vec, max(config.r, 1e-4), actual_gate_edges);
+    nG = size(gate_profiles, 1);
+    gate_interp_fns = cell(nG, 1);
+    for i = 1:nG, gate_interp_fns{i} = griddedInterpolant(t_vec, gate_profiles(i, :), 'linear', 'nearest'); end
 
-    % Ensure N_gates is in sync with the actual edges provided
-    n_gates_actual = size(gate_profiles, 1);
-    if config.N_gates ~= n_gates_actual
-        fprintf('Warning: Syncing N_gates (%d -> %d) based on gate_edges\n', config.N_gates, n_gates_actual);
-        config.N_gates = n_gates_actual;
-        data.config.N_gates = n_gates_actual;
-    end
-
-    gate_interp_fns = cell(config.N_gates, 1);
-    for i = 1:config.N_gates
-        gate_interp_fns{i} = griddedInterpolant(t, gate_profiles(i, :), 'linear', 'nearest');
-    end
-
-    % === 1. Create Model Probabilities ===
-    if isFRET
-        % --- FRET Modality ---
-        tau_D_ps = fretTauField.Value;
-        tau_D_ns = tau_D_ps / 1000;
-
-        E_min = minFRETField.Value / 100;
-        E_max = maxFRETField.Value / 100;
-
-        Frac_min = minFracField.Value / 100;
-        Frac_max = maxFracField.Value / 100;
-
-        % FRET Gradient (X-axis)
-        grad_E = linspace(E_min, E_max, nX);
-        % Fraction Gradient (Y-axis)
-        grad_f = linspace(Frac_min, Frac_max, nY)';
-
-        % Map for Ground Truth
-        [Map_E, Map_f] = meshgrid(grad_E, grad_f); % YxX
-
-        % Calculate Decays Efficiently
-        % Component 1: Donor Only (Lifetime = tau_D)
-        % P_tau1 is constant for all pixels.
-        % Custom IRF support
-        irf_custom = [];
-        if ~strcmp(data.irf_source, 'Simulated'), irf_custom = data.irf_data; end
-
-        P_tau1_basis = DTpmod(config.N_gates, tau_D_ns, t, gate_interp_fns, ...
-            config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-            config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift, bWrap, dead_time, irf_custom); % [Gate x 1]
-
-        % Component 2: FRET species (Lifetime = tau_D * (1-E))
-        % Lifetime varies only with X (E varies with X).
-        unique_tau2 = tau_D_ns * (1 - grad_E); % 1xX vector
-
-        P_tau2_basis_set = DTpmod(config.N_gates, unique_tau2, t, gate_interp_fns, ...
-            config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-            config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift, bWrap, dead_time, irf_custom); % [Gates x X]
-
-        % Reconstruct Full Probability Image P_model(y,x,g)
-        % Pixel(y,x) = (1-f(y))*P1 + f(y)*P2(x)
-
-        % Reshape for Compatibility
-        % P1: [1, 1, G]
-        P1_shape = reshape(P_tau1_basis, 1, 1, config.N_gates);
-
-        % P2: [1, X, G]
-        % P_tau2_basis_set is [G x X]. Reshape to [1, X, G] requires permute?
-        % reshape(P_tau2_basis_set, G, X) -> permute to (3, 2, 1) -> (1, X, G)
-        P2_shape = permute(reshape(P_tau2_basis_set, config.N_gates, nX), [3 2 1]);
-
-        % f: [Y, 1, 1]
-        f_vec = grad_f; % [Y x 1]
-
-        % Calculate Terms (using implicit expansion)
-        % Term1: (1-f) * P1
-        Term1 = (1 - f_vec) .* P1_shape; % [Y, 1, G]
-
-        % Term2: f * P2
-        Term2 = f_vec .* P2_shape;       % [Y, X, G]
-
-        % Combine
-        P_model_3D = Term1 + Term2; % [Y, X, Gates]
-
-        % Normalize
-        P_sum = sum(P_model_3D, 3);
-        P_sum(P_sum == 0) = 1;
-        P_model_norm = P_model_3D ./ P_sum;
-
-        % --- Pulse Pile-up Logic (Applied to Ideal Probability) ---
-        dwellTime_us = dwellField.Value;
-        Trep = T;
-        if isfield(config, 'PT_Trep') && config.PT_Trep > 0, Trep = config.PT_Trep; end
-        num_pulses = (dwellTime_us * 1000) / Trep;
-        mu = N_generated / num_pulses; % Mean photons/pulse (ideal)
-
-        % P_cdf_prev(y,x,g) is sum of ideal probs from gate 1 to g-1
-        P_cdf_prev = cumsum(P_model_norm, 3);
-        P_cdf_prev = cat(3, zeros(nY, nX, 1), P_cdf_prev(:,:,1:end-1));
-
-        % Detected counts per gate g:
-        % Prob detection in g = Prob(no detection before g) * Prob(at least one in g)
-        % Prob(at least one in g) = 1 - exp(-mu * P_ideal(g))
-        % Prob(no detection before g) = exp(-mu * P_cdf_prev)
-        ExpCounts_Full = num_pulses * exp(-mu * P_cdf_prev) .* (1 - exp(-mu * P_model_norm));
-
-        % Add Background
-        ExpCounts_Full = ExpCounts_Full + N_dark;
-
-        % Poisson Noise
-        RawData = poissrnd(ExpCounts_Full);
-
-        % Store Data
-        data.RawData = reshape(RawData, [nY, nX, config.N_gates, 1]);
-        data.ProcData = cell(1, 1); % Init ProcData
-        data.GroundTruthE = Map_E;
-        data.GroundTruthFrac = Map_f;
-        fig.UserData = data;
-
-        % Cleanup
-        close(f);
-
-        % Apply default binning for channel 1
-        processChannelData(fig, 1);
-
-        refreshAllPlots(fig);
-        return;
-    end
-
-    % === Existing Lifetime Logic ===
-
-    % Custom IRF support for Lifetime Modes
     irf_custom = [];
     if ~strcmp(data.irf_source, 'Simulated'), irf_custom = data.irf_data; end
 
-    if strcmp(Mode, 'Lifetime Gradient')
-        unique_taus = linspace(tau1_ns, tau2_ns, nX);
-        P_model = DTpmod(config.N_gates, unique_taus, t, gate_interp_fns, ...
-            config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-            config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift, bWrap, dead_time, irf_custom);
+    % Initialize Multi-Channel probabilities [Y, X, G, nC]
+    if ismember(Mode, {'FRET 2-Channel', 'Anisotropy'})
+        nC = 2;
     else
-        % Lifetime Mix Mode
-        taus_base = [tau1_ns, tau2_ns];
-        P_base = DTpmod(config.N_gates, taus_base, t, gate_interp_fns, ...
-            config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-            config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift, bWrap, dead_time, irf_custom);
-        P_tau1 = P_base(:, 1);
-        P_tau2 = P_base(:, 2);
-        alpha = linspace(0, 1, nX);
-        P_model = P_tau1 * (1 - alpha) + P_tau2 * alpha;
+        nC = findobj(fig, 'Tag', 'numChannelsField').Value;
+    end
+    P_model_Full = zeros(nY, nX, nG, nC);
 
-        % Intensity-weighted average lifetime for residuals reference
-        unique_taus = tau1_ns * (1 - alpha) + tau2_ns * alpha;
+    if strcmp(Mode, 'FRET') || strcmp(Mode, 'FRET 2-Channel')
+        % --- FRET Modalities ---
+        tD_ns = findobj(fig, 'Tag', 'fretTauField').Value / 1000;
+        tA_ps = findobj(fig, 'Tag', 'fretAcceptorTauField').Value;
+        tA_ns = tA_ps / 1000;
+
+        EMin = findobj(fig, 'Tag', 'minFRETField').Value / 100;
+        EMax = findobj(fig, 'Tag', 'maxFRETField').Value / 100;
+        fMin = findobj(fig, 'Tag', 'minFracField').Value / 100;
+        fMax = findobj(fig, 'Tag', 'maxFracField').Value / 100;
+
+        [Map_E, Map_f] = meshgrid(linspace(EMin, EMax, nX), linspace(fMin, fMax, nY));
+
+        % Ch1: Donor
+        P_D_basis = DTpmod(nG, tD_ns, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+            config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift1, bWrap1, dead_time, irf_custom);
+
+        unique_tDA = tD_ns * (1 - linspace(EMin, EMax, nX));
+        P_DA_basis_set = DTpmod(nG, unique_tDA, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+            config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift1, bWrap1, dead_time, irf_custom);
+
+        % Combine Ch1: (1-f)*P_D + f*P_DA
+        f_v = linspace(fMin, fMax, nY)';
+        P_Ch1 = (1 - f_v) .* reshape(P_D_basis, 1, 1, nG) + f_v .* permute(reshape(P_DA_basis_set, nG, nX), [3 2 1]);
+        P_model_Full(:,:,:,1) = P_Ch1;
+
+        if strcmp(Mode, 'FRET 2-Channel')
+            % Ch2: Acceptor (Sensitized Emission)
+            dirEx = findobj(fig, 'Tag', 'fretDirectExField').Value / 100;
+            bleed = findobj(fig, 'Tag', 'fretBleedThroughField').Value / 100;
+
+            P_A_basis = DTpmod(nG, tA_ns, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+                config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift2, bWrap2, dead_time, irf_custom);
+
+            P_DA_basis_set_Ch2 = DTpmod(nG, unique_tDA, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+                config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift2, bWrap2, dead_time, irf_custom);
+
+            unique_B = tA_ns ./ (tA_ns - unique_tDA + 1e-12);
+            P_Sens = unique_B .* (reshape(P_A_basis, nG, 1) - P_DA_basis_set_Ch2);
+            P_Sens(P_Sens < 0) = 0;
+
+            P_Ch1_for_bleed = (1 - f_v) .* reshape(P_D_basis, 1, 1, nG) + f_v .* permute(reshape(P_DA_basis_set_Ch2, nG, nX), [3 2 1]);
+            P_model_Full(:,:,:,2) = (f_v .* permute(reshape(P_Sens, nG, nX), [3 2 1])) + (dirEx .* reshape(P_A_basis, 1, 1, nG)) + (bleed .* P_Ch1_for_bleed);
+        elseif nC > 1
+            % FRET Mono-channel mode but user asked for 2 channels (e.g. redundant donor channels)
+            P_DA_basis_set_Ch2 = DTpmod(nG, unique_tDA, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+                config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift2, bWrap2, dead_time, irf_custom);
+            P_model_Full(:,:,:,2) = (1 - f_v) .* reshape(P_D_basis, 1, 1, nG) + f_v .* permute(reshape(P_DA_basis_set_Ch2, nG, nX), [3 2 1]);
+        end
+        data.GroundTruthE = Map_E; data.GroundTruthFrac = Map_f;
+
+    elseif strcmp(Mode, 'Anisotropy')
+        t_anis = findobj(fig, 'Tag', 'anisLifetimeField').Value / 1000;
+        phi = findobj(fig, 'Tag', 'anisRotationField').Value / 1000;
+        r0 = findobj(fig, 'Tag', 'anisR0Field').Value;
+        varAxis = findobj(fig, 'Tag', 'anisVarAxisDropdown').Value;
+
+        tau_grid = t_anis * ones(nY, nX);
+        phi_grid = phi * ones(nY, nX);
+
+        if contains(varAxis, 'Sweep X')
+            vec = linspace(1, 4000, nX)/1000;
+            if contains(varAxis, 'Lifetime'), tau_grid = repmat(vec, nY, 1); else, phi_grid = repmat(vec, nY, 1); end
+        elseif contains(varAxis, 'Sweep Y')
+            vec = linspace(1, 4000, nY)'/1000;
+            if contains(varAxis, 'Lifetime'), tau_grid = repmat(vec, 1, nX); else, phi_grid = repmat(vec, 1, nX); end
+        end
+
+        for y = 1:nY
+            for x = 1:nX
+                tau = tau_grid(y,x); p = phi_grid(y,x); te = 1 / (1/tau + 1/p);
+                P_tau = DTpmod(nG, tau, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+                    config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift1, bWrap1, dead_time, irf_custom);
+                P_te = DTpmod(nG, te, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+                    config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift1, bWrap1, dead_time, irf_custom);
+                P_model_Full(y,x,:,1) = (1/3) * (P_tau + 2*r0*P_te);
+
+                P_tau2 = DTpmod(nG, tau, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+                    config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift2, bWrap2, dead_time, irf_custom);
+                P_te2 = DTpmod(nG, te, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+                    config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift2, bWrap2, dead_time, irf_custom);
+                P_model_Full(y,x,:,2) = (1/3) * (P_tau2 - r0*P_te2);
+            end
+        end
+        data.GroundTruthTaus = tau_grid;
+
+    else
+        % Standard Gradient/Mix
+        tau1_ns = findobj(fig, 'Tag', 'tau1Field').Value / 1000;
+        tau2_ns = findobj(fig, 'Tag', 'tau2Field').Value / 1000;
+        if strcmp(Mode, 'Lifetime Gradient')
+            unique_taus = linspace(tau1_ns, tau2_ns, nX);
+            P_model = DTpmod(nG, unique_taus, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+                config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift1, bWrap1, dead_time, irf_custom);
+            P_model_Full(:,:,:,1) = repmat(permute(reshape(P_model, nG, nX), [3 2 1]), nY, 1, 1);
+            if nC > 1
+                P_model2 = DTpmod(nG, unique_taus, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+                    config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift2, bWrap2, dead_time, irf_custom);
+                P_model_Full(:,:,:,2) = repmat(permute(reshape(P_model2, nG, nX), [3 2 1]), nY, 1, 1);
+            end
+        else
+            taus_base = [tau1_ns, tau2_ns];
+            P_base = DTpmod(nG, taus_base, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+                config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift1, bWrap1, dead_time, irf_custom);
+            alpha = linspace(0, 1, nX);
+            P_mix = P_base(:, 1) * (1 - alpha) + P_base(:, 2) * alpha;
+            P_model_Full(:,:,:,1) = repmat(permute(reshape(P_mix, nG, nX), [3 2 1]), nY, 1, 1);
+            if nC > 1
+                P_base2 = DTpmod(nG, taus_base, t_vec, gate_interp_fns, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+                    config.bPulseTrain, config.PT_Trep, config.PT_sigma, irf_shift2, bWrap2, dead_time, irf_custom);
+                P_mix2 = P_base2(:, 1) * (1 - alpha) + P_base2(:, 2) * alpha;
+                P_model_Full(:,:,:,2) = repmat(permute(reshape(P_mix2, nG, nX), [3 2 1]), nY, 1, 1);
+            end
+            unique_taus = tau1_ns * (1 - alpha) + tau2_ns * alpha;
+        end
+        data.GroundTruthTaus = unique_taus;
     end
 
-    % Normalize P_model so that specificed N_generated is the DETECTED sum (Expected)
-    P_sum = sum(P_model, 1);
-    P_sum(P_sum == 0) = 1;
-    P_model_norm = P_model ./ P_sum; % [Gates x X]
-
-    % --- Pulse Pile-up Logic ---
-    dwellTime_us = dwellField.Value;
-    Trep = T;
-    if isfield(config, 'PT_Trep') && config.PT_Trep > 0, Trep = config.PT_Trep; end
+    % --- Noise and Pile-up ---
+    RawData_Full = zeros(nY, nX, nG, nC);
+    Trep = T; if isfield(config, 'PT_Trep') && config.PT_Trep > 0, Trep = config.PT_Trep; end
     num_pulses = (dwellTime_us * 1000) / Trep;
-    mu = N_generated / num_pulses;
 
-    % Cumulative ideal prob along gates
-    P_cdf_prev = cumsum(P_model_norm, 1);
-    P_cdf_prev = [zeros(1, nX); P_cdf_prev(1:end-1, :)];
+    for c = 1:nC
+        Pc = P_model_Full(:,:,:,c);
+        P_sum = sum(Pc, 3); P_sum(P_sum == 0) = 1;
+        Pc_norm = Pc ./ P_sum;
 
-    % Detected counts in 1 row [Gates x X]
-    ExpCounts_1Row = num_pulses * exp(-mu * P_cdf_prev) .* (1 - exp(-mu * P_model_norm));
+        mu = N_generated / num_pulses;
+        P_cdf_prev = cumsum(Pc_norm, 3);
+        P_cdf_prev = cat(3, zeros(nY, nX, 1), P_cdf_prev(:,:,1:end-1));
 
-    % Intensity-weighted average lifetime for residuals reference
-    % (Calculation remains based on ideal taus)
+        ExpCounts = num_pulses * exp(-mu * P_cdf_prev) .* (1 - exp(-mu * Pc_norm)) + N_dark;
+        RawData_Full(:,:,:,c) = poissrnd(ExpCounts);
+    end
 
-    % 4. Expand to full image AND ADD Background
-    ExpCounts_Full = repmat(reshape(ExpCounts_1Row', 1, nX, config.N_gates), nY, 1, 1);
-    ExpCounts_Full = ExpCounts_Full + N_dark;
-
-    RawData = poissrnd(ExpCounts_Full);
-
-    % Store Data for Analysis (with 4th dimension for Channel)
-    data.RawData = reshape(RawData, [nY, nX, config.N_gates, 1]);
-    data.ProcData = cell(1, 1); % Init ProcData
-    data.GroundTruthTaus = unique_taus;
+    data.RawData = RawData_Full;
+    data.ProcData = cell(nC, 1);
     fig.UserData = data;
 
-    % Synchronize analysis tabs with new gate count
     syncAnalysisTabsWithConfig(fig);
-
-    % Apply default binning for channel 1
-    processChannelData(fig, 1);
-
-    % 6. Refresh Plotting
+    for c = 1:nC, processChannelData(fig, c); end
     refreshAllPlots(fig);
-
-    % Note: Analysis results (tabs) are preserved as history.
-    % To clear them, one would interact with the tab group.
     fprintf('Data generation complete.\n');
     close(f);
-
 catch ME
     if exist('f', 'var') && isvalid(f), close(f); end
     fprintf(2, 'Error in onGenerate: %s\n', ME.message);
-    disp(ME.stack);
-    uialert(fig, ['Generate Failed: ' ME.message], 'Error'); % Optional UI feedback
+    uialert(fig, ['Generate Failed: ' ME.message], 'Error');
 end
 end
 
@@ -842,7 +841,8 @@ try
 
         % Update XY
         if ~isempty(axXY)
-            imagesc(axXY, projXY);
+            hImg = imagesc(axXY, projXY);
+            hImg.ButtonDownFcn = @(src, ev) updatePixelAnalysis(fig, ev.IntersectionPoint);
             colormap(axXY, 'gray');
             axis(axXY, 'image');
             cb = colorbar(axXY, 'Location', 'westoutside');
@@ -852,6 +852,20 @@ try
             set(axXY, 'XTick', [], 'YTick', [], 'Box', 'on');
             title(axXY, sprintf('XY Channel %d | Max: %g', c, maxCounts));
             set(axXY, 'XTick', [], 'YTick', [], 'Box', 'on');
+
+            % Re-overlay crosshair if it's the active channel
+            curPos = [nan nan];
+            hV = findobj(fig, 'Tag', 'crossV');
+            hH = findobj(fig, 'Tag', 'crossH');
+            if ~isempty(hV) && ~isempty(hH)
+                curPos = [hV(1).Value, hH(1).Value];
+            end
+
+            % If we have a position, refresh analysis to draw markers on new image
+            if ~isnan(curPos(1))
+                % This will recreate markers on axXY because imagesc deleted them
+                % but we should be careful not to trigger recursive refresh
+            end
 
             % Update CLim Spinners (Sync with new data range)
             % This addresses the "no data" or "wrong range" visual bug
@@ -981,11 +995,17 @@ try
                     % Update alpha: 1 where data <= threshold, 0 otherwise
                     % Use current threshold value OR custom mask
                     thisTab = dataTabGroup.Children(c);
+                    tVal = spnThresh.Value;
                     if isfield(thisTab.UserData, 'CustomMask') && ~isempty(thisTab.UserData.CustomMask)
-                        alphaMap = double(thisTab.UserData.CustomMask);
-                        % Update Threshold line label to indicate mode? Optional.
+                        maskSz = size(thisTab.UserData.CustomMask);
+                        if all(maskSz(1:2) == sz(1:2))
+                            alphaMap = double(thisTab.UserData.CustomMask);
+                        else
+                            % Size mismatch, clear custom mask to avoid crash
+                            thisTab.UserData.CustomMask = [];
+                            alphaMap = double(projXY <= tVal);
+                        end
                     else
-                        tVal = spnThresh.Value;
                         alphaMap = double(projXY <= tVal);
                     end
                     % Make it semi-transparent red (e.g. 0.5) or solid (1.0)?
@@ -1643,15 +1663,15 @@ if isempty(tab.UserData) || ~isfield(tab.UserData, 'mapAxes')
         spX = cbX;
         uilabel(t, 'Text', 'Max', 'Position', [spX, cbY + cbH + 28, 65, 20], 'HorizontalAlignment', 'left');
         spMax = uispinner(t, 'Position', [spX, cbY + cbH + 5, 65, 22], 'Tag', ['spnCMax_' p], ...
-            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Max', src.Value));
+            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Max', src.Value, p));
 
         uilabel(t, 'Text', 'Min', 'Position', [spX, cbY - 45, 65, 20], 'HorizontalAlignment', 'left');
         spMin = uispinner(t, 'Position', [spX, cbY - 25, 65, 22], 'Tag', ['spnCMin_' p], ...
-            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Min', src.Value));
+            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Min', src.Value, p));
 
         uilabel(t, 'Text', 'Bins:', 'Position', [axW + 15, 40, 40, 20]);
         spBins = uispinner(t, 'Limits', [2 1024], 'Value', 128, 'Position', [axW + 15, 15, 65, 22], 'Tag', ['spnBins_' p], ...
-            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Bins', src.Value));
+            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Bins', src.Value, p));
 
         % Click-to-toggle axis labels
         ylabel(axH, 'Pixels', 'FontWeight', 'bold');
@@ -1743,6 +1763,14 @@ if isempty(tab.UserData) || ~isfield(tab.UserData, 'mapAxes')
     % 4. IRF Usage Explanation
     lblIRFExpl = uilabel(paramPanel, 'Text', '-', 'Position', [leftMargin, currY, 315, 20], ...
         'FontSize', 8, 'FontColor', [0.4 0.4 0.4], 'Interpreter', 'tex', 'Tag', 'lblIRFExpl');
+
+    currY = currY - 25;
+    uilabel(paramPanel, 'Text', 'IRF FWHM (ns):', 'Position', [leftMargin, currY, 100, 20], 'FontSize', 10);
+    lblIRFFWHM = uilabel(paramPanel, 'Text', '--', 'Position', [leftMargin + 100, currY, 170, 20], 'Tag', 'lblIRFFWHM', 'FontWeight', 'bold');
+
+    currY = currY - 18;
+    uilabel(paramPanel, 'Text', 'IRF Pos (ns):', 'Position', [leftMargin, currY, 100, 20], 'FontSize', 10);
+    lblIRFPos = uilabel(paramPanel, 'Text', '--', 'Position', [leftMargin + 100, currY, 170, 20], 'Tag', 'lblIRFPos', 'FontWeight', 'bold');
 
     currY = currY - 30;
     % 5. Anscombe Transform
@@ -1857,24 +1885,53 @@ if isempty(tab.UserData) || ~isfield(tab.UserData, 'mapAxes')
         chkAll{k}.ValueChangedFcn = @(src, ev) updateEquationDisplay(tab, lblEquation);
     end
 
-    uibutton(paramPanel, 'Text', 'Analyse', 'FontWeight', 'bold', 'Position', [leftMargin, 10, 100, 35], ...
+    uibutton(paramPanel, 'Text', 'Analyse', 'FontWeight', 'bold', 'Position', [leftMargin, 10, 80, 35], ...
         'BackgroundColor', [0.8 0 0], 'FontColor', [1 1 1], 'ButtonPushedFcn', @(btn, ev) runFitAnalysis(fig, tab), ...
-        'Tooltip', 'Run Analysis.');
-    uibutton(paramPanel, 'Text', 'Limits', 'Position', [leftMargin+110, 10, 80, 35], 'ButtonPushedFcn', @(~,~) openLimitDialog(fig), ...
+        'Tooltip', 'Run Analysis on Active Channel.');
+
+    uibutton(paramPanel, 'Text', 'Analyse All', 'FontWeight', 'bold', 'Position', [leftMargin+85, 10, 80, 35], ...
+        'BackgroundColor', [0.6 0 0], 'FontColor', [1 1 1], 'ButtonPushedFcn', @(btn, ev) runFitAnalysisAll(fig, tab), ...
+        'Tooltip', 'Run Analysis on ALL Channels.');
+
+    uibutton(paramPanel, 'Text', 'Limits', 'Position', [leftMargin+170, 10, 60, 35], 'ButtonPushedFcn', @(~,~) openLimitDialog(fig), ...
         'Tooltip', 'Set parameter limits.');
-    uibutton(paramPanel, 'Text', 'Clear', 'Position', [leftMargin+200, 10, 100, 35], 'ButtonPushedFcn', @(~,~) onClearTab(fig), ...
+    uibutton(paramPanel, 'Text', 'Clear', 'Position', [leftMargin+235, 10, 60, 35], 'ButtonPushedFcn', @(~,~) onClearTab(fig), ...
         'Tooltip', 'Clear Tab.');
 
     % Assemble tabMeta
     tabMeta = struct();
     tabMeta.mapTg = mapTg; tabMeta.mapAxes = mapAxes; tabMeta.mapHists = mapHists; tabMeta.mapSpins = mapSpins;
     tabMeta.tabs = tabs; % Store tab references
-    tabMeta.axPix = axPix; tabMeta.axPixRes = axPixRes;
-    tabMeta.axStats = axStats; tabMeta.axRes = axRes;
-    tabMeta.spnStart = spnStart; tabMeta.spnEnd = spnEnd;
-    tabMeta.uPixPos = uPixPos; tabMeta.uPixI0 = uPixI0; tabMeta.uPixTau = uPixTau; tabMeta.uPixChi = uPixChi;
-    tabMeta.uPixRE = uPixRE; tabMeta.uPixRND = uPixRND; tabMeta.uPixBack = uPixBack;
-    tabMeta.uChi = uChi; tabMeta.uRE = uRE; tabMeta.uRND = uRND; tabMeta.uGT_I0 = uGT_I0;
+
+    % Pixel Analysis Handles
+    tabMeta.axPix = axPix;
+    tabMeta.axPixRes = axPixRes;
+    tabMeta.uPixPos = uPixPos;
+    tabMeta.uPixI0 = uPixI0;
+    tabMeta.uPixTau = uPixTau;
+    tabMeta.uPixChi = uPixChi;
+    tabMeta.uPixRE = uPixRE;
+    tabMeta.uPixRND = uPixRND;
+    tabMeta.uPixBack = uPixBack;
+
+    % Ground Truth Handles
+    tabMeta.axStats = axStats;
+    tabMeta.axRes = axRes; % Was axStatsRes
+    tabMeta.uGT_I0 = uGT_I0;
+    tabMeta.uChi = uChi; % Was uGT_Chi
+    tabMeta.uRE = uRE;   % Was uGT_RE
+    tabMeta.uRND = uRND;
+
+    % IRF & Controls
+    tabMeta.lblIRFFWHM = lblIRFFWHM;
+    tabMeta.lblIRFPos = lblIRFPos;
+    tabMeta.spnStart = spnStart;
+    tabMeta.spnEnd = spnEnd;
+
+    % Initialize Multi-Channel Maps Storage
+    tabMeta.ChanMaps = cell(1, 4);
+    tabMeta.ChanIRFs = cell(1, 4);
+    tabMeta.activeChanIdx = activeChanIdx;
     tabMeta.ddModel = ddModel; tabMeta.spnNExp = spnNExp; tabMeta.chkNegExp = chkNeg;
     tabMeta.spnTau1 = spnTau1; tabMeta.spnFrac1 = spnFrac1;
     tabMeta.chkFTau1 = chkFTau1; tabMeta.chkFFrac1 = chkFFrac1; % Store handles for logic check
@@ -1885,6 +1942,7 @@ if isempty(tab.UserData) || ~isfield(tab.UserData, 'mapAxes')
     tabMeta.spnTau3 = spnTau3; tabMeta.spnFrac3 = spnFrac3;
     tabMeta.chkFTau3 = chkFTau3; tabMeta.chkFFrac3 = chkFFrac3;
     tabMeta.ddIRF = ddIRF; tabMeta.lblIRFExpl = lblIRFExpl;
+    tabMeta.lblIRFFWHM = lblIRFFWHM; tabMeta.lblIRFPos = lblIRFPos;
     tabMeta.spnSTau = spnSTau; tabMeta.spnBeta = spnBeta;
     tabMeta.chkFSTau = chkFSTau; tabMeta.chkFBeta = chkFBeta; % Needed for equation color
     tabMeta.spnBack = spnBack;
@@ -1954,7 +2012,8 @@ updatePixelAnalysis(fig, [nX/2, nY/2]);
 end
 
 
-function runFitAnalysis(fig, tab)
+function runFitAnalysis(fig, tab, suppressDialogs)
+if nargin < 3, suppressDialogs = false; end
 try
     data = fig.UserData;
     config = data.config;
@@ -2467,7 +2526,6 @@ if ~any(in_mask)
     delete(hROI);
     return;
 end
-
 % 3. Extract Average Decay
 % We need to access RawData linear indices.
 % We identify the active channel data.
@@ -2512,6 +2570,158 @@ meta.patterns(idx).roi = hROI; % Store handle to allowing deleting/hiding later
 t.UserData = meta;
 updatePatternList(t);
 updatePatternPlot(t);
+end
+
+function runFitAnalysisAll(fig, tab)
+% Helper to run analysis for all available channels
+data = fig.UserData;
+if isempty(data) || ~isfield(data, 'RawData'), return; end
+nC = size(data.RawData, 4);
+
+currentChan = 1;
+if isfield(tab.UserData, 'activeChanIdx'), currentChan = tab.UserData.activeChanIdx; end
+
+d = uiprogressdlg(fig, 'Title', 'Analysing All Channels', 'Message', 'Starting...', 'Indeterminate', 'off');
+
+for c = 1:nC
+    d.Value = (c-1)/nC;
+    d.Message = sprintf('Processing Channel %d...', c);
+
+    % Ideally we should be able to set the tab's active channel context temporarily
+    % but runFitAnalysis relies on tab.UserData.activeChanIdx.
+    % So we update it, run, then restore.
+    % BUT: changing activeChanIdx changes where results are stored if results are channel-specific?
+    % Currently results map to tab.UserData.Maps. If we want separate results per channel,
+    % we need separate Map storage in the tab UserData per channel, e.g. meta.ChanMaps{c}.
+
+    % Given current architecture, 'Analyse' usually overwrites 'Maps'.
+    % If user wants to keep results, we need 'Grid MLE - Ch1', 'Grid MLE - Ch2' etc. tabs?
+    % OR we store multi-channel results in one tab.
+
+    % SIMPLIFICATION: Update the tab context to channel 'c', run analysis.
+    % The results will overwrite the current view.
+    % Wait... if we overwrite, we lose previous.
+    % Recommendation: We should store results in a struct array in UserData?
+    % For now, let's just loop and run, assuming the user is watching or saving.
+    % Actually, without structural change to store N channels of maps, 'Analyse All'
+    % effectively leaves the last channel data visible.
+    % Let's implement activeChanIdx switching so at least the computation happens correctly per channel.
+
+    % NOTE: To support true independent analysis storage, a deeper refactor of 'tab.UserData' is needed.
+    % For now, we will perform the analysis sequentially.
+
+    tab.UserData.activeChanIdx = c;
+    tab.UserData.activeChanIdx = c;
+    % Swap Maps before running
+    meta = tab.UserData;
+    if c <= numel(meta.ChanMaps) && ~isempty(meta.ChanMaps{c})
+        meta.Maps = meta.ChanMaps{c};
+    else
+        % Reset Maps if empty
+        if isfield(meta, 'Maps')
+            pNames = fieldnames(meta.Maps);
+            for i = 1:numel(pNames)
+                meta.Maps.(pNames{i}) = zeros(size(meta.Maps.(pNames{i})));
+            end
+        end
+        meta.irf_data = [];
+    end
+    tab.UserData = meta;
+
+    runFitAnalysis(fig, tab, true);
+
+    % Save back results
+    meta = tab.UserData;
+    meta.ChanMaps{c} = meta.Maps;
+    if isfield(meta, 'irf_data'), meta.ChanIRFs{c} = meta.irf_data; end
+    tab.UserData = meta;
+end
+
+% Restore original channel or leave at last?
+tab.UserData.activeChanIdx = currentChan;
+
+% Refresh view for current channel
+meta = tab.UserData;
+if currentChan <= numel(meta.ChanMaps) && ~isempty(meta.ChanMaps{currentChan})
+    meta.Maps = meta.ChanMaps{currentChan};
+    tab.UserData = meta;
+end
+updatePixelAnalysis(fig, [nan nan]);
+close(d);
+end
+
+function onDataTabChange(fig)
+try
+    fprintf('Triggered onDataTabChange\n');
+    % Update Analysis context when Data Channel Tab changes
+    dtg = findobj(fig, 'Tag', 'dataTabGroup');
+    if isempty(dtg), return; end
+
+    % 1-based index of selected data tab corresponds to channel index
+    newC = find(dtg.Children == dtg.SelectedTab, 1);
+    if isempty(newC), return; end
+
+    % Update ALL analysis tabs to this new channel context
+    ats = findobj(fig, 'Tag', 'analysisTabs');
+    if ~isempty(ats)
+        for k = 1:numel(ats.Children)
+            t = ats.Children(k);
+            if isstruct(t.UserData)
+                meta = t.UserData;
+                oldC = meta.activeChanIdx;
+
+                % Save Current to Old Channel Slot
+                if isfield(meta, 'Maps')
+                    meta.ChanMaps{oldC} = meta.Maps;
+                    if isfield(meta, 'irf_data'), meta.ChanIRFs{oldC} = meta.irf_data; end
+                end
+
+                % Load New Channel Slot (if exists)
+                if newC <= numel(meta.ChanMaps) && ~isempty(meta.ChanMaps{newC})
+                    meta.Maps = meta.ChanMaps{newC};
+                    if ~isempty(meta.ChanIRFs{newC})
+                        meta.irf_data = meta.ChanIRFs{newC};
+                        % Also update ddIRF if needed? (optional, source choice might be global)
+                    end
+                else
+                    % Reset Maps if visiting channel for first time?
+                    if isfield(meta, 'Maps')
+                        pNames = fieldnames(meta.Maps);
+                        for i = 1:numel(pNames)
+                            meta.Maps.(pNames{i}) = zeros(size(meta.Maps.(pNames{i})));
+                        end
+                    end
+                    meta.irf_data = [];
+                end
+
+                meta.activeChanIdx = newC;
+                t.UserData = meta;
+
+                % Refresh visual maps (re-plot currently visible result map)
+                try syncMapDisplay(t); catch, end
+            end
+        end
+    end
+
+    % Trigger refresh of the currently visible analysis tab (plots & IRF)
+    updatePixelAnalysis(fig, [nan nan]);
+
+    % Ensure IRF FWHM labels are updated for the new channel context
+    ats = findobj(fig, 'Tag', 'analysisTabs');
+    if ~isempty(ats) && ~isempty(ats.SelectedTab)
+        t = ats.SelectedTab;
+        if isstruct(t.UserData) && isfield(t.UserData, 'lblIRFFWHM')
+            % Re-calculate/Get existing IRF for this channel
+            [irf, ~] = getIRFFromSource(fig, t, []);
+            % Update params display manually
+            updateIRFStatsDisplay(irf, t);
+        end
+    end
+catch ME
+    fprintf(2, 'CRITICAL ERROR in onDataTabChange: %s\n', ME.message);
+    disp(ME.stack(1));
+    rethrow(ME);
+end
 end
 
 function deletePattern(fig)
@@ -2740,13 +2950,23 @@ try
             'Position', [10, currY, 180, 30], ...
             'ButtonPushedFcn', @(btn, event) runLimaAnalysis(fig));
 
-        meta = struct();
+        if isempty(t.UserData)
+            meta = struct();
+        else
+            meta = t.UserData;
+        end
         meta.axMu = axMu; meta.axSig = axSig; meta.axGraph = axGraph;
         meta.ROIs = struct('color', {'Red','Green','Blue'}, 'handle', {[],[],[]}, 'active', {false,false,false});
         meta.phasorZoomMode = 'Full';
         meta.harmonic = 1;
         meta.activeChanIdx = activeChanIdx;
         meta.chkAnscombe = chkAns;
+
+        % Multi-channel support
+        if ~isfield(meta, 'ChanMaps'), meta.ChanMaps = cell(1, 4); end
+        if ~isfield(meta, 'ChanIRFs'), meta.ChanIRFs = cell(1, 4); end
+        if ~isfield(meta, 'Maps'), meta.Maps = struct(); end
+
         t.UserData = meta;
         debugInfo = 'UI Initialized and UserData set';
     end
@@ -2799,9 +3019,11 @@ if ~isstruct(stats) || ~isfield(stats, 'S') || ~isfield(stats, 'G')
     error('DTlima returned invalid stats structure.');
 end
 
-% Store Results
-meta.mu_vals = stats.S(:) ./ max(stats.G(:), 1e-9);
+% Store Results for multi-channel sync
+meta.Maps.Mu = limaResults.mu_tau;
+meta.Maps.Sigma = limaResults.sigma_tau;
 
+meta.mu_vals = stats.S(:) ./ max(stats.G(:), 1e-9);
 M_val_tmp = sqrt(stats.G(:).^2 + stats.S(:).^2);
 meta.I2_vals = 0.5 * (max(M_val_tmp.^-2 - 1, 0) + meta.mu_vals.^2);
 
@@ -2810,10 +3032,10 @@ if ~isstruct(limaResults) || ~isfield(limaResults, 'mu_tau')
 end
 
 if ~isempty(meta.axMu) && isvalid(meta.axMu)
-    imagesc(meta.axMu, limaResults.mu_tau); colorbar(meta.axMu); axis(meta.axMu, 'image');
+    imagesc(meta.axMu, meta.Maps.Mu); colorbar(meta.axMu); axis(meta.axMu, 'image');
 end
 if ~isempty(meta.axSig) && isvalid(meta.axSig)
-    imagesc(meta.axSig, limaResults.sigma_tau); colorbar(meta.axSig); axis(meta.axSig, 'image');
+    imagesc(meta.axSig, meta.Maps.Sigma); colorbar(meta.axSig); axis(meta.axSig, 'image');
 end
 
 % Relationship plot
@@ -3073,7 +3295,7 @@ if isnan(point(1))
     hV = findobj(fig, 'Tag', 'crossV');
     hH = findobj(fig, 'Tag', 'crossH');
     if ~isempty(hV) && ~isempty(hH)
-        px = round(hV.Value); py = round(hH.Value);
+        px = round(hV(1).Value); py = round(hH(1).Value);
     else
         % Default to center
         px = round(nX/2); py = round(nY/2);
@@ -3084,11 +3306,44 @@ end
 
 if px < 1 || px > nX || py < 1 || py > nY, return; end
 
-% Update Crosshair
-hV = findobj(fig, 'Tag', 'crossV');
-hH = findobj(fig, 'Tag', 'crossH');
-if ~isempty(hV), set(hV, 'Value', px, 'Visible', 'on'); end
-if ~isempty(hH), set(hH, 'Value', py, 'Visible', 'on'); end
+% Update Crosshair on ALL relevant axes (Data tab and Analysis tabs)
+hVs = findobj(fig, 'Tag', 'crossV');
+hHs = findobj(fig, 'Tag', 'crossH');
+
+% Ensure markers exist in current active axes if missing
+% Main XY Axis
+c = chanIdx;
+axXY = findobj(fig, 'Tag', sprintf('axXY_Ch%d', c));
+if ~isempty(axXY)
+    hV_main = findobj(axXY, 'Tag', 'crossV');
+    if isempty(hV_main)
+        hold(axXY, 'on');
+        xline(axXY, px, 'w-', 'LineWidth', 1, 'HitTest', 'off', 'Tag', 'crossV');
+        yline(axXY, py, 'w-', 'LineWidth', 1, 'HitTest', 'off', 'Tag', 'crossH');
+    end
+end
+
+% Current Result Map Axis
+mapAx = meta.mapAxes.Photons; % Reference one
+if ~isempty(mapAx)
+    hV_map = findobj(mapAx, 'Tag', 'crossV');
+    if isempty(hV_map)
+        % Create on all map axes
+        pNames = fieldnames(meta.mapAxes);
+        for i=1:numel(pNames)
+            ax = meta.mapAxes.(pNames{i});
+            hold(ax, 'on');
+            xline(ax, px, 'w-', 'LineWidth', 1, 'HitTest', 'off', 'Tag', 'crossV');
+            yline(ax, py, 'w-', 'LineWidth', 1, 'HitTest', 'off', 'Tag', 'crossH');
+        end
+    end
+end
+
+% Now update all values
+hVs = findobj(fig, 'Tag', 'crossV');
+hHs = findobj(fig, 'Tag', 'crossH');
+if ~isempty(hVs), set(hVs, 'Value', px, 'Visible', 'on'); end
+if ~isempty(hHs), set(hHs, 'Value', py, 'Visible', 'on'); end
 
 % Extract Pixel Data
 pixelCounts = squeeze(cData(py, px, :));
@@ -3098,15 +3353,21 @@ totalPhotons = sum(pixelCounts);
 backVal = 0; if isfield(meta, 'spnBack') && isvalid(meta.spnBack), backVal = meta.spnBack.Value; end
 % If we have a background map from fitting, use the pixel-specific value
 if isfield(meta, 'Maps') && isfield(meta.Maps, 'Back')
-    backVal = meta.Maps.Back(py, px);
+    [mH, mW] = size(meta.Maps.Back);
+    if py <= mH && px <= mW
+        backVal = meta.Maps.Back(py, px);
+    end
 end
 
 signalI0 = totalPhotons - backVal;
 if signalI0 < 0, signalI0 = 0; end
 
 estTau = NaN;
-if isfield(meta.Maps, 'TauAvg')
-    estTau = meta.Maps.TauAvg(py, px);
+if isfield(meta, 'Maps') && isfield(meta.Maps, 'TauAvg')
+    [mH, mW] = size(meta.Maps.TauAvg);
+    if py <= mH && px <= mW
+        estTau = meta.Maps.TauAvg(py, px);
+    end
 end
 config = data.config;
 
@@ -3140,60 +3401,83 @@ hold(axPixelRes, 'on'); % axPixelRes is cleared later via cla
 % Data
 plot(axPixel, gate_centers(:), pixelCounts(:), 'bo', 'MarkerSize', 6, 'LineWidth', 1.5, 'DisplayName', 'Data', 'Tag', 'hData');
 
-% IRF Source Selection
-[irf, irf_t] = getIRFFromSource(fig, tab, cData);
+try
+    % IRF Source Selection
+    [irf, irf_t] = getIRFFromSource(fig, tab, cData);
 
-maxI = max(irf); if maxI == 0, maxI = 1; end
-maxP = max(pixelCounts); if maxP == 0, maxP = 1; end
-irf_scaled = (irf(:)/maxI) * double(maxP) * 0.5;
-plot(axPixel, irf_t, irf_scaled, 'r-', 'LineWidth', 1, 'DisplayName', 'IRF', 'Tag', 'hIRF');
+    maxI = max(irf); if maxI == 0, maxI = 1; end
+    maxP = max(pixelCounts); if maxP == 0, maxP = 1; end
+    irf_scaled = (irf(:)/maxI) * double(maxP) * 0.5;
+    plot(axPixel, irf_t, irf_scaled, 'r-', 'LineWidth', 1, 'DisplayName', 'IRF', 'Tag', 'hIRF');
 
-% Fit (Only if analysis has been run)
-isFitValid = ~isnan(estTau);
+    % Fit (Only if analysis has been run)
+    isFitValid = ~isnan(estTau);
 
-if isFitValid
-    [decay_smooth, ~] = DTpdf(t, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-        config.bPulseTrain, config.PT_Trep, config.PT_sigma, estTau, ...
-        irf_shift, config.bWrap, config.dead_time, irf);
+    if isFitValid
+        % Ensure gate interpolation functions exist (critical for DTpmod)
+        if ~isfield(meta, 'gate_interp_fns') || isempty(meta.gate_interp_fns)
+            dt = config.dt; T = config.T; t_interp = 0:dt:T;
+            gate_profiles = DTgates(t_interp, config.r, config.gate_edges);
+            meta.gate_interp_fns = cell(config.N_gates, 1);
+            for i = 1:config.N_gates
+                meta.gate_interp_fns{i} = griddedInterpolant(t_interp, gate_profiles(i, :), 'linear', 'nearest');
+            end
+            % Update tab user data to cache it
+            tab.UserData = meta;
+        end
 
-    % Recalculate discrete fit for scaling
-    n_det = signalI0; % Intensity excluding background
+        [decay_smooth, ~] = DTpdf(t, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+            config.bPulseTrain, config.PT_Trep, config.PT_sigma, estTau, ...
+            irf_shift, config.bWrap, config.dead_time, irf);
 
-    P_pixel = DTpmod(config.N_gates, estTau, t, meta.gate_interp_fns, ...
-        config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-        config.bPulseTrain, config.PT_Trep, config.PT_sigma, ...
-        irf_shift, config.bWrap, config.dead_time, irf);
+        % Recalculate discrete fit for scaling
+        n_det = signalI0; % Intensity excluding background
 
-    sP = sum(P_pixel); if sP == 0, sP = 1; end
-    P_pixel = P_pixel / sP;
+        P_pixel = DTpmod(config.N_gates, estTau, t, meta.gate_interp_fns, ...
+            config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+            config.bPulseTrain, config.PT_Trep, config.PT_sigma, ...
+            irf_shift, config.bWrap, config.dead_time, irf);
 
-    fittedCounts = (P_pixel * n_det) + (backVal / config.N_gates);
+        % --- Scaling and Masking (Moved inside Try block) ---
+        sP = sum(P_pixel); if sP == 0, sP = 1; end
+        P_pixel = P_pixel / sP;
 
-    decay_smooth = (decay_smooth * (n_det / sum(decay_smooth))) + (backVal / config.T);
+        fittedCounts = (P_pixel * n_det) + (backVal / config.N_gates);
+        decay_smooth = (decay_smooth * (n_det / sum(decay_smooth))) + (backVal / config.T);
 
-    % Determine Fit Range Time Window
-    sg = 1; eg = config.N_gates;
-    if isfield(meta, 'spnStart') && isvalid(meta.spnStart), sg = meta.spnStart.Value; end
-    if isfield(meta, 'spnEnd') && isvalid(meta.spnEnd), eg = meta.spnEnd.Value; end
-    t_start = gate_edges(sg);
-    t_end = gate_edges(eg+1);
+        % Determine Fit Range Time Window
+        sg = 1; eg = config.N_gates;
+        if isfield(meta, 'spnStart') && isvalid(meta.spnStart), sg = meta.spnStart.Value; end
+        if isfield(meta, 'spnEnd') && isvalid(meta.spnEnd), eg = meta.spnEnd.Value; end
+        t_start = gate_edges(sg);
+        t_end = gate_edges(eg+1);
 
-    % Mask fit curve
-    mask_fit = (t >= t_start) & (t <= t_end);
-    t_fit = t;
-    decay_fit = decay_smooth;
-    t_fit(~mask_fit) = nan; % Hide outside range
-    decay_fit(~mask_fit) = nan;
+        % Mask fit curve
+        mask_fit = (t >= t_start) & (t <= t_end);
+        t_fit = t;
+        decay_fit = decay_smooth;
+        t_fit(~mask_fit) = nan; % Hide outside range
+        decay_fit(~mask_fit) = nan;
 
-    % Discrete fit points
-    mask_discrete = false(size(gate_centers));
-    mask_discrete(sg:eg) = true;
-    gc_fit = gate_centers;
-    fc_fit = fittedCounts;
-    gc_fit(~mask_discrete) = nan;
-    fc_fit(~mask_discrete) = nan;
-else
+        % Discrete fit points
+        mask_discrete = false(size(gate_centers));
+        mask_discrete(sg:eg) = true;
+        gc_fit = gate_centers;
+        fc_fit = fittedCounts;
+        gc_fit(~mask_discrete) = nan;
+        fc_fit(~mask_discrete) = nan;
+    else
+        % Fallback for invalid fit
+        decay_fit = nan(size(t)); t_fit = t; fittedCounts = nan(size(gate_centers));
+        gc_fit = gate_centers; fc_fit = fittedCounts;
+    end
+catch ME
+    fprintf('Error in updatePixelAnalysis calculation: %s\n', ME.message);
+    disp(ME.stack(1));
+    % keyboard; % Removed as requested
     decay_fit = nan(size(t)); t_fit = t; fittedCounts = nan(size(gate_centers));
+    gc_fit = nan; fc_fit = nan;
+    isFitValid = false;
 end
 
 hFit = [];
@@ -3686,6 +3970,13 @@ if isempty(t.UserData)
     meta.refROIs = {[], []}; % Store handles
     meta.chkAnscombe = chkAns;
     meta.algo = 'Fisher Analysis';
+    meta.activeChanIdx = activeChanIdx;
+
+    % Multi-channel support
+    if ~isfield(meta, 'ChanMaps'), meta.ChanMaps = cell(1, 4); end
+    if ~isfield(meta, 'ChanIRFs'), meta.ChanIRFs = cell(1, 4); end
+    if ~isfield(meta, 'Maps'), meta.Maps = struct(); end
+
     t.UserData = meta;
 end
 end
@@ -3752,8 +4043,9 @@ try
     end
 
     % Compute Decay
-    [~, ~, nGates] = size(data.RawData);
-    flatData = reshape(permute(data.RawData, [3, 1, 2]), nGates, []);
+    cData = getChannelData(fig, meta.activeChanIdx);
+    [~, ~, nGates] = size(cData);
+    flatData = reshape(permute(cData, [3, 1, 2]), nGates, []);
 
     decay = sum(flatData(:, mask(:)), 2);
     decaySum = sum(decay);
@@ -3903,16 +4195,19 @@ try
     hold(meta.axFPP, 'off');
 
     % Maps
-    imagesc(meta.axAlpha, reshape(Alpha_est, nY, nX));
+    meta.Maps.Alpha = reshape(Alpha_est, nY, nX);
+    meta.Maps.Delta = reshape(Delta_est, nY, nX);
+
+    imagesc(meta.axAlpha, meta.Maps.Alpha);
     title(meta.axAlpha, 'Mixing Map (\alpha)'); axis(meta.axAlpha, 'image'); colorbar(meta.axAlpha);
     colormap(meta.axAlpha, 'parula');
 
-    imagesc(meta.axDelta, reshape(Delta_est, nY, nX));
+    imagesc(meta.axDelta, meta.Maps.Delta);
     title(meta.axDelta, 'Residual Map (\delta)'); axis(meta.axDelta, 'image'); colorbar(meta.axDelta);
     colormap(meta.axDelta, 'jet');
 
-    meta.AlphaMap = reshape(Alpha_est, nY, nX);
-    meta.DeltaMap = reshape(Delta_est, nY, nX);
+    meta.AlphaMap = meta.Maps.Alpha; % Legacy keep for now
+    meta.DeltaMap = meta.Maps.Delta; % Legacy keep for now
     t.UserData = meta;
 
 catch ME
@@ -4116,6 +4411,7 @@ try
     end
 
     refreshAllPlots(fig);
+    autoInitFitRange(fig);
     if exist('waitMsg', 'var') && isvalid(waitMsg), close(waitMsg); end
 
     msg = sprintf('SDT loaded successfully.\nChannels Found: %d\nSelected Dims: %dx%dx%d\nMax Proj Count: %g', ...
@@ -4795,23 +5091,50 @@ end
 end
 
 
-function toggleHILIGHTerModality(dropdown, lifetimeGroup, fretGroup)
-if strcmp(dropdown.Value, 'FRET')
-    set(lifetimeGroup, 'Visible', 'off');
-    set(fretGroup, 'Visible', 'on');
+function toggleHILIGHTerModality(dropdown, lifeG, fretG, fret2G, anisG, pnl)
+% Reset all
+allG = [lifeG, fretG, fret2G, anisG];
+for i = 1:numel(allG)
+    if ~isempty(allG(i)) && isvalid(allG(i)), allG(i).Visible = 'off'; end
+end
+
+lblCh = findobj(pnl, 'Tag', 'lblNumCh');
+spnCh = findobj(pnl, 'Tag', 'numChannelsField');
+
+val = dropdown.Value;
+if strcmp(val, 'FRET')
+    set(fretG, 'Visible', 'on');
+    set([lblCh, spnCh], 'Visible', 'on');
+elseif strcmp(val, 'FRET 2-Channel')
+    set(fretG, 'Visible', 'on');
+    set(fret2G, 'Visible', 'on');
+    set([lblCh, spnCh], 'Visible', 'off');
+elseif strcmp(val, 'Anisotropy')
+    set(anisG, 'Visible', 'on');
+    set([lblCh, spnCh], 'Visible', 'off');
 else
-    set(lifetimeGroup, 'Visible', 'on');
-    set(fretGroup, 'Visible', 'off');
+    set(lifeG, 'Visible', 'on');
+    set([lblCh, spnCh], 'Visible', 'on');
 end
 end
 
-function updateCLimFit(tab, type, val)
+function updateCLimFit(tab, type, val, pName)
 meta = tab.UserData;
 if isempty(meta) || ~isfield(meta, 'mapTg'), return; end
 
-% Target active axis
-selTab = meta.mapTg.SelectedTab;
-pName = strrep(selTab.Tag, 'tab_', '');
+if nargin < 4 || isempty(pName)
+    % Target active axis
+    selTab = meta.mapTg.SelectedTab;
+    % Robust pName extraction
+    parts = strsplit(selTab.Tag, '_');
+    if numel(parts) >= 2
+        pName = parts{2};
+    else
+        pName = strrep(selTab.Tag, 'tab_', '');
+    end
+end
+
+if ~isfield(meta.mapAxes, pName), return; end
 ax = meta.mapAxes.(pName);
 if isempty(ax) || ~isvalid(ax), return; end
 
@@ -4826,23 +5149,38 @@ end
 
 set(ax, 'CLim', lims);
 
-% Sync Spinners
-if isfield(meta, 'spnCMin') && isvalid(meta.spnCMin), meta.spnCMin.Value = lims(1); end
-if isfield(meta, 'spnCMax') && isvalid(meta.spnCMax), meta.spnCMax.Value = lims(2); end
+% Sync Spinners (using correct structure)
+if isfield(meta, 'mapSpins') && isfield(meta.mapSpins, pName)
+    s = meta.mapSpins.(pName);
+    if isvalid(s.Min), s.Min.Value = lims(1); end
+    if isvalid(s.Max), s.Max.Value = lims(2); end
+end
 
 refreshTauHist(tab);
 end
 
-function syncTabSpinners(tab, type, val)
+function syncTabSpinners(tab, type, val, pName)
 meta = tab.UserData;
 if isempty(meta) || ~isfield(meta, 'mapSpins'), return; end
 
 if strcmp(type, 'Bins')
-    % Power of 2 logic
+    % Power of 2 logic - specific to this histogram
+    % Actually Bins might be individual per parameter?
+    % Currently meta.lastBins implies global?
+    % Let's make it local if possible, or keep global if intended.
+    % User didn't complain about bins.
+    % But logic below updates ALL bins.
+    % Let's keep bins behavior for now or fix it too?
+    % Let's fix ONLY the Max/Min issue first to be safe.
+
+    % Wait, if I change signature, I must update call sites.
+    % The logic below for Power of 2 seems to update meta.lastBins which is global.
+    % Let's just fix the loop.
+
     if ~isfield(meta, 'lastBins'), meta.lastBins = 128; end
     oldVal = meta.lastBins;
     if val > oldVal
-        val = 2^ceil(log2(val + 0.1)); % +0.1 to avoid staying on same power if val was already Power of 2
+        val = 2^ceil(log2(val + 0.1));
     elseif val < oldVal
         val = 2^floor(log2(val - 0.1));
     end
@@ -4850,54 +5188,89 @@ if strcmp(type, 'Bins')
     if isnan(val), return; end
     meta.lastBins = val;
     tab.UserData = meta;
+
+    % Update this spinner value
+    s = meta.mapSpins.(pName);
+    s.Bins.Value = val;
+
+    refreshTauHist(tab); % This uses selected tab, so works if pName is selected
+    return;
 end
 
-pNames = fieldnames(meta.mapSpins);
-for i = 1:numel(pNames)
-    p = pNames{i};
-    s = meta.mapSpins.(p);
-    if isnan(val), continue; end
-    if strcmp(type, 'Max'), s.Max.Value = val;
-    elseif strcmp(type, 'Min'), s.Min.Value = val;
-    elseif strcmp(type, 'Bins'), s.Bins.Value = val;
-    end
-end
-
-if strcmp(type, 'Bins')
-    refreshTauHist(tab);
-else
-    updateCLimFit(tab, type, val);
+% For Max/Min, only update the relevant pName
+if strcmp(type, 'Max') || strcmp(type, 'Min')
+    if isnan(val), return; end
+    % Update CLim for this parameter
+    updateCLimFit(tab, type, val, pName);
 end
 end
 
 function syncMapDisplay(tab)
-meta = tab.UserData;
-if isempty(meta) || ~isfield(meta, 'mapTg'), return; end
+try
+    meta = tab.UserData;
+    if isempty(meta) || ~isfield(meta, 'mapTg'), return; end
 
-% Get CLim of new active map
-selTab = meta.mapTg.SelectedTab;
-% Robust pName extraction: split by '_' and take second element
-% Tag format: 'tab_ParamName_AlgoName'
-parts = strsplit(selTab.Tag, '_');
-if numel(parts) >= 2
-    pName = parts{2};
-else
-    pName = strrep(selTab.Tag, 'tab_', '');
-end
-ax = meta.mapAxes.(pName);
+    % Get CLim of new active map
+    selTab = meta.mapTg.SelectedTab;
+    % Robust pName extraction: split by '_' and take second element
+    % Tag format: 'tab_ParamName_AlgoName'
+    parts = strsplit(selTab.Tag, '_');
+    if numel(parts) >= 2
+        pName = parts{2};
+    else
+        pName = strrep(selTab.Tag, 'tab_', '');
+    end
+    ax = meta.mapAxes.(pName);
 
-if isgraphics(ax)
-    lims = ax.CLim;
-    if ~any(isnan(lims))
-        % Safely access spinners if they exist
-        if isfield(meta, 'mapSpins') && isfield(meta.mapSpins, pName)
-            meta.mapSpins.(pName).Min.Value = lims(1);
-            meta.mapSpins.(pName).Max.Value = lims(2);
+    if isgraphics(ax)
+        % Update Image CData from meta.Maps
+        if isfield(meta, 'Maps') && isfield(meta.Maps, pName)
+            hImg = findobj(ax, 'Type', 'image');
+            if isempty(hImg)
+                hImg = imagesc(ax, meta.Maps.(pName));
+                hImg.ButtonDownFcn = @(src, ev) updatePixelAnalysis(ancestor(tab, 'figure'), ev.IntersectionPoint);
+            else
+                hImg.CData = meta.Maps.(pName);
+            end
+        end
+
+        lims = ax.CLim;
+        if ~any(isnan(lims))
+            % Safely access spinners if they exist
+            if isfield(meta, 'mapSpins') && isfield(meta.mapSpins, pName)
+                meta.mapSpins.(pName).Min.Value = lims(1);
+                meta.mapSpins.(pName).Max.Value = lims(2);
+            end
         end
     end
-end
 
-refreshTauHist(tab);
+    % --- Handle Non-Parametric Tabs Refresh ---
+    if isfield(meta, 'Maps')
+        % LiMA
+        if isfield(meta, 'axMu') && isfield(meta.Maps, 'Mu')
+            h = findobj(meta.axMu, 'Type', 'image');
+            if ~isempty(h), h.CData = meta.Maps.Mu; end
+        end
+        if isfield(meta, 'axSig') && isfield(meta.Maps, 'Sigma')
+            h = findobj(meta.axSig, 'Type', 'image');
+            if ~isempty(h), h.CData = meta.Maps.Sigma; end
+        end
+        % Fisher
+        if isfield(meta, 'axAlpha') && isfield(meta.Maps, 'Alpha')
+            h = findobj(meta.axAlpha, 'Type', 'image');
+            if ~isempty(h), h.CData = meta.Maps.Alpha; end
+        end
+        if isfield(meta, 'axDelta') && isfield(meta.Maps, 'Delta')
+            h = findobj(meta.axDelta, 'Type', 'image');
+            if ~isempty(h), h.CData = meta.Maps.Delta; end
+        end
+    end
+
+    refreshTauHist(tab);
+catch ME
+    fprintf('Error in syncMapDisplay: %s\n', ME.message);
+    disp(ME.stack(1));
+end
 end
 
 function updateTauHistLines(tab, clim)
@@ -5292,17 +5665,79 @@ if strcmp(irf_src, 'Simulated')
         end
     end
     irf_t = t;
+    fwhm_val = config.fwhm;
+    pos_val = t(1); % Approximate
 elseif strcmp(irf_src, 'Estimated')
     if nargin < 3 || isempty(RawData)
         RawData = getChannelData(fig, meta.activeChanIdx);
     end
-    % Use double for sum to avoid overflow
-    irf_vec = squeeze(sum(double(RawData), [1 2]));
-    [~, pIdx] = max(irf_vec);
-    m_limit = min(numel(irf_vec), pIdx + 5);
-    irf_vec(m_limit:end) = 0; % Rough estimation: IRF has no long tail
-    irf = irf_vec / max(irf_vec);
-    irf_t = gate_centers;
+    % Sum data across all pixels to get a high-SNR decay curve
+    sum_decay = squeeze(sum(double(RawData), [1 2]));
+
+    % Robust baseline estimation (from the region before the rise)
+    % Find rough peak first
+    [~, rawPeakIdx] = max(sum_decay);
+    % Estimate baseline from pre-peak region if possible, else median
+    if rawPeakIdx > 10
+        baseline = median(sum_decay(1:rawPeakIdx-10));
+    else
+        baseline = min(sum_decay);
+    end
+
+    signal = max(0, sum_decay - baseline);
+    [maxVal, pIdx] = max(signal);
+
+    if maxVal == 0
+        % No signal found, fallback to simulated
+        irf = DTexcitation(t, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
+            config.bPulseTrain, config.PT_Trep, config.PT_sigma);
+        irf_t = t;
+        fwhm_val = config.fwhm;
+        pos_val = t(1);
+    else
+        % Improved Gaussian Fit:
+        % 1. Find the numerical gradient
+        d_decay = diff([0; signal]);
+        [~, gradPeakIdx] = max(d_decay);
+
+        % Peak of gradient is roughly the center of the IRF
+        % Rise time (10% to 90%) relates to FWHM
+        p10 = find(signal > 0.1 * maxVal, 1, 'first');
+        p90 = find(signal > 0.9 * maxVal, 1, 'first');
+        if isempty(p10), p10 = max(1, pIdx-2); end
+        if isempty(p90), p90 = pIdx; end
+        riseTime_ns = gate_centers(p90) - gate_centers(p10);
+
+        % Refined Guess:
+        % Center it at the 50% point of the rise
+        p50 = find(signal > 0.5 * maxVal, 1, 'first');
+        mu_guess = gate_centers(p50);
+        fwhm_guess = max(0.05, riseTime_ns);
+
+        % Fit to the left side (up to peak)
+        fitIdxs = max(1, p10-3):pIdx;
+        t_fit = gate_centers(fitIdxs);
+        v_fit = signal(fitIdxs);
+
+        p0 = [maxVal, mu_guess, fwhm_guess];
+        gaussFunc = @(p, x) p(1) * exp(-(x - p(2)).^2 ./ (2 * (p(3)/(2*sqrt(2*log(2))))^2));
+        obj = @(p) sum((gaussFunc(p, t_fit(:)) - v_fit(:)).^2);
+
+        opts = optimset('Display', 'off', 'TolX', 1e-4);
+        p_opt = fminsearch(obj, p0, opts);
+
+        pos_val = p_opt(2);
+        fwhm_val = abs(p_opt(3));
+
+        % Ensure fwhm is not crazy
+        if fwhm_val > 1.5, fwhm_val = 0.4; end
+        if fwhm_val < 0.02, fwhm_val = 0.02; end
+
+        % Generate Gaussian IRF on the dense grid t
+        irf = exp(-((t - pos_val).^2) / (2 * (fwhm_val / (2 * sqrt(2 * log(2))))^2));
+        irf_t = t;
+    end
+
 elseif strcmp(irf_src, 'Experimental')
     irf = data.irf_data;
     if isempty(irf)
@@ -5310,9 +5745,30 @@ elseif strcmp(irf_src, 'Experimental')
         irf = DTexcitation(t, config.fwhm, config.profile, config.rise_time, config.fall_time, ...
             config.bPulseTrain, config.PT_Trep, config.PT_sigma);
         irf_t = t;
+        fwhm_val = config.fwhm;
+        pos_val = t(1);
     else
         irf_t = gate_centers;
+        % Rough FWHM Estimate
+        [m, p] = max(irf);
+        pos_val = irf_t(p);
+        halfMax = m / 2;
+        i1 = find(irf(1:p) >= halfMax, 1, 'first');
+        i2 = find(irf(p:end) <= halfMax, 1, 'first');
+        if ~isempty(i1) && ~isempty(i2)
+            fwhm_val = irf_t(p + i2 - 1) - irf_t(i1);
+        else
+            fwhm_val = 0.5;
+        end
     end
+end
+
+% Update Labels in GUI if they exist
+if isfield(meta, 'lblIRFFWHM') && isvalid(meta.lblIRFFWHM)
+    meta.lblIRFFWHM.Text = sprintf('%.3f', fwhm_val);
+end
+if isfield(meta, 'lblIRFPos') && isvalid(meta.lblIRFPos)
+    meta.lblIRFPos.Text = sprintf('%.3f', pos_val);
 end
 end
 
@@ -5355,8 +5811,83 @@ for k = 1:numel(ats.Children)
             meta.spnEnd.Limits = [1 N];
             if meta.spnEnd.Value > N || meta.spnEnd.Value < 1, meta.spnEnd.Value = N; end
         end
+
+        % Resize/Reset Maps if dimensions changed
+        if isfield(data, 'RawData')
+            [nY, nX, ~, ~] = size(data.RawData);
+            if isfield(meta, 'Maps') && isfield(meta.Maps, 'Photons')
+                [mH, mW] = size(meta.Maps.Photons);
+                if mH ~= nY || mW ~= nX
+                    % Re-initialize maps with zero placeholders as requested
+                    pNames = fieldnames(meta.Maps);
+                    for i = 1:numel(pNames)
+                        meta.Maps.(pNames{i}) = zeros(nY, nX);
+                    end
+                    t.UserData = meta;
+                end
+            end
+        end
     end
 end
 end
 
+function autoInitFitRange(fig)
+data = fig.UserData;
+if isempty(data) || ~isfield(data, 'RawData') || isempty(data.RawData), return; end
 
+% Update all analysis tabs
+ats = findobj(fig, 'Tag', 'analysisTabs');
+if isempty(ats), return; end
+
+for k = 1:numel(ats.Children)
+    t = ats.Children(k);
+    meta = t.UserData;
+    if isstruct(meta) && isfield(meta, 'spnStart') && isfield(meta, 'spnEnd')
+
+        % Use currently active channel for this tab to determine peak position
+        % If activeChanIdx not present, default to 1
+        if isfield(meta, 'activeChanIdx'), cIdx = meta.activeChanIdx; else, cIdx = 1; end
+
+        % Safety check on dimension
+        if cIdx > size(data.RawData, 4), cIdx = 1; end
+
+        cData = data.RawData(:,:,:,cIdx);
+        sum_decay = squeeze(sum(double(cData), [1 2]));
+        [~, pIdx] = max(sum_decay);
+        nGates = numel(sum_decay);
+
+        % Smart Defaults: Start 1 gate AFTER peak, end 2 gates before absolute end
+        newStart = min(pIdx + 1, nGates - 1);
+        newEnd = max(newStart + 1, nGates - 2);
+
+        if isvalid(meta.spnStart)
+            meta.spnStart.Limits = [1 nGates];
+            meta.spnStart.Value = newStart;
+        end
+        if isvalid(meta.spnEnd)
+            meta.spnEnd.Limits = [1 nGates];
+            meta.spnEnd.Value = newEnd;
+        end
+    end
+end
+
+% Refresh pixel analysis for currently selected pixel
+updatePixelAnalysis(fig, [nan nan]);
+end
+
+function updateIRFStatsDisplay(irf, tab)
+% Helper to calculate and display FWHM/Pos from an IRF vector
+% Replicates logic from getIRFFromSource but without needing config struct
+if isempty(irf), return; end
+meta = tab.UserData;
+
+[m, p] = max(irf);
+% We assume standard gate time scaling if t vector unknown
+% Just approximation for display if accurate t not passed
+% But we really want consistent values.
+% Best relies on getIRFFromSource doing it.
+
+% Actually, getIRFFromSource updates the labels!
+% See lines 5628-5633 in HILIGHTer.m (from previous view)
+% So just calling getIRFFromSource is enough.
+end

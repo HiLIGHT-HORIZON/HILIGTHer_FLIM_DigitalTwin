@@ -136,7 +136,28 @@ config.bPulseTrain = false;
 config.PT_Trep = 10;
 config.PT_sigma = 0.05;
 config.dt = config.T / actualGates;
+config.irf_shift = 0;
+config.bWrap = false;
+config.dead_time = 0;
+config.toff = config.T;
 config.filename = filename;
+config.nChannels = totalC;
+
+% 5. Prune Empty Channels
+nonEmptyMask = false(1, totalC);
+for c = 1:totalC
+    if any(data(:, :, :, c), 'all')
+        nonEmptyMask(c) = true;
+    end
+end
+
+if any(nonEmptyMask)
+    data = data(:, :, :, nonEmptyMask);
+    totalC = sum(nonEmptyMask);
+    fprintf('Pruned %d empty channel(s).\n', length(nonEmptyMask) - totalC);
+else
+    fprintf('Warning: All channels appear empty.\n');
+end
 config.nChannels = totalC;
 
 fprintf('Import Successful. Final Data Dims: %dx%dx%dx%d\n', size(data));

@@ -11,9 +11,18 @@ end
 delete(mInst.Children);
 
 % --- Static Items ---
-uimenu(mInst, 'Text', 'New...', 'MenuSelectedFcn', @(s,e) InstrumentWizard());
-uimenu(mInst, 'Text', 'Manage...', 'MenuSelectedFcn', @(s,e) InstrumentManager(fig));
-uimenu(mInst, 'Text', '---', 'Enable', 'off', 'Separator', 'on');
+mNew = uimenu(mInst);
+mNew.Text = 'New...';
+mNew.MenuSelectedFcn = @(s,e) InstrumentWizard();
+
+mManage = uimenu(mInst);
+mManage.Text = 'Manage...';
+mManage.MenuSelectedFcn = @(s,e) InstrumentManager(fig);
+
+mSep = uimenu(mInst);
+mSep.Text = '---';
+mSep.Enable = 'off';
+mSep.Separator = 'on';
 
 % --- Dynamic Items ---
 fPath = fileparts(mfilename('fullpath'));
@@ -25,15 +34,18 @@ end
 
 files = dir(fullfile(instFolder, '*.json'));
 if isempty(files)
-    uimenu(mInst, 'Text', '(No instruments found)', 'Enable', 'off');
+    mNone = uimenu(mInst);
+    mNone.Text = '(No instruments found)';
+    mNone.Enable = 'off';
 else
     for k = 1:length(files)
         fname = files(k).name;
         fullP = fullfile(instFolder, fname);
         [~, name, ~] = fileparts(fname);
 
-        % Callback to load
-        uimenu(mInst, 'Text', name, 'MenuSelectedFcn', @(s,e) safeLoad(fig, fullP));
+        mItem = uimenu(mInst);
+        mItem.Text = name;
+        mItem.MenuSelectedFcn = @(s,e) safeLoad(fig, fullP);
     end
 end
 

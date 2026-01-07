@@ -33,4 +33,13 @@
                 "YColor": "#CCCCCC",
                 "TitleColor": "#FFFFFF"
         }
+
+        ,
+        "HILIGHTer": {
+            "DataLUT": "hot",
+                "FitLUT": "parula",
+                "DataHairpinColor": "#00FF00",
+                "FitHairpinColor": "#00FF00",
+                "MarkerColor": "#FFFFFF"
+        }
     }

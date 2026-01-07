@@ -22,5 +22,12 @@
         "XColor": "#101010",
         "YColor": "#101010",
         "TitleColor": "#000000"
+    },
+    "HILIGHTer": {
+        "DataLUT": "gray",
+        "FitLUT": "jet",
+        "DataHairpinColor": "#FFFFFF",
+        "FitHairpinColor": "#FFFFFF",
+        "MarkerColor": "#000000"
     }
 }
