@@ -4,7 +4,9 @@ function [data, config] = read_SDT(filename)
 
 % 1. Add Bio-Formats to path if needed
 basePath = fileparts(mfilename('fullpath'));
-bfPath = fullfile(basePath, 'legacy', 'bfmatlab');
+% Legacy folder is a sibling of src
+rootPath = fileparts(basePath);
+bfPath = fullfile(rootPath, 'legacy', 'bfmatlab');
 if ~exist('bfopen', 'file')
     addpath(bfPath);
 end

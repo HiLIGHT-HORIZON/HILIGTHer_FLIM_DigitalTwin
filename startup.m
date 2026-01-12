@@ -6,7 +6,7 @@ function startup()
 rootPath = fileparts(mfilename('fullpath'));
 
 % Define the target subdirectories to add to path
-folders = {'src', 'app', 'config', 'data'};
+folders = {'src', 'app', 'config', 'data', 'AppProperties'};
 
 % Add each folder to the path
 for i = 1:length(folders)

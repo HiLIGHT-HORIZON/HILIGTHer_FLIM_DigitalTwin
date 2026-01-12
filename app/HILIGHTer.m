@@ -1,6 +1,6 @@
 ﻿function HILIGHTer(configStruct)
 % Add AppProperties to path to ensure shared utilities are available
-addpath(fullfile(fileparts(mfilename('fullpath')), 'AppProperties'));
+
 
 % MOCKDATA_GUI - renamed to HILIGHTer
 % ConfigStruct contains settings imported from the main FLIM_GUI
@@ -88,7 +88,6 @@ try
         'Tag', 'swMode', ...
         'ValueChangedFcn', @(src, ev) toggleAppMode(fig, src.Value));
     swMode.Value = initialMode;
-    swMode.Value = initialMode;
     uilabel(fig, 'Text', swMode.Value, 'Position', [swX + 50, toggleY, 100, 25], ...
         'Tag', 'lblAppStatus', 'FontWeight', 'bold', 'FontColor', [0 0.45 0.74]);
 
@@ -105,6 +104,15 @@ try
     uilabel(fig, 'Text', swExpert.Value, 'Position', [offsetX + labelW + 60, toggleY, 100, 25], ...
         'Tag', 'lblExpertStatus', 'FontWeight', 'bold', 'FontColor', [0.5 0.5 0.5]);
 
+    % Debug Mode Switch (Hidden by default, revealed in Expert Mode)
+    debugOffX = offsetX + labelW + 110;
+    uiswitch(fig, 'slider', 'Items', {'', ''}, 'ItemsData', {'Off', 'On'}, ...
+        'Position', [debugOffX, toggleY, 45, 20], ...
+        'Tag', 'swDebug', 'Visible', 'off', ...
+        'ValueChangedFcn', @(src, ev) toggleDebugMode(fig, src.Value));
+    uilabel(fig, 'Text', 'Debug Info', 'Position', [debugOffX + 50, toggleY, 100, 25], ...
+        'Tag', 'lblDebugStatus', 'FontColor', [0.8 0.4 0], 'Visible', 'off');
+
     % === Configuration Panel (Top Left) ===
     % === Configuration Panel (Top Left) ===
     % === Configuration Panel ===
@@ -116,8 +124,8 @@ try
     currY = configPanelH - 40 - 15; % Moved 15px lower
 
     % 1. Mode Selector
-    lblMode = uilabel(configPanel, 'Text', 'Mode:', 'Position', [10 currY 40 inputH]);
-    modeDropdown = uidropdown(configPanel, ...
+    uilabel(configPanel, 'Text', 'Mode:', 'Position', [10 currY 40 inputH]);
+    uidropdown(configPanel, ...
         'Items', {'Single Lifetime', 'Lifetime Mix', 'FRET (Donor FLIM)', 'seFRET (Donor/Acceptor FLIM)', 'Time resolved anisotropy'}, ...
         'Value', 'Single Lifetime', ...
         'Position', [55 currY 210 inputH], 'Tag', 'modeDropdown', ...
@@ -157,7 +165,7 @@ try
         'Tooltip', 'Create a new Experimental Condition group by importing a folder.');
 
     % List
-    condList = uilistbox(cpGrid, 'Tag', 'condListBox', 'BackgroundColor', [0.12 0.12 0.14], ...
+    uilistbox(cpGrid, 'Tag', 'condListBox', 'BackgroundColor', [0.12 0.12 0.14], ...
         'FontColor', [0.9 0.9 0.9], 'ValueChangedFcn', @(s,e) flows_updateFileDisplay(fig), 'Items', {});
 
     % Tools
@@ -181,7 +189,7 @@ try
     fpGrid.RowHeight = {'1x', 30};
     fpGrid.Padding = [2 2 2 2];
 
-    fileList = uilistbox(fpGrid, 'Tag', 'fileListBox', 'Multiselect', 'on', ...
+    uilistbox(fpGrid, 'Tag', 'fileListBox', 'Multiselect', 'on', ...
         'BackgroundColor', [0.12 0.12 0.14], 'FontColor', [0.9 0.9 0.9], 'Items', {});
 
     fTools = uigridlayout(fpGrid, [1 3]);
@@ -203,17 +211,17 @@ try
 
     % Row 1: Binning
     uilabel(ppGrid, 'Text', 'Binning:');
-    binType = uidropdown(ppGrid, 'Items', {'None', 'Simple Binning', 'Gaussian Filter'}, ...
+    uidropdown(ppGrid, 'Items', {'None', 'Simple Binning', 'Gaussian Filter'}, ...
         'Tag', 'flowsBinType', 'ValueChangedFcn', @(s,e) flows_onBinTypeChange(fig, s));
-    binSpin = uispinner(ppGrid, 'Enable', 'off', 'Tag', 'flowsBinSpinner', ...
+    uispinner(ppGrid, 'Enable', 'off', 'Tag', 'flowsBinSpinner', ...
         'Tooltip', 'Parameter (Bin Size or Sigma)');
 
     % Row 2: Channels
     uilabel(ppGrid, 'Text', 'Channels:');
-    chMode = uidropdown(ppGrid, 'Items', {'Keep All Channels', 'Sum All Channels', 'Force Single Channel'}, ...
+    uidropdown(ppGrid, 'Items', {'Keep All Channels', 'Sum All Channels', 'Force Single Channel'}, ...
         'Tag', 'flowsChannelMode', 'Tooltip', 'How to handle multi-channel data', ...
         'ValueChangedFcn', @(s,e) flows_onChannelModeChange(fig, s));
-    chSpin = uispinner(ppGrid, 'Limits', [1 4], 'Value', 1, 'Enable', 'off', ...
+    uispinner(ppGrid, 'Limits', [1 4], 'Value', 1, 'Enable', 'off', ...
         'Tag', 'flowsChannelSpinner', 'Tooltip', 'Select Channel Index');
 
     % 4. Run
@@ -246,16 +254,16 @@ try
     uilabel(tabAcq, 'Text', 'Dimensions:', 'Position', [10 yPos 80 22], 'FontWeight', 'bold');
     yPos = yPos - 25;
     uilabel(tabAcq, 'Text', 'X:', 'Position', [10 yPos 20 22]);
-    spnDimX = uispinner(tabAcq, 'Limits', [1 4096], 'Value', 64, 'Step', 1, ...
+    uispinner(tabAcq, 'Limits', [1 4096], 'Value', 64, 'Step', 1, ...
         'Position', [30 yPos 60 22], 'Tag', 'dimXField', 'UserData', 64, ...
         'ValueChangedFcn', @(src,ev) onDimChange(fig, 'X'));
 
     uilabel(tabAcq, 'Text', 'Y:', 'Position', [100 yPos 20 22]);
-    spnDimY = uispinner(tabAcq, 'Limits', [1 4096], 'Value', 64, 'Step', 1, ...
+    uispinner(tabAcq, 'Limits', [1 4096], 'Value', 64, 'Step', 1, ...
         'Position', [120 yPos 60 22], 'Tag', 'dimYField', 'Enable', 'off', 'UserData', 64, ...
         'ValueChangedFcn', @(src,ev) onDimChange(fig, 'Y'));
 
-    chkAspect = uicheckbox(tabAcq, 'Text', '1:1', 'Position', [190 yPos 50 22], ...
+    uicheckbox(tabAcq, 'Text', '1:1', 'Position', [190 yPos 50 22], ...
         'Value', 1, 'Tag', 'chkAspect', 'ValueChangedFcn', @(src,ev) onDimChange(fig, 'Aspect'));
 
     % Instrument Settings
@@ -278,7 +286,7 @@ try
     % Photons & Rate
     yPos = yPos - 30;
     uilabel(tabAcq, 'Text', 'Photons / Pixel:', 'Position', [10 yPos 100 22]);
-    uilib.spnPhotons = uispinner(tabAcq, 'Limits', [1 1e9], 'Value', 1000, 'Step', 1, ...
+    uispinner(tabAcq, 'Limits', [1 1e9], 'Value', 1000, 'Step', 1, ...
         'Position', [120 yPos 80 22], 'Tag', 'photonsField', 'UserData', 1000, ...
         'ValueChangedFcn', @(src,ev) onPhotonChange(fig));
 
@@ -342,7 +350,7 @@ try
     % Container for Dynamic Model Inputs
     % pnlModelParams is positioned relative to the parent tab
     % Height: 140px
-    pnlModelParams = uipanel(tabModel, 'BorderType', 'none', 'Position', [0 yPos-140 col1W-10 140], 'Tag', 'pnlModelParams');
+    uipanel(tabModel, 'BorderType', 'none', 'Position', [0 yPos-140 col1W-10 140], 'Tag', 'pnlModelParams');
 
     % Sweeping Area (Below model params)
     yPos = yPos - 160; % Start sweeping area at ~210
@@ -433,21 +441,21 @@ try
     % --- IRF Source Selection ---
     yPos = instPanelH - 55; % Moved down 20px (was -35)
     uilabel(instPanel, 'Text', 'IRF Source:', 'Position', [10, yPos, 80, 22]);
-    ddIRFSource = uidropdown(instPanel, 'Items', {'Simulated', 'Estimated', 'Experimental'}, ...
+    uidropdown(instPanel, 'Items', {'Simulated', 'Estimated', 'Experimental'}, ...
         'Position', [90, yPos, 120, 22], 'Tag', 'ddIRFSource', ...
         'ValueChangedFcn', @(src, ev) onIRFSourceChanged(fig, src.Value));
 
     % Internal Axes for Instrument/IRF
     % Auto-resize based on panel height, leaving space for controls at top
     % yPos starts at top, minus controls (~60px)
-    axInst = uiaxes(instPanel, 'Position', [45 45 col1W-65 yPos-60], 'Tag', 'axInst');
+    uiaxes(instPanel, 'Position', [45 45 col1W-65 yPos-60], 'Tag', 'axInst');
 
     yPos = yPos - 30;
-    btnExpIRF = uibutton(instPanel, 'Text', 'Pick from File', 'Position', [10, yPos, 110, 22], ...
+    uibutton(instPanel, 'Text', 'Pick from File', 'Position', [10, yPos, 110, 22], ...
         'Visible', 'off', 'Tag', 'btnExpIRF', 'Tooltip', 'Use current channel average as IRF', ...
         'ButtonPushedFcn', @(btn, ev) onExtractExperimentalIRF(fig));
 
-    btnEstIRF = uibutton(instPanel, 'Text', 'Estimate IRF', 'Position', [130, yPos, 110, 22], ...
+    uibutton(instPanel, 'Text', 'Estimate IRF', 'Position', [130, yPos, 110, 22], ...
         'Visible', 'off', 'Tag', 'btnEstIRF', 'Tooltip', 'Estimate from rising shoulder', ...
         'ButtonPushedFcn', @(btn, ev) onEstimateIRF(fig));
 
@@ -472,7 +480,7 @@ try
     histY = xtY - margin - histH;
     ctrlH = 35;
     ctrlY = histY - margin - ctrlH;
-    threshY = ctrlY - margin - ctrlH; % New row for threshold controls
+    % threshY was unused
     ytW = plotH * 0.3;
     ytX = col2X + plotH + margin;
     tabDataWidth = col2X + plotH + margin + ytW - col2X + 50; % User Request: Increase width by 50px
@@ -566,38 +574,16 @@ try
 
 
     tabPhasor = uitab(tabGroup, 'Title', 'Phasor Analysis');
-    % Phaser/PM/LiMA/Fisher might need similar updates, but request focused on fitting algorithms (tabs with new layout).
-    % Keeping original button logic for non-fitting or updating them?
-    % The request said "tabs for data fitting analyses". But to be consistent let's check.
-    % "From now on prepopulate the GUI/tabs with everything but the missing fitted data."
-    % I will apply this logic to the fitting tabs first as requested.
-
-    uibutton(tabPhasor, 'Text', 'ANALYSE using Phasor Plot', 'Position', [10, 960, 180, 20], ...
-        'FontSize', 12, 'FontWeight', 'bold', 'BackgroundColor', [1 0 0], 'FontColor', [1 1 1], ...
-        'ButtonPushedFcn', @(~,~) onAnalyze(fig, 'Phasor Analysis'));
-    uibutton(tabPhasor, 'Text', 'Clear', 'Position', [200, 960, 60, 20], ...
-        'ButtonPushedFcn', @(~,~) onClearTab(fig));
+    createNewPhasorTab(fig, tabPhasor, 1);
 
     tabPM = uitab(tabGroup, 'Title', 'Pattern Matching');
-    uibutton(tabPM, 'Text', 'ANALYSE using Pattern Matching', 'Position', [10, 960, 180, 20], ...
-        'FontSize', 12, 'FontWeight', 'bold', 'BackgroundColor', [1 0 0], 'FontColor', [1 1 1], ...
-        'ButtonPushedFcn', @(~,~) onAnalyze(fig, 'Pattern Matching'));
-    uibutton(tabPM, 'Text', 'Clear', 'Position', [200, 960, 60, 20], ...
-        'ButtonPushedFcn', @(~,~) onClearTab(fig));
+    createNewPatternTab(fig, tabPM, 1);
 
     tabLima = uitab(tabGroup, 'Title', 'LiMA');
-    uibutton(tabLima, 'Text', 'ANALYSE using LiMA', 'Position', [10, 960, 180, 20], ...
-        'FontSize', 12, 'FontWeight', 'bold', 'BackgroundColor', [1 0 0], 'FontColor', [1 1 1], ...
-        'ButtonPushedFcn', @(~,~) onAnalyze(fig, 'LiMA'));
-    uibutton(tabLima, 'Text', 'Clear', 'Position', [200, 960, 60, 20], ...
-        'ButtonPushedFcn', @(~,~) onClearTab(fig));
-
-
+    createNewLimaTab(fig, tabLima, 1);
 
     tabFisher = uitab(tabGroup, 'Title', 'Fisher Analysis');
-    uibutton(tabFisher, 'Text', 'ANALYSE using Fisher Analysis', 'Position', [10, 960, 220, 20], ...
-        'FontSize', 12, 'FontWeight', 'bold', 'BackgroundColor', [1 0 0], 'FontColor', [1 1 1], ...
-        'ButtonPushedFcn', @(~,~) onAnalyze(fig, 'Fisher Analysis'));
+    createNewFisherTab(fig, tabFisher, 1);
     uibutton(tabFisher, 'Text', 'Clear', 'Position', [240, 960, 60, 20], ...
         'ButtonPushedFcn', @(~,~) onClearTab(fig));
 
@@ -702,7 +688,7 @@ end
         saveAnalysisSettings();
     end
 
-    function syncAnalysisMethods(fig)
+    function syncAnalysisMethods(~)
         % fig arg optional if called internally, but needed if called from manageSession
         if ~iscell(tabHandles), return; end % Safety check
         for k = 1:length(tabHandles)
@@ -715,10 +701,15 @@ end
     end
 
     function saveAnalysisSettings()
-        activeMethods = {};
+        activeMethods = cell(1, length(methodList));
+        count = 0;
         for k = 1:length(methodList)
-            if strcmp(items(k).Checked, 'on'), activeMethods{end+1} = methodList{k}; end
+            if strcmp(items(k).Checked, 'on')
+                count = count + 1;
+                activeMethods{count} = methodList{k};
+            end
         end
+        activeMethods = activeMethods(1:count);
         try
             if exist(settingsFile, 'file'), save(settingsFile, 'activeMethods', '-append');
             else, save(settingsFile, 'activeMethods'); end
@@ -731,6 +722,7 @@ end
 function onGenerate(fig)
 try
     d = uiprogressdlg(fig, 'Title', 'Generating Data', 'Indeterminate', 'on');
+    cleanObj = onCleanup(@() delete(d)); % Ensure progress dialog is closed
 
     data = fig.UserData;
     config = data.config;
@@ -914,7 +906,7 @@ try
         P_sum = sum(Pc, 3); P_sum(P_sum == 0) = 1;
         Pc_norm = Pc ./ P_sum;
 
-        bg_per_gate = N_bg_total / (nG * nC); % Assuming BG is split or per channel?
+        % bg_per_gate = N_bg_total / (nG * nC); % Assuming BG is split or per channel?
         % Actually usually BG is specified per channel. Let's assume N_bg_total is per channel.
         bg_per_gate = N_bg_total / nG;
 
@@ -1198,68 +1190,7 @@ catch ME
 end
 end
 
-function adjustSize(dimXField, dimYField, factor)
-dimXField.Value = round(dimXField.Value * factor);
-
-dimYField.Value = round(dimYField.Value * factor);
-end
-
-function onAnalyze(fig, algo)
-try
-
-    data = fig.UserData;
-    if isempty(data.RawData)
-        uialert(fig, 'No data generated. Click GENERATE first.', 'Error');
-        return;
-    end
-
-    tabGroup = findobj(fig, 'Tag', 'analysisTabs');
-    allTabs = tabGroup.Children;
-    destTab = [];
-    for i = 1:numel(allTabs)
-        if strcmpi(strtrim(allTabs(i).Title), strtrim(algo))
-            destTab = allTabs(i);
-            break;
-        end
-    end
-
-    if isempty(destTab)
-        destTab = uitab(tabGroup, 'Title', algo);
-    end
-    tabGroup.SelectedTab = destTab;
-
-    % Identify active data channel
-    dataTabGroup = findobj(fig, 'Tag', 'dataTabGroup');
-    activeChanIdx = 1;
-    if ~isempty(dataTabGroup) && ~isempty(dataTabGroup.SelectedTab)
-        % Robustly extract channel index from Title "Channel %d"
-        tokens = regexp(dataTabGroup.SelectedTab.Title, 'Channel (\d+)', 'tokens');
-        if ~isempty(tokens)
-            activeChanIdx = str2double(tokens{1}{1});
-        end
-    end
-
-    if strcmpi(algo, 'Phasor Analysis')
-        createNewPhasorTab(fig, destTab, activeChanIdx);
-    elseif strcmpi(algo, 'Pattern Matching')
-        createNewPatternTab(fig, destTab, activeChanIdx);
-    elseif strcmpi(algo, 'LiMA')
-        createNewLimaTab(fig, destTab, activeChanIdx);
-    elseif strcmpi(algo, 'Fisher Analysis')
-        createNewFisherTab(fig, destTab, activeChanIdx);
-    elseif strcmpi(algo, 'Tail Fitting')
-        createNewFitTab(fig, destTab, algo, activeChanIdx);
-    elseif strcmpi(algo, 'Machine Learning')
-        createNewMLTab(fig, destTab, algo, activeChanIdx);
-    else
-        createNewFitTab(fig, destTab, algo, activeChanIdx);
-    end
-
-catch ME
-    fprintf('Error in onAnalyze: %s\n', ME.message);
-    uialert(fig, ['Analysis failed: ' ME.message], 'Error');
-end
-end
+% adjustSize, onAnalyze functions removed as unused.
 
 
 function addPhasorROI(fig, idx)
@@ -1329,13 +1260,7 @@ tab.UserData = meta;
 refreshXYProjection(fig);
 end
 
-function toggleVizMode(fig, mode)
-data = fig.UserData;
-
-data.vizMode = mode;
-fig.UserData = data;
-refreshXYProjection(fig);
-end
+% toggleVizMode removed as unused.
 
 function refreshXYProjection(fig)
 data = fig.UserData;
@@ -1474,98 +1399,93 @@ hold(axXY, 'off');
 end
 
 function createNewPhasorTab(fig, t, activeChanIdx)
-data = fig.UserData;
+delete(t.Children); % fresh start
+% --- Layout Constants ---
+axW = 400;
+mapH = 350;
 
+% Main Grid for Layout
+gMain = uigridlayout(t, [1 2]);
+gMain.ColumnWidth = {'1x', '0.5x'};
 
-% If UI already exists in this tab, just refresh and return
-if ~isempty(t.UserData) && isfield(t.UserData, 'axPhasor')
-    refreshPhasorPlot(fig, t.UserData.axPhasor);
-    return;
+% Left Side: Maps (Images)
+pLeft = uipanel(gMain, 'BorderType', 'none');
+tGroup = uitabgroup(pLeft, 'Tag', 'mapTg_Phasor_Analysis', ...
+    'SelectionChangedFcn', @(src, ev) syncMapDisplay(t));
+
+mapAxes = struct(); mapHists = struct(); mapSpins = struct();
+pNames = {'Photons', 'Tau', 'Fraction'};
+dNames = {'Intensity', 'Phasor Tau', 'Fraction'};
+
+for i = 1:numel(pNames)
+    nm = pNames{i};
+    tabMap = uitab(tGroup, 'Title', dNames{i}, 'Tag', ['tab_' nm '_Phasor_Analysis']);
+
+    % Axis for Image
+    ax = uiaxes(tabMap, 'Position', [10, 160, axW, mapH], 'Tag', ['ax_' nm '_Phasor_Analysis']);
+    disableDefaultInteractions(ax); colormap(ax, 'jet');
+    mapAxes.(nm) = ax;
+
+    % Axis for Histogram
+    axH = uiaxes(tabMap, 'Position', [10, 10, axW, 140], 'Tag', ['hist_' nm '_Phasor_Analysis']);
+    mapHists.(nm) = axH;
+
+    % Controls (Spinners)
+    uilabel(tabMap, 'Text', 'Min:', 'Position', [axW+20, 100, 30, 20]);
+    spnMin = uispinner(tabMap, 'Position', [axW+60, 100, 60, 20], ...
+        'ValueChangedFcn', @(src, ev) syncTabSpinners(t, 'Min', src.Value));
+
+    uilabel(tabMap, 'Text', 'Max:', 'Position', [axW+20, 130, 30, 20]);
+    spnMax = uispinner(tabMap, 'Position', [axW+60, 130, 60, 20], ...
+        'ValueChangedFcn', @(src, ev) syncTabSpinners(t, 'Max', src.Value));
+
+    mapSpins.(nm).Min = spnMin; mapSpins.(nm).Max = spnMax;
 end
 
-% Local settings for this run
+% Right Side: Phasor Plot & Controls
+pRight = uipanel(gMain, 'Title', 'Phasor Plot');
+gRight = uigridlayout(pRight, [2 1]);
+gRight.RowHeight = {'1x', '0.3x'};
+
+axP = uiaxes(gRight); axP.Tag = 'axPhasorRun';
+title(axP, 'Phasor Plot'); xlabel(axP, 'G'); ylabel(axP, 'S');
+axis(axP, 'equal'); grid(axP, 'on'); box(axP, 'on');
+
+% Controls
+pCtrl = uipanel(gRight, 'Title', 'Controls');
+gCtrl = uigridlayout(pCtrl, [4 2]);
+
+uibutton(gCtrl, 'Text', 'Add ROI', 'ButtonPushedFcn', @(~,~) addPhasorROI(fig, 1));
+uibutton(gCtrl, 'Text', 'Clear ROI', 'ButtonPushedFcn', @(~,~) clearPhasorROI(fig, 'all'));
+uibutton(gCtrl, 'Text', 'Batch Analysis', 'BackgroundColor', [0.2 0.3 0.6], 'FontColor', 'white', ...
+    'ButtonPushedFcn', @(~,~) runBatchAnalysis(fig, t));
+
+% Meta initialization
+tabMeta = struct();
 tabMeta.activeChanIdx = activeChanIdx;
+tabMeta.algo = 'Phasor Analysis';
+tabMeta.mapTg = tGroup;
+tabMeta.mapAxes = mapAxes;
+tabMeta.mapHists = mapHists;
+tabMeta.mapSpins = mapSpins;
+tabMeta.axPhasor = axP;
+tabMeta.ROIs = struct('color', {'Red','Green','Blue'}, 'handle', {[],[],[]}, 'active', {false,false,false});
 tabMeta.harmonic = 1;
 tabMeta.plotAllHarmonics = true;
 tabMeta.phasorZoomMode = 'Full';
-tabMeta.ROIs = struct('color', {'Red','Green','Blue'}, 'handle', {[],[],[]}, 'active', {false,false,false});
-tabMeta.G_vals = []; tabMeta.S_vals = [];
 
-% Dimensions
-fullW = t.Parent.Position(3);
-fullH = t.Parent.Position(4);
-panelW = 220;
-axW = fullW - panelW - 80;
-
-% Main Phasor Axes
-axP = uiaxes(t, 'Position', [40, 50, axW, fullH - 120]);
-axP.Tag = 'axPhasorRun';
-title(axP, t.Title);
-xlabel(axP, 'G'); ylabel(axP, 'S');
-axP.Box = 'on'; grid(axP, 'on');
-axis(axP, 'equal');
-tabMeta.axPhasor = axP;
-tabMeta.algo = 'Phasor Analysis';
 t.UserData = tabMeta;
-
-% ROI & Controls Panel (Inside Tab)
-ctrlPanel = uipanel(t, 'Title', 'ROI & Phasor Settings', ...
-    'Position', [axW + 60, 50, panelW, fullH - 120]);
-
-currY = ctrlPanel.Position(4) - 45;
-uibutton(ctrlPanel, 'Text', 'Add ROI (Red)', 'FontColor', [0.8 0 0], 'Position', [10 currY 120 25], ...
-    'ButtonPushedFcn', @(btn, event) addPhasorROI(fig, 1));
-uibutton(ctrlPanel, 'Text', 'Clear R', 'Position', [140 currY 60 25], ...
-    'ButtonPushedFcn', @(btn, event) clearPhasorROI(fig, 1));
-
-currY = currY - 30;
-uibutton(ctrlPanel, 'Text', 'Add ROI (Green)', 'FontColor', [0 0.6 0], 'Position', [10 currY 120 25], ...
-    'ButtonPushedFcn', @(btn, event) addPhasorROI(fig, 2));
-uibutton(ctrlPanel, 'Text', 'Clear G', 'Position', [140 currY 60 25], ...
-    'ButtonPushedFcn', @(btn, event) clearPhasorROI(fig, 2));
-
-currY = currY - 30;
-uibutton(ctrlPanel, 'Text', 'Add ROI (Blue)', 'FontColor', [0 0 0.8], 'Position', [10 currY 120 25], ...
-    'ButtonPushedFcn', @(btn, event) addPhasorROI(fig, 3));
-uibutton(ctrlPanel, 'Text', 'Clear B', 'Position', [140 currY 60 25], ...
-    'ButtonPushedFcn', @(btn, event) clearPhasorROI(fig, 3));
-
-currY = currY - 40;
-uibutton(ctrlPanel, 'Text', 'CLEAR ALL ROIs', 'FontWeight', 'bold', 'Position', [10 currY 190 30], ...
-    'ButtonPushedFcn', @(btn, event) clearPhasorROI(fig, 'all'));
-
-currY = currY - 45;
-uilabel(ctrlPanel, 'Text', 'Visualization:', 'Position', [10 currY 80 20]);
-uiswitch(ctrlPanel, 'toggle', 'Items', {'Default', 'Overlay'}, 'Value', data.vizMode, ...
-    'Position', [100 currY + 10 50 20], ...
-    'ValueChangedFcn', @(sw, event) toggleVizMode(fig, sw.Value));
-
-currY = currY - 45;
-uilabel(ctrlPanel, 'Text', 'Harmonic:', 'Position', [10 currY 70 20]);
-uispinner(ctrlPanel, 'Limits', [1 3], 'Value', tabMeta.harmonic, ...
-    'Position', [80 currY 50 22], ...
-    'ValueChangedFcn', @(sp, event) updateHarmonic(fig, sp.Value, []));
-
-uicheckbox(ctrlPanel, 'Text', 'All', 'Value', tabMeta.plotAllHarmonics, ...
-    'Position', [135 currY 45 22], ...
-    'Tooltip', 'Show all harmonics up to selected', ...
-    'ValueChangedFcn', @(cb, event) updateHarmonic(fig, [], cb.Value));
-
-currY = currY - 40;
-uibutton(ctrlPanel, 'Text', '', 'Position', [30 currY 32 32], 'Tooltip', 'Zoom to Data only', ...
-    'Icon', 'C:/Users/ae275/.gemini/antigravity/brain/eb553d2f-4539-4e9a-94c9-4c463a29c28a/zoom_in_icon_1766743622031.png', ...
-    'ButtonPushedFcn', @(btn, event) setPhasorZoom(fig, 'Data'));
-uibutton(ctrlPanel, 'Text', '', 'Position', [70 currY 32 32], 'Tooltip', 'Zoom to Full (Data + Curves)', ...
-    'Icon', 'C:/Users/ae275/.gemini/antigravity/brain/eb553d2f-4539-4e9a-94c9-4c463a29c28a/zoom_out_icon_1766743633452.png', ...
-    'ButtonPushedFcn', @(btn, event) setPhasorZoom(fig, 'Full'));
 
 refreshPhasorPlot(fig, axP);
 end
 
 function createNewMLTab(fig, tab, algo, activeChanIdx)
+% Removed unused arguments and variables
 data = fig.UserData;
-config = data.config;
-axL = data.axL; axW = data.axW; metX = data.metX; xyY_top = data.xyY_top;
+axL = data.axL;
+axW = data.axW;
+metX = data.metX;
+
 
 if isempty(tab.UserData) || ~isfield(tab.UserData, 'mapAxes')
     % --- Vertical Layout Constants (60/40 Split) ---
@@ -1637,7 +1557,7 @@ if isempty(tab.UserData) || ~isfield(tab.UserData, 'mapAxes')
     resTabGroupW = metX - axL + 300;
     resTabGroup = uitabgroup(tab, 'Position', [axL, botY, resTabGroupW, resTabGroupH], 'Tag', ['resTabGroup_', tagAlgo]);
     tabRes = uitab(resTabGroup, 'Title', 'Analysis Results', 'Tag', ['tabRes_', tagAlgo]);
-    tabTrain = uitab(resTabGroup, 'Title', 'Training Performance', 'Tag', ['tabTrain_', tagAlgo]);
+    uitab(resTabGroup, 'Title', 'Training Performance', 'Tag', ['tabTrain_', tagAlgo]);
 
     % Adjust to 5:1 ratio
     zH = round((resTabGroupH - 60) / 6);
@@ -1677,10 +1597,11 @@ if isempty(tab.UserData) || ~isfield(tab.UserData, 'mapAxes')
     tabMeta.axStats = axStats; tabMeta.axRes = axRes;
     tabMeta.activeChanIdx = activeChanIdx; tabMeta.algo = algo;
 
-    % Initialize maps
-    if ~isfield(data, 'RawData') || isempty(data.RawData)
-        nY = 64; nX = 64;
-    else
+    % Initialize maps with placeholders based on best available data dimensions
+    nY = 64; nX = 64;
+    if isfield(data, 'currentData') && ~isempty(data.currentData)
+        [nY, nX, ~, ~] = size(data.currentData);
+    elseif isfield(data, 'RawData') && ~isempty(data.RawData)
         [nY, nX, ~, ~] = size(data.RawData);
     end
     for i = 1:numel(pNames)
@@ -1704,10 +1625,18 @@ end
 function runMLAnalysis(fig, tab)
 data = fig.UserData;
 meta = tab.UserData;
-activeChanIdx = meta.activeChanIdx;
+% Dynamic Link
+if isfield(data, 'navChannel'), activeChanIdx = data.navChannel;
+else, activeChanIdx = meta.activeChanIdx; end
+meta.activeChanIdx = activeChanIdx; tab.UserData = meta;
 
 % Extract Data
-RawData = double(getChannelData(fig, activeChanIdx));
+RawData = getChannelData(fig, activeChanIdx);
+if isempty(RawData)
+    uialert(fig, 'No data available for analysis. Please load or generate data first.', 'Error');
+    return;
+end
+RawData = double(RawData);
 [nY, nX, ~] = size(RawData);
 
 % Progress feedback
@@ -1752,8 +1681,6 @@ try
     % Sync everything
     syncMapDisplay(tab);
     updatePixelAnalysis(fig, [nX/2, nY/2]);
-
-    fprintf('ML Analysis Completed: %s\n', MLResults.Status);
 catch ME
     uialert(fig, ['ML Analysis Failed: ' ME.message], 'Error');
 end
@@ -1763,7 +1690,10 @@ end
 function createNewFitTab(fig, tab, algo, activeChanIdx)
 data = fig.UserData;
 config = data.config;
-axL = data.axL; axW = data.axW; metX = data.metX; xyY_top = data.xyY_top;
+axL = data.axL;
+axW = data.axW;
+metX = data.metX;
+
 
 if isempty(tab.UserData) || ~isfield(tab.UserData, 'mapAxes')
     % --- Vertical Layout Constants (60/40 Split) ---
@@ -1863,7 +1793,6 @@ if isempty(tab.UserData) || ~isfield(tab.UserData, 'mapAxes')
     disableDefaultInteractions(axPixRes);
 
     lblX = axesW + 30;
-    lblY_Z = resY + zH - 10; % Align with top of z-score plot
 
     uPixPos = uilabel(tabPixel, 'Text', 'Pos: --', 'FontWeight', 'bold', 'Position', [lblX, pixY + pixelH - 20, 150, 20]);
     uPixI0 = uilabel(tabPixel, 'Text', 'I0: --', 'FontWeight', 'bold', 'Position', [lblX, pixY + pixelH - 40, 150, 20], 'FontColor', [0 0.5 0]);
@@ -2048,10 +1977,11 @@ if isempty(tab.UserData) || ~isfield(tab.UserData, 'mapAxes')
         'BackgroundColor', [0.6 0 0], 'FontColor', [1 1 1], 'ButtonPushedFcn', @(btn, ev) runFitAnalysisAll(fig, tab), ...
         'Tooltip', 'Run Analysis on ALL Channels.');
 
-    uibutton(paramPanel, 'Text', 'Limits', 'Position', [leftMargin+170, 10, 60, 35], 'ButtonPushedFcn', @(~,~) openLimitDialog(fig), ...
+    uibutton(paramPanel, 'Text', 'Batch', 'FontWeight', 'bold', 'Position', [leftMargin+235, 10, 60, 35], ...
+        'BackgroundColor', [0.2 0.3 0.6], 'FontColor', [1 1 1], 'ButtonPushedFcn', @(~,~) runBatchAnalysis(fig, tab), ...
+        'Tooltip', 'Run Analysis on all files in current group.');
+    uibutton(paramPanel, 'Text', 'Limits', 'Position', [leftMargin+300, 10, 60, 35], 'ButtonPushedFcn', @(~,~) openLimitDialog(fig), ...
         'Tooltip', 'Set parameter limits.');
-    uibutton(paramPanel, 'Text', 'Clear', 'Position', [leftMargin+235, 10, 60, 35], 'ButtonPushedFcn', @(~,~) onClearTab(fig), ...
-        'Tooltip', 'Clear Tab.');
 
     % Assemble tabMeta
     tabMeta = struct();
@@ -2106,10 +2036,11 @@ if isempty(tab.UserData) || ~isfield(tab.UserData, 'mapAxes')
 
     tabMeta.activeChanIdx = activeChanIdx; tabMeta.algo = algo;
 
-    % Initialize maps with placeholders
-    if ~isfield(data, 'RawData') || isempty(data.RawData)
-        nY = 64; nX = 64;
-    else
+    % Initialize maps with placeholders based on best available data dimensions
+    nY = 64; nX = 64;
+    if isfield(data, 'currentData') && ~isempty(data.currentData)
+        [nY, nX, ~, ~] = size(data.currentData);
+    elseif isfield(data, 'RawData') && ~isempty(data.RawData)
         [nY, nX, ~, ~] = size(data.RawData);
     end
     for i = 1:numel(pNames)
@@ -2167,455 +2098,218 @@ updatePixelAnalysis(fig, [nX/2, nY/2]);
 end
 
 
-function runFitAnalysis(fig, tab, suppressDialogs)
-if nargin < 3, suppressDialogs = false; end
+function runFitAnalysis(fig, tab, ~)
 try
     data = fig.UserData;
-    config = data.config;
+    dFlow = flows_getData(fig);
     meta = tab.UserData;
-    activeChanIdx = meta.activeChanIdx;
+    if isempty(meta), return; end
+
+    % Configuration retrieval (Prioritize navigated file in Unified Flow)
+    config = data.config;
+    if isfield(dFlow, 'navGroup') && isfield(dFlow, 'navFile') && isfield(dFlow, 'Conditions') && ~isempty(dFlow.Conditions)
+        try
+            cIdx = dFlow.navGroup; fIdx = dFlow.navFile;
+            if cIdx <= numel(dFlow.Conditions) && fIdx <= numel(dFlow.Conditions{cIdx}.Analysis)
+                if isfield(dFlow.Conditions{cIdx}.Analysis(fIdx), 'Config')
+                    fileCfg = dFlow.Conditions{cIdx}.Analysis(fIdx).Config;
+                    if ~isempty(fileCfg), config = fileCfg; end
+                end
+            end
+        catch
+        end
+    end
+
+    % Data retrieval
+    activeChanIdx = 1;
+    if isfield(dFlow, 'navChannel'), activeChanIdx = dFlow.navChannel;
+    elseif isfield(data, 'navChannel'), activeChanIdx = data.navChannel; end
 
     RawData = double(getChannelData(fig, activeChanIdx));
+    if isempty(RawData)
+        uialert(fig, 'No data available for analysis in current channel.', 'Error');
+        return;
+    end
     [nY, nX, nGates] = size(RawData);
 
-    % Identify Background from UI
-    backVal = 0;
-    if isfield(meta, 'spnBack') && isvalid(meta.spnBack), backVal = meta.spnBack.Value; end
-
-    % Total Photons (Raw)
-    % Total Photons map (I0 = Total - Background)
-    % Note: background value here is total background across all gates for the pixel
-    meta.Maps.Photons = sum(RawData, 3) - backVal;
-    meta.Maps.Back = repmat(backVal, nY, nX);
-
-    % Apply Background Subtraction (to a copy for fitting)
+    % Background handling
+    backVal = 0; if isfield(meta, 'spnBack') && isgraphics(meta.spnBack), backVal = meta.spnBack.Value; end
     fitData = RawData - (backVal / nGates);
-    fitData(fitData < 0) = 0; % Floor to 0
+    fitData(fitData < 0) = 0;
 
-    % Extract Global Params
-    % Extract Global Params
-    irf_shift = 0;
-    if isfield(config, 'irf_shift')
-        % IRF Shift is stored in ps (from UI), but fitting models (DTpmod) typically work in ns
-        irf_shift = config.irf_shift / 1000;
-    end
+    % Fitting parameters
+    irf_shift = 0; if isfield(config, 'irf_shift'), irf_shift = config.irf_shift / 1000; end
     bWrap = false; if isfield(config, 'bWrap'), bWrap = config.bWrap; end
     dead_time = 0; if isfield(config, 'dead_time'), dead_time = config.dead_time; end
 
-    % Apply Mask
-    mask = getChannelMask(fig, activeChanIdx);
-    if ~isempty(mask)
-        mask3D = repmat(mask, 1, 1, nGates);
-        fitData(mask3D) = 0;
-    end
-
-    % Ensure Photons map reflects mask and clipped signal
-    meta.Maps.Photons = sum(fitData, 3);
-    meta.Maps.Back = repmat(backVal, nY, nX);
-
-    % Check Anscombe
-    if isfield(meta, 'chkAnscombe') && isvalid(meta.chkAnscombe) && meta.chkAnscombe.Value
-        fitData = 2 * sqrt(fitData + 3/8);
-    end
-
-    % Extract Fit Range
+    % Fit Range
     start_gate = 1; end_gate = nGates;
-    if isfield(meta, 'spnStart') && isvalid(meta.spnStart), start_gate = meta.spnStart.Value; end
-    if isfield(meta, 'spnEnd') && isvalid(meta.spnEnd), end_gate = meta.spnEnd.Value; end
+    if isfield(meta, 'spnStart') && isgraphics(meta.spnStart), start_gate = meta.spnStart.Value; end
+    if isfield(meta, 'spnEnd') && isgraphics(meta.spnEnd), end_gate = meta.spnEnd.Value; end
 
-    % Pre-calc for models
-    dt = config.dt; T = config.T; t = 0:dt:T;
-    gate_profiles = DTgates(t, config.r, config.gate_edges);
+    % Models and Execution
+    algo = meta.algo; numExp = 1; if isfield(meta, 'spnNExp') && isgraphics(meta.spnNExp), numExp = meta.spnNExp.Value; end
+
+    % Prep Gate Functions for DTpmod
+    % Prep Gate Functions for DTpmod
+    % Ensure simulation time resolution and gates match actual data dimensions
+    dt = config.dt; T = config.T;
+
+    % If data has different N_gates than config, we must adapt simulation to data
+    if isempty(config.gate_edges) || numel(config.gate_edges) ~= nGates + 1
+        % Recalculate basic linear gates for this data size
+        gate_edges = linspace(0, T, nGates + 1);
+    else
+        gate_edges = config.gate_edges;
+    end
+
+    t = 0:dt:T;
+    gate_profiles = DTgates(t, config.r, gate_edges);
+
+    % Safety check: DTgates might return different size if T/dt/edges not aligned?
+    if size(gate_profiles, 1) ~= nGates
+        % Fallback if DTgates logic differs
+        % For now, trust DTgates but let's be explicit
+    end
+
     gate_interp_fns = cell(nGates, 1);
-    for i = 1:nGates, gate_interp_fns{i} = griddedInterpolant(t, gate_profiles(i, :), 'linear', 'nearest'); end
-    meta.gate_interp_fns = gate_interp_fns;
-    gate_edges = config.gate_edges;
-    meta.gate_centers = 0.5 * (gate_edges(1:end-1) + gate_edges(2:end));
+    for i = 1:nGates
+        % Safe indexing
+        if i <= size(gate_profiles, 1)
+            gate_interp_fns{i} = griddedInterpolant(t, gate_profiles(i, :), 'linear', 'nearest');
+        else
+            % Should not happen if edges set correctly
+            error('Mismatch between Data Gates (%d) and Simulation Gates (%d).', nGates, size(gate_profiles, 1));
+        end
+    end
 
-    % Perform Fit
-    % Perform Fit
-    algo = meta.algo;
-    numExp = 1;
-    if isfield(meta, 'spnNExp') && isgraphics(meta.spnNExp), numExp = meta.spnNExp.Value; end
-    if strcmpi(algo, 'Grid MLE') || strcmpi(algo, 'Tail Fitting'), numExp = 1; end % Enforce 1 for simple methods
-
-    Results = struct();
+    [irf_custom, ~] = getIRFFromSource(fig, tab, RawData);
 
     if strcmpi(algo, 'Grid MLE')
-        % IRF support for fitting
-        [irf_custom, ~] = getIRFFromSource(fig, tab, RawData);
-
         tau_grid = linspace(0.1, 10, 100);
         P_model_grid = DTpmod(nGates, tau_grid, t, gate_interp_fns, ...
             config.fwhm, config.profile, config.rise_time, config.fall_time, ...
             config.bPulseTrain, config.PT_Trep, config.PT_sigma, ...
             irf_shift, bWrap, dead_time, irf_custom);
-
         flatData = reshape(fitData, nY*nX, nGates)';
-        N_detections = sum(flatData, 1);
-        [tau_est_flat, ~] = DTmle(N_detections, flatData, tau_grid, P_model_grid, fig, start_gate, end_gate);
+        [tau_est_flat, ~] = DTmle(sum(flatData,1), flatData, tau_grid, P_model_grid, fig, start_gate, end_gate);
         Results.Tau1 = reshape(tau_est_flat, nY, nX);
         Results.Frac1 = repmat(100, nY, nX);
-
     elseif strcmpi(algo, 'Tail Fitting')
-        [TauMap_Tail, ~] = DTtailfit(fitData, config, start_gate, end_gate);
-        Results.Tau1 = TauMap_Tail;
+        [Results.Tau1, ~] = DTtailfit(fitData, config, start_gate, end_gate);
         Results.Frac1 = repmat(100, nY, nX);
-
-    else % Iterative Reconvolution
-        % Pass numExp and IRF
-        [irf_custom, ~] = getIRFFromSource(fig, tab, RawData);
+    else
         [Results, ~] = DTiterative(fitData, config, fig, start_gate, end_gate, numExp, irf_custom);
     end
 
-    % Populate Maps
-    meta.Maps.Tau1 = Results.Tau1;
-    meta.Maps.Frac1 = Results.Frac1;
+    % Post-process Results
+    if isfield(Results, 'Tau1'), meta.Maps.TauAvg = Results.Tau1; end
+    if isfield(Results, 'Tau1'), meta.Maps.Tau1 = Results.Tau1; end
+    if isfield(Results, 'Frac1'), meta.Maps.Frac1 = Results.Frac1; end
+    meta.Maps.Photons = sum(RawData, 3);
 
-    % Handle Multi-Exp Maps
-    if numExp >= 2 && isfield(Results, 'Tau2')
-        meta.Maps.Tau2 = Results.Tau2;
-        meta.Maps.Frac2 = Results.Frac2;
-    else
-        meta.Maps.Tau2 = nan(nY, nX);
-        meta.Maps.Frac2 = nan(nY, nX);
-    end
-
-    if numExp >= 3 && isfield(Results, 'Tau3')
-        meta.Maps.Tau3 = Results.Tau3;
-        meta.Maps.Frac3 = Results.Frac3;
-    else
-        meta.Maps.Tau3 = nan(nY, nX);
-        meta.Maps.Frac3 = nan(nY, nX);
-    end
-
-    % Calculate Intensity Weighted Average Lifetime (TauAvg)
-    % TauAvg = sum(f_i * tau_i) / sum(f_i) = sum(f_i/100 * tau_i)
-    TauAvg = (Results.Tau1 .* Results.Frac1)/100;
-    if numExp >= 2 && isfield(Results, 'Tau2')
-        TauAvg = TauAvg + (Results.Tau2 .* Results.Frac2)/100;
-    end
-    if numExp >= 3 && isfield(Results, 'Tau3')
-        TauAvg = TauAvg + (Results.Tau3 .* Results.Frac3)/100;
-    end
-    meta.Maps.TauAvg = TauAvg;
-
-    % --- Compute Reduced Chi2 Map ---
-    PhotonsMap = meta.Maps.Photons;
-    % Use Tau1 as validity mask
-    if ~isempty(Results.Tau1) && any(~isnan(Results.Tau1(:)))
-        chi2_map = nan(nY, nX);
-
-        % Basis for reconstruction
-        % Pre-calculate a slightly finer grid for interpolation
-        [irf_custom, ~] = getIRFFromSource(fig, tab, RawData);
-
-        tau_search = linspace(0.05, 20, 200);
-        P_basis = DTpmod(nGates, tau_search, t, gate_interp_fns, ...
-            config.fwhm, config.profile, config.rise_time, config.fall_time, ...
-            config.bPulseTrain, config.PT_Trep, config.PT_sigma, ...
-            irf_shift, bWrap, dead_time, irf_custom);
-
-        % Calculate DOF
-        % N_points = (end_gate - start_gate + 1)
-        % N_params = 2*numExp - 1 (1 constraint)
-        n_points = end_gate - start_gate + 1;
-        n_params = 2 * numExp - 1;
-        dof = n_points - n_params;
-        if dof < 1, dof = 1; end
-
-        for y = 1:nY
-            for x = 1:nX
-                if ~isnan(Results.Tau1(y,x))
-                    % Reconstruct Decay
-                    P_px = zeros(nGates, 1);
-
-                    % Comp 1
-                    t1 = Results.Tau1(y,x); f1 = Results.Frac1(y,x)/100;
-                    % Interp1 works on columns if Y is matrix, but here P_basis is (Gates x Taus)
-                    % We need column corresponding to t1.
-                    % interp1(X, V', xi) returns row vector. Transpose back.
-                    p1 = interp1(tau_search, P_basis', t1, 'linear', 'extrap')';
-                    P_px = P_px + f1 * p1;
-
-                    if numExp >= 2
-                        t2 = meta.Maps.Tau2(y,x); f2 = meta.Maps.Frac2(y,x)/100;
-                        p2 = interp1(tau_search, P_basis', t2, 'linear', 'extrap')';
-                        P_px = P_px + f2 * p2;
-                    end
-                    if numExp >= 3
-                        t3 = meta.Maps.Tau3(y,x); f3 = meta.Maps.Frac3(y,x)/100;
-                        p3 = interp1(tau_search, P_basis', t3, 'linear', 'extrap')';
-                        P_px = P_px + f3 * p3;
-                    end
-
-                    % Normalize PDF
-                    s = sum(P_px); if s>0, P_px = P_px/s; end
-
-                    obs = squeeze(fitData(y,x,start_gate:end_gate));
-                    mod_px = P_px(start_gate:end_gate) * PhotonsMap(y,x);
-
-                    % Reduced Chi2
-                    chi2_map(y,x) = sum(((obs - mod_px).^2) ./ (mod_px + 1e-3)) / dof;
-                end
-            end
-        end
-        meta.Maps.Chi2 = chi2_map;
-    else
-        meta.Maps.Chi2 = nan(nY, nX);
-    end
-
-    % Save meta
     tab.UserData = meta;
-
-    % Update All Map Displays
-    pNames = fieldnames(meta.mapAxes);
-    for i = 1:numel(pNames)
-        p = pNames{i};
-        ax = meta.mapAxes.(p);
-        hImg = findobj(ax, 'Type', 'image');
-        if isfield(meta.Maps, p)
-            if isempty(hImg)
-                hImg = imagesc(ax, meta.Maps.(p));
-                hImg.ButtonDownFcn = @(src, ev) updatePixelAnalysis(fig, ev.IntersectionPoint);
-            else
-                hImg.CData = meta.Maps.(p);
-            end
-
-            % Auto-scale CLim
-            data_px = meta.Maps.(p)(~isnan(meta.Maps.(p)) & ~isinf(meta.Maps.(p)));
-            if ~isempty(data_px)
-                cmin = min(data_px); cmax = max(data_px);
-                if cmin == cmax, cmax = cmin + 0.1; end
-                set(ax, 'CLim', [cmin cmax]);
-            end
-        end
-    end
-
-
-
-    % --- Ground Truth Logic ---
-    if isfield(data, 'GroundTruthTaus') && ~isempty(data.GroundTruthTaus)
-        tau_true = data.GroundTruthTaus;
-        [gtY, gtX] = size(tau_true);
-        % Expand if needed
-        if gtY == 1 && nY > 1, tau_true = repmat(tau_true, nY, 1); end
-        if gtX == 1 && nX > 1, tau_true = repmat(tau_true, 1, nX); end
-
-        if all(size(tau_true) == [nY, nX])
-            irf_params = struct('fwhm',config.fwhm,'profile',config.profile,'rise_time',config.rise_time,'fall_time',config.fall_time,...
-                'bPulseTrain',config.bPulseTrain,'PT_Trep',config.PT_Trep,'PT_sigma',config.PT_sigma);
-
-            n_ph_px_est = mean(PhotonsMap(:), 'omitnan');
-            [~, f_vals_true] = DTcomputeFisherInfo(config.gate_edges, irf_params, config.r, config.T, tau_true(:)', n_ph_px_est);
-            f_vals_true = reshape(f_vals_true, nY, nX);
-
-            sigma_crlb = (f_vals_true .* tau_true) / sqrt(n_ph_px_est);
-            z_map = (TauAvg - tau_true) ./ sigma_crlb;
-
-            % Update Residual Axes (tabGT)
-            axRes = meta.axRes; axStats = meta.axStats;
-
-            % Top Axis: Average Lifetime vs X with 95% CI Patch
-            mean_tau_y = mean(TauAvg, 1, 'omitnan');
-            std_tau_y = std(TauAvg, 0, 1, 'omitnan');
-            n_y = sum(~isnan(TauAvg), 1);
-            n_y(n_y==0) = 1;
-            ci95 = 1.96 * std_tau_y ./ sqrt(n_y);
-
-            cla(axStats);
-            xvec = 1:nX;
-            y_low = mean_tau_y - ci95;
-            y_high = mean_tau_y + ci95;
-
-            % Remove NaNs for filling patch
-            valid = ~isnan(y_low) & ~isnan(y_high);
-            if any(valid)
-                X_patch = [xvec(valid), fliplr(xvec(valid))];
-                Y_patch = [y_low(valid), fliplr(y_high(valid))];
-                patch(axStats, X_patch, Y_patch, [0.8 0.8 0.8], 'EdgeColor', 'none', ...
-                    'FaceAlpha', 0.5, 'DisplayName', '95% CI');
-            end
-            hold(axStats, 'on');
-            plot(axStats, xvec, mean_tau_y, 'k-', 'LineWidth', 1.5, 'DisplayName', 'Mean Lifetime');
-            % Plot theoretical mean for reference
-            plot(axStats, xvec, mean(tau_true, 1, 'omitnan'), 'r--', 'LineWidth', 1.2, 'DisplayName', 'Ground Truth');
-            hold(axStats, 'off');
-
-            title(axStats, 'Fluorescence Lifetime vs Pixel X');
-            ylabel(axStats, 'Lifetime (ns)');
-            % Remove X-axis clutter as it's shared with the bottom plot
-            set(axStats, 'XTick', [], 'XTickLabel', [], 'XLabel', []);
-            grid(axStats, 'on');
-            legend(axStats, 'Location', 'northeastoutside');
-
-            % Lower Axis: Average Z-Score
-            z_score_avg = mean(z_map, 1, 'omitnan');
-            cla(axRes);
-            stem(axRes, 1:nX, z_score_avg, 'Marker', 'none', 'LineWidth', 1.2, 'Color', [0.3 0.3 0.3]);
-            hold(axRes, 'on');
-            yline(axRes, 0, 'k-', 'LineWidth', 1);
-            yline(axRes, [1.96, -1.96], 'r--', 'LineWidth', 1);
-            title(axRes, 'Average Z-Score (Mean across Y)');
-            ylabel(axRes, 'Z-Score');
-            xlabel(axRes, 'Pixel Number (X)');
-            grid(axRes, 'on');
-
-            % Full Map Chi2 Metrics
-            chi2_val = mean(z_map(:).^2, 'omitnan');
-            meta.uChi.Text = sprintf('Chi2: %.3f', chi2_val);
-            meta.uRE.Text = sprintf('R.E.: %.1f%%', (1/chi2_val)*100);
-
-            % RND Test on z_score_avg
-            z_clean = z_score_avg(~isnan(z_score_avg));
-            if isempty(z_clean)
-                meta.uRND.Text = 'RND: N/A';
-                meta.uRND.FontColor = 'k';
-            else
-                s_pix = sign(z_clean); s_pix(s_pix==0) = 1;
-                r_pix = 1 + sum(diff(s_pix)~=0);
-                n1 = sum(s_pix>0); n2 = sum(s_pix<0);
-
-                if n1==0 || n2==0
-                    meta.uRND.Text = 'RND: NO (Bias)';
-                    meta.uRND.FontColor = [0.8 0 0];
-                else
-                    mu_r = 1 + (2*n1*n2)/(n1+n2);
-                    s_r = sqrt((2*n1*n2*(2*n1*n2-n1-n2))/((n1+n2)^2 * (n1+n2-1)));
-                    z_r = (r_pix - mu_r)/s_r;
-
-                    if z_r < -1.645
-                        meta.uRND.Text = sprintf('RND: NO (Z=%.1f)', z_r);
-                        meta.uRND.FontColor = [0.8 0 0];
-                    else
-                        meta.uRND.Text = sprintf('RND: YES (Z=%.1f)', z_r);
-                        meta.uRND.FontColor = [0 0.6 0];
-                    end
-                end
-            end
-        end
-    end
-
-    % Set "Tau Avg" as default tab after analysis
-    tagAlgo = regexprep(meta.algo, '[^a-zA-Z0-9]', '_');
-    tab_TauAvg = findobj(meta.mapTg, 'Tag', ['tab_TauAvg_' tagAlgo]);
-    if ~isempty(tab_TauAvg), meta.mapTg.SelectedTab = tab_TauAvg; end
-
-    % Sync everything to active tab
     syncMapDisplay(tab);
-
-    % Finalize
-    drawnow limitrate;
-    updatePixelAnalysis(fig, [nX/2, nY/2]);
+    drawnow;
 catch ME
-    uialert(fig, sprintf('Analysis Failed: %s', ME.message), 'Error');
+    uialert(fig, ['Analysis Error: ' ME.message], 'Error');
     rethrow(ME);
 end
 end
 
-
 function createNewPatternTab(fig, t, activeChanIdx)
-data = fig.UserData;
+% Logic cleanup
+delete(t.Children);
 
-if ~isfield(data, 'RawData') || isempty(data.RawData)
-    error('RawData is missing from fig.UserData. Please generate data first.');
-end
-if ~isfield(data, 'config') || isempty(data.config)
-    error('Config is missing from fig.UserData.');
-end
+try
+    data = fig.UserData;
+    if (isempty(data.RawData) && (~isfield(data, 'currentData') || isempty(data.currentData)))
+        uialert(fig, 'No data found. Please load or generate data first.', 'Error');
+        return;
+    end
 
-RawData = squeeze(data.RawData(:, :, :, activeChanIdx));
+    % Get dimensions from any available source
+    nY = 64; nX = 64; % Default values
+    if isfield(data, 'currentData') && ~isempty(data.currentData), [nY, nX, ~, ~] = size(data.currentData);
+    elseif isfield(data, 'RawData') && ~isempty(data.RawData), [nY, nX, ~, ~] = size(data.RawData); end
 
-% Apply Mask
-mask = getChannelMask(fig, activeChanIdx);
-if ~isempty(mask)
-    [nY, nX, nGates] = size(RawData);
-    mask3D = repmat(mask, 1, 1, nGates);
-    RawData(mask3D) = 0;
-else
-    [nY, nX, nGates] = size(RawData);
-end
+    % Layout
+    mainGrid = uigridlayout(t, [2 2]);
+    mainGrid.ColumnWidth = {'1x', 340};
+    mainGrid.RowHeight = {'1x', '1x'};
+    mainGrid.Padding = [10 10 10 10];
 
-[nY, nX, ~] = size(RawData);
-axL = data.axL;
-% We use a local higher top Y for this tab to fit two rows
-xyY_top = 920;
-
-if isempty(t.UserData) || ~isfield(t.UserData, 'axDDM')
-    % --- Layout ---
-    % Top Left: Decay Diversity Map (DDM)
-    ddmW = 420; ddmH = 380;
-    axDDM = uiaxes(t, 'Position', [axL, xyY_top - ddmH, ddmW, ddmH]);
-    axDDM.Tag = 'axDDM'; title(axDDM, 'Decay Diversity Map');
-    xlabel(axDDM, 'Mean Lifetime \tau_m (ns)'); ylabel(axDDM, 'Heterogeneity \sigma (ns)');
+    % Top Left: DDM
+    axDDM = uiaxes(mainGrid); axDDM.Tag = 'axDDM';
+    title(axDDM, 'Decay Diversity Map');
+    xlabel(axDDM, 'Mean \tau (ns)'); ylabel(axDDM, 'Heterogeneity (ns)');
     grid(axDDM, 'on'); box(axDDM, 'on');
 
-    % Top Right: Pattern Management Panel
-    pnlX = axL + ddmW + 30;
-    pnlW = 340;
-    pnlH = ddmH;
-    pnl = uipanel(t, 'Title', 'Pattern Management', 'Position', [pnlX, xyY_top - ddmH, pnlW, pnlH]);
+    % Bottom Left: RGB Fit
+    axFit = uiaxes(mainGrid); axFit.Tag = 'axFit';
+    title(axFit, 'Pattern Match RGB');
+    set(axFit, 'XTick', [], 'YTick', []);
 
-    % Listbox for patterns
-    lbPatterns = uilistbox(pnl, 'Position', [10, 150, pnlW-20, pnlH-180], 'Items', {});
-    lbPatterns.Tag = 'lbPatterns';
+    % Right panel for controls
+    pnl = uipanel(mainGrid, 'Title', 'Pattern Management');
+    pnl.Layout.Row = [1 2]; pnl.Layout.Column = 2;
+    cGrid = uigridlayout(pnl, [9 1]); % Adjusted row count for new buttons
+    cGrid.RowHeight = {'1x', 30, 30, 30, 30, 30, 30, 30, 30}; % Flexible for listbox, fixed for buttons
 
-    % Buttons
-    uibutton(pnl, 'Text', 'Draw ROI & Add Pattern', 'Position', [10, 110, pnlW-20, 25], ...
-        'ButtonPushedFcn', @(btn, event) addPatternROI(fig, 'poly'));
+    uilabel(cGrid, 'Text', 'Defined Patterns:', 'FontWeight', 'bold');
+    lbPatterns = uilistbox(cGrid, 'Items', {}, 'Tag', 'lbPatterns');
+    lbPatterns.Layout.Row = [1 4]; % Span multiple rows for the listbox
 
-    uibutton(pnl, 'Text', 'Delete Selected', 'Position', [10, 75, 100, 25], ...
-        'ButtonPushedFcn', @(btn, event) deletePattern(fig));
+    uibutton(cGrid, 'Text', 'Draw ROI & Add Pattern', 'ButtonPushedFcn', @(~,~) addPatternROI(fig, 'poly'));
+    uibutton(cGrid, 'Text', 'Delete Selected', 'ButtonPushedFcn', @(~,~) deletePattern(fig));
+    uibutton(cGrid, 'Text', 'Save Library', 'ButtonPushedFcn', @(~,~) savePatternLibrary(fig));
+    uibutton(cGrid, 'Text', 'Load Library', 'ButtonPushedFcn', @(~,~) loadPatternLibrary(fig));
 
-    % Checkbox Anscombe
-    chkAns = uicheckbox(pnl, 'Text', 'Anscombe Transform', ...
-        'Position', [120, 75, 150, 25], ...
+    % Checkbox Anscombe (re-added)
+    chkAns = uicheckbox(cGrid, 'Text', 'Anscombe Transform', ...
         'Tooltip', 'Apply 2*sqrt(x + 3/8) to stabilize variance before fitting.', ...
         'Tag', 'chkAnscombe');
 
-    uibutton(pnl, 'Text', 'RUN FIT', 'FontWeight', 'bold', 'BackgroundColor', [0.8 0 0], 'FontColor', [1 1 1], ...
-        'Position', [10, 10, pnlW-20, 40], ...
-        'ButtonPushedFcn', @(btn, event) runPatternFit(fig));
+    uibutton(cGrid, 'Text', 'RUN FIT', 'FontWeight', 'bold', 'BackgroundColor', [0.8 0 0], 'FontColor', [1 1 1], ...
+        'ButtonPushedFcn', @(~,~) runPatternFit(fig)); % Changed to runPatternFit
 
-    % Bottom: Results Maps (RGB and Individual)
-    resY = xyY_top - ddmH - 425;
-    axFit = uiaxes(t, 'Position', [axL, resY, 420, 380]);
-    axFit.Tag = 'axFit'; title(axFit, 'Reference Pattern Fit (RGB)');
-    axis(axFit, 'image'); set(axFit, 'XTick', [], 'YTick', []);
+    uibutton(cGrid, 'Text', 'Batch Analysis', 'FontWeight', 'bold', 'BackgroundColor', [0.2 0.3 0.6], 'FontColor', 'white', ...
+        'ButtonPushedFcn', @(~,~) runBatchAnalysis(fig, t));
 
-    % Patterns Plot (Show the actual decays)
-    axPats = uiaxes(t, 'Position', [axL + 450, resY, 340, 380]);
-    axPats.Tag = 'axPats'; title(axPats, 'Pattern Decays');
-    xlabel(axPats, 'Gate Time (ns)'); ylabel(axPats, 'Prob');
-    grid(axPats, 'on');
+    % Meta
+    tabMeta = struct('algo', 'Pattern Matching', 'activeChanIdx', activeChanIdx);
+    tabMeta.axDDM = axDDM; tabMeta.axFit = axFit; tabMeta.lbPatterns = lbPatterns;
+    tabMeta.patterns = struct('name', {}, 'color', {}, 'decay', {}, 'roi', {});
+    tabMeta.ddm_scatter = [];
+    tabMeta.chkAnscombe = chkAns;
+    tabMeta.nX = nX; tabMeta.nY = nY; % Store dimensions
 
-    meta.axDDM = axDDM;
-    meta.lbPatterns = lbPatterns;
-    meta.axFit = axFit;
-    meta.axPats = axPats;
-    meta.patterns = struct('name', {}, 'color', {}, 'decay', {}, 'roi', {});
-    meta.ddm_scatter = [];
-    meta.activeChanIdx = activeChanIdx;
-    meta.chkAnscombe = chkAns;
-    t.UserData = meta;
+    % Multi-channel support
+    if ~isfield(tabMeta, 'ChanMaps'), tabMeta.ChanMaps = cell(1, 4); end
+    if ~isfield(tabMeta, 'ChanIRFs'), tabMeta.ChanIRFs = cell(1, 4); end
+    if ~isfield(tabMeta, 'Maps'), tabMeta.Maps = struct(); end % Initialize Maps struct
+
+    t.UserData = tabMeta;
 
     % -- Initialize DDM Data (One time calc) --
     % We interpret this as LiMA moments: Mean Tau vs Sigma
     % Use the data for the active channel extracted at the beginning of the function
+    RawData = getChannelData(fig, activeChanIdx);
     [limaResults, ~] = DTlima(RawData, data.config, 1, []); % Call with empty fig to suppress waiting
 
     if isstruct(limaResults) && isfield(limaResults, 'mu_tau') && isfield(limaResults, 'sigma_tau')
-        meta.mu_flat = limaResults.mu_tau(:);
-        meta.sig_flat = limaResults.sigma_tau(:);
+        tabMeta.mu_flat = limaResults.mu_tau(:);
+        tabMeta.sig_flat = limaResults.sigma_tau(:);
     else
         error('DTlima failed to return valid results struct for DDM.');
     end
-    meta.nX = nX; meta.nY = nY;
-
-    t.UserData = meta;
+    t.UserData = tabMeta; % Update meta with DDM data
 
     % Initial Plot
     plotDDM(fig);
+
+catch ME
+    uialert(fig, ME.message, 'Pattern Creator Error');
 end
 end
 
@@ -2648,7 +2342,6 @@ function addPatternROI(fig, ~)
 t = findobj(fig, 'Tag', 'analysisTabs').SelectedTab;
 
 meta = t.UserData;
-data = fig.UserData;
 ax = meta.axDDM; % Get ax from meta
 btnDraw = findobj(t, 'Text', 'Draw ROI & Add Pattern');
 if ~isempty(btnDraw), btnDraw.Enable = 'off'; end
@@ -2690,16 +2383,16 @@ end
 % We need to access RawData linear indices.
 % We identify the active channel data.
 activeChanIdx = meta.activeChanIdx;
-RawData = squeeze(data.RawData(:, :, :, activeChanIdx));
+RawData = getChannelData(fig, activeChanIdx);
 
 % Apply Mask
 mask = getChannelMask(fig, activeChanIdx);
 if ~isempty(mask)
-    [nY, nX, nGates] = size(RawData);
+    [~, ~, nGates] = size(RawData);
     mask3D = repmat(mask, 1, 1, nGates);
     RawData(mask3D) = 0;
 else
-    [nY, nX, nGates] = size(RawData);
+    [~, ~, nGates] = size(RawData);
 end
 flatData = reshape(permute(RawData, [3, 1, 2]), nGates, []); % (Gates, M)
 
@@ -2922,16 +2615,45 @@ end
 function updatePatternPlot(t)
 meta = t.UserData;
 
+% axPats is no longer part of the Pattern Matching tab's layout.
+% This function should ideally be removed or adapted if patterns are to be plotted elsewhere.
+% For now, it's called but will not plot anything if axPats is not defined in meta.
+% The instruction removed axPats from the layout.
+
+% ax = meta.axPats; % This will error if axPats is not defined.
+% Let's make it robust by checking if axPats exists.
+if ~isfield(meta, 'axPats') || ~isvalid(meta.axPats)
+    % No dedicated pattern plot axis in the new layout.
+    % If patterns need to be visualized, a new axis should be added to the layout.
+    return;
+end
+
 ax = meta.axPats;
 cla(ax); hold(ax, 'on');
 config = t.Parent.Parent.UserData.config;
 % Decay is gates, not time bins?
 % Patterns are N_gates.
-gate_centers = (config.gate_edges(1:end-1) + config.gate_edges(2:end))/2;
-
+% Plot Patterns robustness check
 for i = 1:length(meta.patterns)
     p = meta.patterns(i);
-    plot(ax, gate_centers, p.decay, '.-', 'Color', p.color, 'LineWidth', 2, 'DisplayName', p.name);
+    y = p.decay;
+    N = length(y);
+
+    % Determine x-axis
+    if isfield(config, 'gate_edges') && ~isempty(config.gate_edges) && numel(config.gate_edges) == N + 1
+        % Use mid-points of edges
+        x = (config.gate_edges(1:end-1) + config.gate_edges(2:end)) / 2;
+    else
+        % Fallback to indices or generate linspace if T is known, otherwise just indices
+        if isfield(config, 'T') && isfield(config, 'dt')
+            % Approx gate size
+            x = linspace(config.dt/2, config.T - config.dt/2, N);
+        else
+            x = 1:N;
+        end
+    end
+
+    plot(ax, x, y, '.-', 'Color', p.color, 'LineWidth', 2, 'DisplayName', p.name);
 end
 legend(ax, 'Location', 'best');
 drawnow;
@@ -3012,129 +2734,79 @@ axis(meta.axFit, 'image'); set(meta.axFit, 'XTick', [], 'YTick', []);
 end
 
 function createNewLimaTab(fig, t, activeChanIdx)
-debugInfo = 'Start';
+% Logic cleanup
+delete(t.Children);
 
 try
     data = fig.UserData;
-    debugInfo = 'Retrieved data';
-
-    if ~isfield(data, 'config') || ~isstruct(data.config)
-        error('Configuration data (data.config) is missing or not a struct.');
-    end
-    config = data.config;
-
-    if ~isfield(data, 'RawData')
-        error('RawData is missing.');
-    end
-    % Extract data for this channel
-    RawData = squeeze(data.RawData(:, :, :, activeChanIdx));
-
-    % Apply Mask
-    mask = getChannelMask(fig, activeChanIdx);
-    if ~isempty(mask)
-        [nY, nX, nGates] = size(RawData);
-        mask3D = repmat(mask, 1, 1, nGates);
-        RawData(mask3D) = 0;
+    if (isempty(data.RawData) && (~isfield(data, 'currentData') || isempty(data.currentData)))
+        uialert(fig, 'No data found. Please load or generate data first.', 'Error');
+        return;
     end
 
-    axL = data.axL; xyY_top = data.xyY_top;
-    debugInfo = 'Layout vars set';
+    % Use Grid Layout for robust resizing
+    mainGrid = uigridlayout(t, [1 2]);
+    mainGrid.ColumnWidth = {'1x', 230};
+    mainGrid.Padding = [10 10 10 10];
 
-    % Initialize UI if needed - check for a key component like axMu
-    if isempty(findobj(t, 'Tag', 'axMu'))
-        debugInfo = 'Initializing UI';
-        % Two maps: Mu and Sigma
-        paxW = 280;
-        axMu = uiaxes(t, 'Position', [axL, xyY_top - 60, paxW, paxW]);
-        axMu.Tag = 'axMu'; title(axMu, 'Mean Lifetime \mu (ns)'); colormap(axMu, 'jet');
+    % Main Plotting Area (Left)
+    pGrid = uigridlayout(mainGrid, [2 2]);
+    pGrid.ColumnWidth = {'1x', '1x'};
+    pGrid.RowHeight = {'1x', '1x'};
 
-        axSig = uiaxes(t, 'Position', [axL + paxW + 40, xyY_top - 60, paxW, paxW]);
-        axSig.Tag = 'axSig'; title(axSig, 'Heterogeneity \sigma (ns)'); colormap(axSig, 'hot');
+    axMu = uiaxes(pGrid); title(axMu, '\mu_1 (ns) - Mean Lifetime'); axMu.Tag = 'axMu';
+    axSig = uiaxes(pGrid); title(axSig, '\sigma (ns) - Heterogeneity'); axSig.Tag = 'axSig';
+    axPhasor = uiaxes(pGrid); title(axPhasor, 'Phasor Space'); axPhasor.Tag = 'axPhasor';
+    axHist = uiaxes(pGrid); title(axHist, '\mu_1 Histogram'); axHist.Tag = 'axHist';
 
-        % Plot for Mu vs I2
-        axGraph = uiaxes(t, 'Position', [axL, xyY_top - 460, paxW*2 + 40, 350]);
-        axGraph.Tag = 'axGraph'; title(axGraph, 'LiMA Analysis: \mu vs I_2');
-        xlabel(axGraph, '\mu (reduced)'); ylabel(axGraph, 'I_2 (reduced)');
+    arrayfun(@(ax) set(ax, 'Box', 'on', 'GridAlpha', 0.1), [axMu, axSig, axPhasor, axHist]);
 
-        grid(axGraph, 'on');
+    % Controls Panel (Right)
+    ctrlPanel = uipanel(mainGrid, 'Title', 'LiMA Controls');
+    cGrid = uigridlayout(ctrlPanel, [12 1]);
+    cGrid.RowHeight = {30,30,30,30,30,30,30,30,40,40,30,'1x'};
 
-        % LiMA Controls Panel
-        ctrlPanel = uipanel(t, 'Title', 'LiMA Controls', 'Position', [axL + paxW*2 + 60, xyY_top - 460, 200, 350]);
+    % metadata
+    tabMeta = struct('algo', 'LiMA Analysis', 'activeChanIdx', activeChanIdx);
+    tabMeta.axMu = axMu; tabMeta.axSig = axSig; tabMeta.axPhasor = axPhasor; tabMeta.axHist = axHist;
+    t.UserData = tabMeta;
 
-        currY = 300;
-        uibutton(ctrlPanel, 'Text', 'Add ROI (Red)', 'FontColor', [0.8 0 0], 'Position', [10 currY 110 25], ...
-            'ButtonPushedFcn', @(btn, event) addPhasorROI(fig, 1));
-        uibutton(ctrlPanel, 'Text', 'Clear R', 'Position', [130 currY 60 25], ...
-            'ButtonPushedFcn', @(btn, event) clearPhasorROI(fig, 1));
+    % Fill controls (Simplified version of original logic)
+    uibutton(cGrid, 'Text', 'Analyse Channel', 'FontWeight', 'bold', ...
+        'BackgroundColor', [0.8 0 0], 'FontColor', 'white', ...
+        'ButtonPushedFcn', @(~,~) runLimaAnalysis(fig));
 
-        currY = currY - 30;
-        uibutton(ctrlPanel, 'Text', 'Add ROI (Green)', 'FontColor', [0 0.6 0], 'Position', [10 currY 110 25], ...
-            'ButtonPushedFcn', @(btn, event) addPhasorROI(fig, 2));
-        uibutton(ctrlPanel, 'Text', 'Clear G', 'Position', [130 currY 60 25], ...
-            'ButtonPushedFcn', @(btn, event) clearPhasorROI(fig, 2));
+    chkAnscombe = uicheckbox(cGrid, 'Text', 'Anscombe Transform', ...
+        'Tooltip', 'Apply 2*sqrt(x + 3/8) to stabilize variance before fitting.', ...
+        'Tag', 'chkAnscombe');
 
-        currY = currY - 30;
-        uibutton(ctrlPanel, 'Text', 'Add ROI (Blue)', 'FontColor', [0 0 0.8], 'Position', [10 currY 110 25], ...
-            'ButtonPushedFcn', @(btn, event) addPhasorROI(fig, 3));
-        uibutton(ctrlPanel, 'Text', 'Clear B', 'Position', [130 currY 60 25], ...
-            'ButtonPushedFcn', @(btn, event) clearPhasorROI(fig, 3));
+    uibutton(cGrid, 'Text', 'Batch Analysis', 'FontWeight', 'bold', ...
+        'BackgroundColor', [0.2 0.3 0.6], 'FontColor', 'white', ...
+        'ButtonPushedFcn', @(~,~) runBatchAnalysis(fig, t), ...
+        'Tooltip', 'Run LiMA analysis on all files in the current group.');
 
-        currY = currY - 40;
-        uibutton(ctrlPanel, 'Text', 'CLEAR ALL', 'FontWeight', 'bold', 'Position', [10 currY 180 30], ...
-            'ButtonPushedFcn', @(btn, event) clearPhasorROI(fig, 'all'));
+    % Zoom helper
+    gZoom = uigridlayout(cGrid, [1 2]);
+    uibutton(gZoom, 'Text', '', 'Tooltip', 'Zoom Data', 'Icon', 'zoom_in', ...
+        'ButtonPushedFcn', @(~,~) setPhasorZoom(fig, 'Data'));
+    uibutton(gZoom, 'Text', '', 'Tooltip', 'Zoom Full', 'Icon', 'zoom_out', ...
+        'ButtonPushedFcn', @(~,~) setPhasorZoom(fig, 'Full'));
 
-        currY = currY - 45;
-        uilabel(ctrlPanel, 'Text', 'Visualization:', 'Position', [10 currY 80 20]);
-        uiswitch(ctrlPanel, 'toggle', 'Items', {'Default', 'Overlay'}, 'Value', data.vizMode, ...
-            'Position', [100 currY + 10 50 20], ...
-            'ValueChangedFcn', @(sw, event) toggleVizMode(fig, sw.Value));
+    % Update tabMeta with chkAnscombe
+    meta = t.UserData;
+    meta.chkAnscombe = chkAnscombe;
+    meta.ROIs = struct('color', {'Red','Green','Blue'}, 'handle', {[],[],[]}, 'active', {false,false,false});
+    meta.phasorZoomMode = 'Full';
+    meta.harmonic = 1;
+    % Multi-channel support
+    if ~isfield(meta, 'ChanMaps'), meta.ChanMaps = cell(1, 4); end
+    if ~isfield(meta, 'ChanIRFs'), meta.ChanIRFs = cell(1, 4); end
+    if ~isfield(meta, 'Maps'), meta.Maps = struct(); end
+    t.UserData = meta;
 
-        currY = currY - 40;
-        uibutton(ctrlPanel, 'Text', '', 'Position', [30 currY 32 32], 'Tooltip', 'Zoom Data', ...
-            'Icon', 'C:/Users/ae275/.gemini/antigravity/brain/eb553d2f-4539-4e9a-94c9-4c463a29c28a/zoom_in_icon_1766743622031.png', ...
-            'ButtonPushedFcn', @(btn, event) setPhasorZoom(fig, 'Data'));
-        uibutton(ctrlPanel, 'Text', '', 'Position', [70 currY 32 32], 'Tooltip', 'Zoom Full', ...
-            'Icon', 'C:/Users/ae275/.gemini/antigravity/brain/eb553d2f-4539-4e9a-94c9-4c463a29c28a/zoom_out_icon_1766743633452.png', ...
-            'ButtonPushedFcn', @(btn, event) setPhasorZoom(fig, 'Full'));
-
-        % Anscombe Checkbox
-        currY = currY - 35;
-        chkAns = uicheckbox(ctrlPanel, 'Text', 'Anscombe Transform', ...
-            'Position', [10, currY, 180, 22], ...
-            'Tooltip', 'Apply 2*sqrt(x + 3/8) to stabilize variance (LiMA moments).', ...
-            'Tag', 'chkAnscombe');
-
-        % Run Button
-        currY = currY - 35;
-        uibutton(ctrlPanel, 'Text', 'Recalculate', 'FontWeight', 'bold', ...
-            'Position', [10, currY, 180, 30], ...
-            'ButtonPushedFcn', @(btn, event) runLimaAnalysis(fig));
-
-        if isempty(t.UserData)
-            meta = struct();
-        else
-            meta = t.UserData;
-        end
-        meta.axMu = axMu; meta.axSig = axSig; meta.axGraph = axGraph;
-        meta.ROIs = struct('color', {'Red','Green','Blue'}, 'handle', {[],[],[]}, 'active', {false,false,false});
-        meta.phasorZoomMode = 'Full';
-        meta.harmonic = 1;
-        meta.activeChanIdx = activeChanIdx;
-        meta.chkAnscombe = chkAns;
-
-        % Multi-channel support
-        if ~isfield(meta, 'ChanMaps'), meta.ChanMaps = cell(1, 4); end
-        if ~isfield(meta, 'ChanIRFs'), meta.ChanIRFs = cell(1, 4); end
-        if ~isfield(meta, 'Maps'), meta.Maps = struct(); end
-
-        t.UserData = meta;
-        debugInfo = 'UI Initialized and UserData set';
-    end
-
-    runLimaAnalysis(fig);
-
+    runLimaAnalysis(fig); % Initial run
 catch ME
-    uialert(fig, ['LiMA Analysis Failed (' debugInfo '): ' ME.message], 'Error');
+    uialert(fig, ['LiMA Creator Error: ' ME.message], 'Error');
 end
 end
 
@@ -3153,13 +2825,15 @@ if isempty(meta) || ~isstruct(meta)
 end
 
 % Check Anscombe
-activeChanIdx = meta.activeChanIdx;
+if isfield(data, 'navChannel'), activeChanIdx = data.navChannel;
+else, activeChanIdx = meta.activeChanIdx; end
+meta.activeChanIdx = activeChanIdx; t.UserData = meta;
 RawData = getChannelData(fig, activeChanIdx);
 
 % Apply Mask
 mask = getChannelMask(fig, activeChanIdx);
 if ~isempty(mask)
-    [nY, nX, nGates] = size(RawData);
+    [~, ~, nGates] = size(RawData);
     mask3D = repmat(mask, 1, 1, nGates);
     RawData(mask3D) = 0;
 end
@@ -3475,9 +3149,13 @@ tab = tabGroup.SelectedTab;
 if isempty(tab.UserData) || ~isfield(tab.UserData, 'Maps'), return; end
 meta = tab.UserData;
 
-% Use tab-local dimensions if available, else fallback to current data
+% Use Unified Navigation Channel if available (Dynamic Link)
 chanIdx = 1;
-if isfield(meta, 'activeChanIdx'), chanIdx = meta.activeChanIdx; end
+if isfield(data, 'navChannel')
+    chanIdx = data.navChannel;
+elseif isfield(meta, 'activeChanIdx')
+    chanIdx = meta.activeChanIdx;
+end
 
 cData = getChannelData(fig, chanIdx);
 [nY, nX, ~] = size(cData);
@@ -3500,11 +3178,18 @@ end
 if px < 1 || px > nX || py < 1 || py > nY, return; end
 
 % Update Crosshair on ALL relevant axes (Data tab and Analysis tabs)
-hVs = findobj(fig, 'Tag', 'crossV');
-hHs = findobj(fig, 'Tag', 'crossH');
-
 % Ensure markers exist in current active axes if missing
-% Main XY Axis
+% 1. Main Unified Axis
+axXY_Unified = findobj(fig, 'Tag', 'axXY_Unified');
+if ~isempty(axXY_Unified)
+    hV_main = findobj(axXY_Unified, 'Tag', 'crossV');
+    if isempty(hV_main)
+        hold(axXY_Unified, 'on');
+        xline(axXY_Unified, px, 'w-', 'LineWidth', 1, 'HitTest', 'off', 'Tag', 'crossV');
+        yline(axXY_Unified, py, 'w-', 'LineWidth', 1, 'HitTest', 'off', 'Tag', 'crossH');
+    end
+end
+% 2. Legacy Channel Axis (if still visible)
 c = chanIdx;
 axXY = findobj(fig, 'Tag', sprintf('axXY_Ch%d', c));
 if ~isempty(axXY)
@@ -3517,17 +3202,17 @@ if ~isempty(axXY)
 end
 
 % Current Result Map Axis
-mapAx = meta.mapAxes.Photons; % Reference one
-if ~isempty(mapAx)
-    hV_map = findobj(mapAx, 'Tag', 'crossV');
-    if isempty(hV_map)
-        % Create on all map axes
-        pNames = fieldnames(meta.mapAxes);
-        for i=1:numel(pNames)
-            ax = meta.mapAxes.(pNames{i});
-            hold(ax, 'on');
-            xline(ax, px, 'w-', 'LineWidth', 1, 'HitTest', 'off', 'Tag', 'crossV');
-            yline(ax, py, 'w-', 'LineWidth', 1, 'HitTest', 'off', 'Tag', 'crossH');
+if isfield(meta, 'mapAxes') && isstruct(meta.mapAxes)
+    pNames = fieldnames(meta.mapAxes);
+    for i=1:numel(pNames)
+        ax = meta.mapAxes.(pNames{i});
+        if isvalid(ax)
+            hV_map = findobj(ax, 'Tag', 'crossV');
+            if isempty(hV_map)
+                hold(ax, 'on');
+                xline(ax, px, 'w-', 'LineWidth', 1, 'HitTest', 'off', 'Tag', 'crossV');
+                yline(ax, py, 'w-', 'LineWidth', 1, 'HitTest', 'off', 'Tag', 'crossH');
+            end
         end
     end
 end
@@ -3562,11 +3247,33 @@ if isfield(meta, 'Maps') && isfield(meta.Maps, 'TauAvg')
         estTau = meta.Maps.TauAvg(py, px);
     end
 end
-config = data.config;
+% Configuration retrieval (Prioritize navigated file in Unified Flow)
+% This mirrors logic in runFitAnalysis to prevent mismatch errors
+dFlow = flows_getData(fig);
+config = data.config; % Default global config
+if isfield(dFlow, 'navGroup') && isfield(dFlow, 'navFile') && isfield(dFlow, 'Conditions') && ~isempty(dFlow.Conditions)
+    try
+        cIdx = dFlow.navGroup; fIdx = dFlow.navFile;
+        if cIdx <= numel(dFlow.Conditions) && fIdx <= numel(dFlow.Conditions{cIdx}.Analysis)
+            if isfield(dFlow.Conditions{cIdx}.Analysis(fIdx), 'Config')
+                fileCfg = dFlow.Conditions{cIdx}.Analysis(fIdx).Config;
+                if ~isempty(fileCfg), config = fileCfg; end
+            end
+        end
+    catch
+    end
+end
 
 % Define Time and Gate Vectors locally to ensure availability
 dt = config.dt; T = config.T; t = 0:dt:T;
-gate_edges = config.gate_edges;
+% Robust Gate Edge Calculation
+nGatesPixel = numel(pixelCounts);
+if isempty(config.gate_edges) || numel(config.gate_edges) ~= nGatesPixel + 1
+    % Mismatch: Regenerate edges based on data dimension
+    gate_edges = linspace(0, T, nGatesPixel + 1);
+else
+    gate_edges = config.gate_edges;
+end
 gate_centers = 0.5 * (gate_edges(1:end-1) + gate_edges(2:end));
 irf_shift = 0; if isfield(config, 'irf_shift'), irf_shift = config.irf_shift; end
 
@@ -3579,7 +3286,11 @@ axPixelRes = meta.axPixRes;
 if isfield(meta, 'uPixPos'), meta.uPixPos.Text = sprintf('Pos: %d, %d', px, py); end
 if isfield(meta, 'uPixI0'), meta.uPixI0.Text = sprintf('I0: %.1f photons', signalI0); end
 if isfield(meta, 'uPixTau')
-    if isnan(estTau), meta.uPixTau.Text = 'Tau: --'; else meta.uPixTau.Text = sprintf('Tau: %.2f ns', estTau); end
+    if isnan(estTau)
+        meta.uPixTau.Text = 'Tau: --';
+    else
+        meta.uPixTau.Text = sprintf('Tau: %.2f ns', estTau);
+    end
 end
 if isfield(meta, 'uPixBack'), meta.uPixBack.Text = sprintf('Bkg: %.1f (tot)', backVal); end
 
@@ -3633,7 +3344,8 @@ try
             irf_shift, config.bWrap, config.dead_time, irf);
 
         % --- Scaling and Masking (Moved inside Try block) ---
-        sP = sum(P_pixel); if sP == 0, sP = 1; end
+        sP = sum(P_pixel);
+        if sP == 0, sP = 1; end
         P_pixel = P_pixel / sP;
 
         fittedCounts = (P_pixel * n_det) + (backVal / config.N_gates);
@@ -3674,9 +3386,8 @@ catch ME
     isFitValid = false;
 end
 
-hFit = [];
 if isFitValid
-    hFit = plot(axPixel, t_fit, decay_fit, 'k-', 'LineWidth', 1.5, 'DisplayName', sprintf('Fit (%.2fns)', estTau), 'Tag', 'hFit');
+    plot(axPixel, t_fit, decay_fit, 'k-', 'LineWidth', 1.5, 'DisplayName', sprintf('Fit (%.2fns)', estTau), 'Tag', 'hFit');
     % Clarify dashed curve in legend
     plot(axPixel, gc_fit(:), fc_fit(:), 'k--', 'LineWidth', 0.5, 'DisplayName', 'Discrete Fit', 'Tag', 'hConn');
 end
@@ -3780,7 +3491,7 @@ else
 end
 end
 
-function onMarkerMoving(src, evt, spinner, edges, tag)
+function onMarkerMoving(~, evt, spinner, edges, tag)
 % Constrain to vertical movement
 pos = evt.CurrentPosition;
 x = pos(1,1);
@@ -3887,22 +3598,9 @@ grid(ax, 'on');
 if contains(ax.Tag, 'Phasor'), axis(ax, 'equal'); end
 end
 
-function updateHarmonic(fig, spinVal, cbVal)
-tabGroup = findobj(fig, 'Tag', 'analysisTabs');
-if isempty(tabGroup) || isempty(tabGroup.SelectedTab), return; end
-tab = tabGroup.SelectedTab;
-if isempty(tab.UserData) || ~isfield(tab.UserData, 'axPhasor'), return; end
-meta = tab.UserData;
-if ~isempty(spinVal), meta.harmonic = spinVal; end
-if ~isempty(cbVal), meta.plotAllHarmonics = cbVal; end
-tab.UserData = meta;
-refreshPhasorPlot(fig);
-refreshXYProjection(fig);
-end
-
 function refreshPhasorPlot(fig, axIn)
 data = fig.UserData;
-if isempty(data.RawData), return; end
+% Data check moved to after getChannelData
 
 if nargin < 2 || isempty(axIn)
     tabGroup = findobj(fig, 'Tag', 'analysisTabs');
@@ -3916,9 +3614,15 @@ else
     % If axIn is provided, we might be calling from createNewPhasorTab before meta is set
     % but createNewPhasorTab usually sets meta before calling.
     % Let's be safe and assume meta exists if axIn is from a tab.
-    meta = [];
-    if isprop(axPhasor, 'Parent') && isprop(axPhasor.Parent, 'UserData')
-        meta = axPhasor.Parent.UserData;
+    % Find ancestor tab to get meta
+    tab = ancestor(axPhasor, 'uitab');
+    if ~isempty(tab)
+        meta = tab.UserData;
+    else
+        % Fallback check on direct parent (in case not in tab)
+        if isprop(axPhasor.Parent, 'UserData')
+            meta = axPhasor.Parent.UserData;
+        end
     end
 end
 
@@ -3930,20 +3634,20 @@ else
     plotAllHarmonics = meta.plotAllHarmonics;
     zoomMode = meta.phasorZoomMode;
     chanIdx = 1;
-    if isfield(meta, 'activeChanIdx'), chanIdx = meta.activeChanIdx; end
+    if isfield(data, 'navChannel'), chanIdx = data.navChannel;
+    elseif isfield(meta, 'activeChanIdx'), chanIdx = meta.activeChanIdx; end
 end
 
 config = data.config;
 cData = getChannelData(fig, chanIdx);
+if isempty(cData), return; end
 
 % Apply Mask
 mask = getChannelMask(fig, chanIdx);
 if ~isempty(mask)
-    [nY, nX, nGates] = size(cData);
+    [~, ~, nGates] = size(cData);
     mask3D = repmat(mask, 1, 1, nGates);
     cData(mask3D) = 0;
-else
-    [nY, nX, nGates] = size(cData);
 end
 
 [nY, nX, nGates] = size(cData);
@@ -4086,244 +3790,145 @@ switch lower(algo)
 end
 end
 
-function createNewFisherTab(fig, tab, activeChanIdx)
-data = fig.UserData;
-config = data.config;
-axL = data.axL; axW = data.axW; metX = data.metX; xyY_top = data.xyY_top;
+function createNewFisherTab(~, t, activeChanIdx)
+delete(t.Children); % fresh start
 
-if isempty(tab.UserData) || ~isfield(tab.UserData, 'mapAxes')
-    % --- Vertical Layout Constants (60/40 Split) ---
-    hTop = 580; hBot = 380;
-    topY = 980 - hTop;
-    botY = 10;
+% --- Layout Constants ---
+axW = 400;
+mapH = 350;
 
-    % --- Map Tab Group (Top 60%) ---
-    mapH = 350; histH = 150;
-    mapTgW = axW + 90;
-    mapTgH = hTop;
-    mapTgY = topY;
+% Main Grid for Layout
+gMain = uigridlayout(t, [1 2]);
+gMain.ColumnWidth = {'1x', '0.5x'};
 
-    algo = 'Fisher Analysis';
-    tagAlgo = 'Fisher';
-    mapTg = uitabgroup(tab, 'Position', [axL, mapTgY, mapTgW, mapTgH], 'Tag', ['mapTg_', tagAlgo], ...
-        'SelectionChangedFcn', @(src, ev) syncMapDisplay(tab));
+% Left Side: Maps (Images)
+pLeft = uipanel(gMain, 'BorderType', 'none');
+tGroup = uitabgroup(pLeft, 'Tag', 'mapTg_Fisher_Analysis', ...
+    'SelectionChangedFcn', @(src, ev) syncMapDisplay(t));
 
-    mapAxes = struct(); mapHists = struct(); mapSpins = struct();
-    pNames = {'Photons', 'Alpha', 'Delta'};
-    dNames = {'Photons', 'Mixing (\alpha)', 'Residual (\delta)'};
+mapAxes = struct(); mapHists = struct(); mapSpins = struct();
+pNames = {'Photons', 'Alpha', 'Delta'};
+dNames = {'Photons', 'Analysis (\alpha)', 'Residual (\delta)'};
 
-    for i = 1:numel(pNames)
-        p = pNames{i};
-        t = uitab(mapTg, 'Title', dNames{i}, 'Tag', ['tab_' p '_' tagAlgo]);
+for i = 1:numel(pNames)
+    nm = pNames{i};
+    tabMap = uitab(tGroup, 'Title', dNames{i}, 'Tag', ['tab_' nm '_Fisher_Analysis']);
 
-        ax = uiaxes(t, 'Position', [5, histH + 50, axW, mapH], 'Tag', ['ax_' p '_' tagAlgo]);
-        set(ax, 'XTick', [], 'YTick', [], 'Box', 'on', 'LineWidth', 2);
-        axis(ax, 'image'); axis(ax, 'tight');
-        disableDefaultInteractions(ax); colormap(ax, 'parula');
-        mapAxes.(p) = ax;
+    % Axis for Image
+    ax = uiaxes(tabMap, 'Position', [10, 160, axW, mapH], 'Tag', ['ax_' nm '_Fisher_Analysis']);
+    disableDefaultInteractions(ax); colormap(ax, 'jet');
+    mapAxes.(nm) = ax;
 
-        cb = colorbar(ax);
-        cb.Ticks = []; cb.Location = 'eastoutside'; cb.Units = 'pixels';
-        axPos = ax.Position; cbW = 20; cbH = axPos(4) * 0.5;
-        cbX = axPos(1) + axPos(3) + 10; cbY = axPos(2) + (axPos(4) - cbH)/2;
-        cb.Position = [cbX, cbY, cbW, cbH];
-        cb.Label.String = dNames{i};
+    % Axis for Histogram
+    axH = uiaxes(tabMap, 'Position', [10, 10, axW, 140], 'Tag', ['hist_' nm '_Fisher_Analysis']);
+    mapHists.(nm) = axH;
 
-        axH = uiaxes(t, 'Position', [10, 10, axW-10, histH], 'Tag', ['hist_' p '_' tagAlgo]);
-        set(axH, 'Box', 'on', 'YTick', [], 'HitTest', 'on');
-        disableDefaultInteractions(axH);
-        mapHists.(p) = axH;
+    % Controls (Spinners)
+    uilabel(tabMap, 'Text', 'Min:', 'Position', [axW+20, 100, 30, 20]);
+    spnMin = uispinner(tabMap, 'Position', [axW+60, 100, 60, 20], ...
+        'ValueChangedFcn', @(src, ev) syncTabSpinners(t, 'Min', src.Value));
 
-        spX = cbX;
-        uilabel(t, 'Text', 'Max', 'Position', [spX, cbY + cbH + 28, 65, 20]);
-        spMax = uispinner(t, 'Position', [spX, cbY + cbH + 5, 65, 22], 'Tag', ['spnCMax_' p], ...
-            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Max', src.Value, p));
+    uilabel(tabMap, 'Text', 'Max:', 'Position', [axW+20, 130, 30, 20]);
+    spnMax = uispinner(tabMap, 'Position', [axW+60, 130, 60, 20], ...
+        'ValueChangedFcn', @(src, ev) syncTabSpinners(t, 'Max', src.Value));
 
-        uilabel(t, 'Text', 'Min', 'Position', [spX, cbY - 45, 65, 20]);
-        spMin = uispinner(t, 'Position', [spX, cbY - 25, 65, 22], 'Tag', ['spnCMin_' p], ...
-            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Min', src.Value, p));
-
-        uilabel(t, 'Text', 'Bins:', 'Position', [axW + 15, 40, 40, 20]);
-        spBins = uispinner(t, 'Limits', [2 1024], 'Value', 128, 'Position', [axW + 15, 15, 65, 22], 'Tag', ['spnBins_' p], ...
-            'ValueChangedFcn', @(src, ev) syncTabSpinners(tab, 'Bins', src.Value, p));
-
-        ylabel(axH, 'Pixels', 'FontWeight', 'bold');
-        axH.YLabel.ButtonDownFcn = @(src, ev) toggleHistYScale(src);
-        xlabel(axH, dNames{i}, 'FontWeight', 'bold');
-        axH.XLabel.ButtonDownFcn = @(src, ev) toggleHistXScale(src);
-
-        mapSpins.(p).Max = spMax; mapSpins.(p).Min = spMin; mapSpins.(p).Bins = spBins;
-    end
-
-    % --- Controls Panel (Top Right) ---
-    paramPanel = uipanel(tab, 'Title', 'Fisher Analysis Controls', 'Tag', 'pnlFisherCtrl', ...
-        'Position', [metX - 60, topY, 375, hTop]);
-
-    currY = hTop - 40;
-    uilabel(paramPanel, 'Text', '1. Define References', 'FontWeight', 'bold', 'Position', [15, currY, 200, 22]);
-    currY = currY - 35;
-    uibutton(paramPanel, 'Text', 'Set Ref 1 (Red)', 'FontColor', [0.8 0 0], 'Position', [15, currY, 125, 30], ...
-        'Tag', 'btnRef1', 'ButtonPushedFcn', @(btn, event) addFisherROI(fig, 1));
-    uibutton(paramPanel, 'Text', 'Set Ref 2 (Blue)', 'FontColor', [0 0 0.8], 'Position', [150, currY, 125, 30], ...
-        'Tag', 'btnRef2', 'ButtonPushedFcn', @(btn, event) addFisherROI(fig, 2));
-
-    currY = currY - 60;
-    uilabel(paramPanel, 'Text', '2. Run Analysis', 'FontWeight', 'bold', 'Position', [15, currY, 200, 22]);
-    currY = currY - 30;
-    chkAnscombe = uicheckbox(paramPanel, 'Text', 'Anscombe Transform', 'Position', [15, currY, 200, 22], 'Tag', 'chkAnscombe');
-
-    currY = currY - 50;
-    uibutton(paramPanel, 'Text', 'Calculate Transforms', 'FontWeight', 'bold', ...
-        'BackgroundColor', [0.2 0.2 0.2], 'FontColor', [1 1 1], ...
-        'Position', [15, currY, 260, 40], ...
-        'ButtonPushedFcn', @(btn, event) runFisherAnalysis(fig));
-
-    % --- Results Tabs (Bottom 40%) ---
-    resTabGroupW = metX - axL + 375 - 60;
-    resTabGroup = uitabgroup(tab, 'Position', [axL, botY, resTabGroupW, hBot], 'Tag', ['resTabGroup_', tagAlgo]);
-    tabFPP = uitab(resTabGroup, 'Title', 'Projective Plane', 'Tag', 'tabFPP');
-    tabGT = uitab(resTabGroup, 'Title', 'Ground Truth', 'Tag', 'tabGT');
-
-    axFPP = uiaxes(tabFPP, 'Position', [20, 20, 400, 320]);
-    title(axFPP, 'Fisher Projective Plane');
-    xlabel(axFPP, 'Fisher Mixing Component (\alpha)');
-    ylabel(axFPP, 'Fisher Orthogonal Residual (\delta)');
-    grid(axFPP, 'on'); box(axFPP, 'on');
-
-    axGT = uiaxes(tabGT, 'Position', [20, 20, 400, 320]);
-    title(axGT, 'Ground Truth Comparison');
-
-    % Store in meta
-    meta = struct();
-    meta.algo = 'Fisher Analysis';
-    meta.activeChanIdx = activeChanIdx;
-    meta.mapTg = mapTg;
-    meta.mapAxes = mapAxes;
-    meta.mapHists = mapHists;
-    meta.mapSpins = mapSpins;
-    meta.axFPP = axFPP;
-    meta.axGT = axGT;
-    meta.chkAnscombe = chkAnscombe;
-    meta.ref1 = []; meta.ref2 = []; meta.refROIs = {[], []};
-    meta.Maps = struct();
-
-    tab.UserData = meta;
+    mapSpins.(nm).Min = spnMin; mapSpins.(nm).Max = spnMax;
 end
+
+% Right Side: Fisher Plot & Controls
+pRight = uipanel(gMain, 'Title', 'Fisher Projection');
+gRight = uigridlayout(pRight, [2 1]);
+gRight.RowHeight = {'1x', '0.3x'};
+
+% Fisher Parameter Plot
+axFPP = uiaxes(gRight); axFPP.Tag = 'axFPP';
+title(axFPP, 'Fisher Parameter Space'); xlabel(axFPP, '\alpha'); ylabel(axFPP, '\delta');
+grid(axFPP, 'on'); box(axFPP, 'on');
+
+% Controls
+pCtrl = uipanel(gRight, 'Title', 'Controls');
+gCtrl = uigridlayout(pCtrl, [4 2]);
+
+uibutton(gCtrl, 'Text', 'Set Ref 1 (Red)', 'FontColor', [0.8 0 0], 'ButtonPushedFcn', @(~,~) addFisherROI(fig, 1));
+uibutton(gCtrl, 'Text', 'Set Ref 2 (Blue)', 'FontColor', [0 0 0.8], 'ButtonPushedFcn', @(~,~) addFisherROI(fig, 2));
+
+% Calculate Button
+btnCalc = uibutton(gCtrl, 'Text', 'CALCULATE', 'FontWeight', 'bold', 'BackgroundColor', [0.8 0 0], 'FontColor', 'white', ...
+    'ButtonPushedFcn', @(~,~) runFisherAnalysis(fig));
+btnCalc.Layout.Row = 2;
+btnCalc.Layout.Column = [1 2];
+
+% Spacer or other controls could go here (Row 3 empty in original desire?)
+
+% Batch Analysis Button
+btnBatch = uibutton(gCtrl, 'Text', 'Batch Analysis', 'BackgroundColor', [0.2 0.3 0.6], 'FontColor', 'white', ...
+    'ButtonPushedFcn', @(~,~) runBatchAnalysis(fig, t));
+btnBatch.Layout.Row = 4;
+btnBatch.Layout.Column = [1 2];
+
+% Meta initialization
+tabMeta = struct();
+tabMeta.activeChanIdx = activeChanIdx;
+tabMeta.algo = 'Fisher Analysis';
+tabMeta.mapTg = tGroup;
+tabMeta.mapAxes = mapAxes;
+tabMeta.mapHists = mapHists;
+tabMeta.mapSpins = mapSpins;
+tabMeta.axFPP = axFPP;
+tabMeta.refROIs = {[], []};
+
+% We need to carry over GT axis handle or standard logic?
+% Standard logic uses syncMapDisplay to update maps.
+% GT comparison is specific to this tab.
+% Let's add GT axis if needed or just skip for now.
+
+t.UserData = tabMeta;
 end
 
 function addFisherROI(fig, refIdx)
 t = findobj(fig, 'Tag', 'analysisTabs').SelectedTab;
 meta = t.UserData;
-data = fig.UserData;
-
-% Find the active channel tab's XY axis
-chanIdx = meta.activeChanIdx;
-dataTabGroup = findobj(fig, 'Tag', 'dataTabGroup');
-chanTab = dataTabGroup.Children(chanIdx);
-axXY = findobj(chanTab, 'Tag', sprintf('axXY_Ch%d', chanIdx));
-
+axXY = findobj(fig, 'Tag', 'axXY_Unified');
+if isempty(axXY), axXY = findobj(fig, 'Tag', 'axXY'); end
 if isempty(axXY), return; end
 
-% Disable control buttons to avoid concurrent ROI creation
-pnl = findobj(t, 'Tag', 'pnlFisherCtrl');
-btns = findall(pnl, 'Type', 'uibutton');
-if ~isempty(btns), set(btns, 'Enable', 'off'); end
+col = [0 0 1]; if refIdx == 1, col = [1 0 0]; end
 
-% Prepare Colors
-if refIdx == 1
-    col = [1 0 0];
-    tagName = 'btnRef1';
-else
-    col = [0 0 1];
-    tagName = 'btnRef2';
-end
-
-% Clean old ROI handle if valid
 if isfield(meta, 'refROIs') && numel(meta.refROIs) >= refIdx
-    oldROI = meta.refROIs{refIdx};
-    if ~isempty(oldROI) && isvalid(oldROI)
-        delete(oldROI);
-    end
-else
-    meta.refROIs = {[], []};
+    if isvalid(meta.refROIs{refIdx}), delete(meta.refROIs{refIdx}); end
 end
 
 try
-    % Create new ROI
     hROI = drawpolygon(axXY, 'Color', col, 'LineWidth', 2, 'Label', sprintf('Ref %d', refIdx));
-
-    % Wait for user to finish
     wait(hROI);
-    if ~isempty(btns), set(btns, 'Enable', 'on'); end
+    if ~isvalid(hROI), return; end
 
-    if ~isvalid(hROI)
-        % User deleted it?
-        return;
-    end
-
-    % Refresh meta to get latest state (might have changed during wait)
-    meta = t.UserData;
-
-    % Extract Mask
     mask = hROI.createMask();
-    if ~any(mask(:))
-        uialert(fig, 'Selected ROI describes no pixels.', 'Warning');
-        delete(hROI);
-        return;
-    end
-
-    % Compute Decay
     cData = getChannelData(fig, meta.activeChanIdx);
     [~, ~, nGates] = size(cData);
     flatData = reshape(permute(cData, [3, 1, 2]), nGates, []);
-
     decay = sum(flatData(:, mask(:)), 2);
     decaySum = sum(decay);
     if decaySum == 0
         uialert(fig, 'Selected region has 0 photons.', 'Warning');
-        delete(hROI);
-        return;
+        delete(hROI); return;
     end
-
     decay = decay / decaySum;
 
-    % Persist Data
-    if refIdx == 1
-        meta.ref1 = decay;
-        lbl = 'Ref 1 Set (Ready)';
-    else
-        meta.ref2 = decay;
-        lbl = 'Ref 2 Set (Ready)';
-    end
-
+    if refIdx == 1, meta.ref1 = decay; else, meta.ref2 = decay; end
     meta.refROIs{refIdx} = hROI;
-    t.UserData = meta; % Save to Tab
-
-    % Update UI
-    btn = findobj(t, 'Tag', tagName);
-    if ~isempty(btn)
-        btn.Text = lbl;
-        btn.FontWeight = 'bold';
-    end
-
+    t.UserData = meta;
 catch ME
     uialert(fig, ['Error setting ROI: ' ME.message], 'Error');
-    if exist('hROI','var') && isvalid(hROI), delete(hROI); end
 end
 end
 
 function runFisherAnalysis(fig)
 t = findobj(fig, 'Tag', 'analysisTabs').SelectedTab;
 meta = t.UserData;
-data = fig.UserData;
 
 if isempty(meta) || ~isfield(meta, 'ref1') || ~isfield(meta, 'ref2')
     uialert(fig, 'Fisher analysis state is invalid. Please reset.', 'Error');
-    return;
-end
-
-if isempty(meta.ref1) || isempty(meta.ref2)
-    uialert(fig, 'Please set both Reference 1 and Reference 2 ROIs.', 'Error');
     return;
 end
 
@@ -4333,7 +3938,6 @@ try
     activeChanIdx = meta.activeChanIdx;
     RawData = getChannelData(fig, activeChanIdx);
 
-    % Apply Mask
     mask = getChannelMask(fig, activeChanIdx);
     if ~isempty(mask)
         [nY, nX, nGates] = size(RawData);
@@ -4343,15 +3947,8 @@ try
         [nY, nX, nGates] = size(RawData);
     end
 
-    % Photons Map
     meta.Maps.Photons = sum(RawData, 3);
-
-    % Check Anscombe
-    if isfield(meta, 'chkAnscombe') && isvalid(meta.chkAnscombe) && meta.chkAnscombe.Value
-        RawData = 2 * sqrt(RawData + 3/8);
-    end
-
-    flatData = reshape(permute(RawData, [3, 1, 2]), nGates, []);
+    flatData = reshape(permute(double(RawData), [3, 1, 2]), nGates, []);
 
     % 1. Fisher Mixing Component (FMC)
     A = [(P1 - P2)'; P2'];
@@ -4372,38 +3969,8 @@ try
     f_FOR = u_res;
     Delta_est = f_FOR' * flatData;
 
-    % 3. Update Results
     meta.Maps.Alpha = reshape(Alpha_est, nY, nX);
     meta.Maps.Delta = reshape(Delta_est, nY, nX);
-
-    % Update FPP
-    cla(meta.axFPP); hold(meta.axFPP, 'on');
-    if numel(Alpha_est) > 5000
-        idx = randperm(numel(Alpha_est), 5000);
-        plot(meta.axFPP, Alpha_est(idx), Delta_est(idx), '.', 'MarkerSize', 4, 'Color', [0.3 0.3 0.3]);
-    else
-        plot(meta.axFPP, Alpha_est, Delta_est, '.', 'MarkerSize', 4, 'Color', [0.3 0.3 0.3]);
-    end
-    plot(meta.axFPP, 1, 0, 'ro', 'MarkerSize', 10, 'LineWidth', 2, 'DisplayName', 'Ref 1');
-    plot(meta.axFPP, 0, 0, 'bo', 'MarkerSize', 10, 'LineWidth', 2, 'DisplayName', 'Ref 2');
-    hold(meta.axFPP, 'off');
-
-    % Update GT Tab if Simulator Mode
-    if isfield(data, 'GroundTruthAlpha') && ~isempty(data.GroundTruthAlpha)
-        cla(meta.axGT); hold(meta.axGT, 'on');
-        gtA = data.GroundTruthAlpha(:);
-        estA = meta.Maps.Alpha(:);
-        % Scatter GT vs Est
-        if numel(gtA) > 2000
-            idx = randperm(numel(gtA), 2000);
-            plot(meta.axGT, gtA(idx), estA(idx), '.', 'Color', [0.4 0.6 0.8]);
-        else
-            plot(meta.axGT, gtA, estA, '.');
-        end
-        plot(meta.axGT, [0 1], [0 1], 'r--'); % Identity line
-        xlabel(meta.axGT, 'Ground Truth \alpha'); ylabel(meta.axGT, 'Estimated \alpha');
-        grid(meta.axGT, 'on');
-    end
 
     t.UserData = meta;
     syncMapDisplay(t);
@@ -4412,6 +3979,9 @@ catch ME
     uialert(fig, ['Analysis Failed: ' ME.message], 'Error');
 end
 end
+
+
+
 
 function toggleAppMode(fig, mode)
 lbl = findobj(fig, 'Tag', 'lblAppStatus');
@@ -4447,10 +4017,22 @@ lbl = findobj(fig, 'Tag', 'lblExpertStatus');
 if ~isempty(lbl), lbl.Text = mode; end
 
 % Logic for Expert Mode
+% Logic for Expert Mode
+swDebug = findobj(fig, 'Tag', 'swDebug');
+lblDebug = findobj(fig, 'Tag', 'lblDebugStatus');
+
 if strcmpi(mode, 'Expert')
     lbl.FontColor = [0.8 0 0]; % Red for Expert
+    if ~isempty(swDebug), swDebug.Visible = 'on'; end
+    if ~isempty(lblDebug), lblDebug.Visible = 'on'; end
 else
     lbl.FontColor = [0.5 0.5 0.5];
+    if ~isempty(swDebug)
+        swDebug.Value = 'Off';
+        swDebug.Visible = 'off';
+        toggleDebugMode(fig, 'Off'); % Ensure off
+    end
+    if ~isempty(lblDebug), lblDebug.Visible = 'off'; end
 end
 
 % Find Debug Tab and Wrapper
@@ -4578,79 +4160,6 @@ if isempty(idx2), idx2 = N; end
 
 stats.fwhm_ns = t(idx2) - t(idx1);
 stats.fwhm_ps = stats.fwhm_ns * 1000;
-end
-
-
-function onFileDropped(fig, event)
-% Capture the path of the dropped file
-files = event.Files;
-if isempty(files), return; end
-filePath = files{1}; % Take the first file
-processImportedFile(fig, filePath);
-end
-
-function onLoadFile(fig)
-[file, path] = uigetfile({'*.sdt', 'Becker & Hickl SDT Files (*.sdt)'}, 'Select SDT File');
-if isequal(file, 0)
-    return;
-end
-processImportedFile(fig, fullfile(path, file));
-end
-
-function processImportedFile(fig, filePath)
-[~, ~, ext] = fileparts(filePath);
-if ~strcmpi(ext, '.sdt')
-    uialert(fig, 'Only .sdt files are supported currently.', 'Unsupported Format');
-    return;
-end
-
-try
-    % Visual feedback
-    [~, name, ext] = fileparts(filePath);
-    fprintf('Processing file: %s%s\n', name, ext);
-
-    waitMsg = uiprogressdlg(fig, 'Title', 'Importing SDT...', 'Message', 'Opening file...');
-
-    % read_SDT is a helper function to be implemented
-    [data, config] = read_SDT(filePath);
-
-    % Check if data is empty (Dimension Hunter failed)
-    if isempty(data) || sum(data(:)) == 0
-        % Try to extract debug log from warnings or use generic message
-        uialert(fig, sprintf('Import failed. No valid dimensions found.\nCheck command window for debug details.'), 'Import Failed', 'Icon', 'error');
-        return;
-    end
-
-    % Update figure UserData
-    userData = fig.UserData;
-    userData.RawData = data;
-    userData.ProcData = cell(size(data, 4), 1); % Init ProcData
-    userData.config = config;
-    userData.runCount = userData.runCount + 1;
-    fig.UserData = userData;
-
-    % Initialize processing for all channels
-    for c=1:size(data, 4)
-        processChannelData(fig, c);
-    end
-
-    % Update all visual components
-    if exist('waitMsg', 'var') && isvalid(waitMsg)
-        waitMsg.Value = 1;
-        waitMsg.Message = 'Finalizing plots...';
-    end
-
-    refreshAllPlots(fig);
-    autoInitFitRange(fig);
-    if exist('waitMsg', 'var') && isvalid(waitMsg), close(waitMsg); end
-
-    msg = sprintf('SDT loaded successfully.\nChannels Found: %d\nSelected Dims: %dx%dx%d\nMax Proj Count: %g', ...
-        size(userData.RawData, 4), size(userData.RawData, 1), size(userData.RawData, 2), size(userData.RawData, 3), max(sum(userData.RawData(:,:,:,1), 3), [], 'all'));
-    uialert(fig, msg, 'Import Success', 'Icon', 'success');
-catch ME
-    if exist('waitMsg', 'var') && isvalid(waitMsg), close(waitMsg); end
-    uialert(fig, ['Failed to load SDT: ' ME.message], 'Import Error', 'Icon', 'error');
-end
 end
 
 function setupDataTabs(fig, nC)
@@ -4943,7 +4452,6 @@ try
             spnSize = findobj(tab, 'Tag', sprintf('spnSize_Ch%d', chanIdx));
             sz = spnSize.Value;
 
-            hK = [];
             if strcmp(ddKern.Value, 'Square')
                 hK = ones(sz, sz);
             else
@@ -4976,11 +4484,41 @@ end
 end
 
 function cData = getChannelData(fig, chanIdx)
-d = fig.UserData;
+d = flows_getData(fig);
+
+% Priority 1: Dynamic Lookup from Navigation State (Group/File)
+% "Change it to the group, file, and channel visualized in the data>image tab"
+if isfield(d, 'navGroup') && isfield(d, 'navFile') && isfield(d, 'Conditions') && ~isempty(d.Conditions)
+    try
+        grp = d.navGroup; file = d.navFile;
+        if grp <= numel(d.Conditions) && isfield(d.Conditions{grp}, 'Analysis') && file <= numel(d.Conditions{grp}.Analysis)
+            target = d.Conditions{grp}.Analysis(file);
+            if isfield(target, 'Data') && ~isempty(target.Data)
+                % Validate channel index
+                if chanIdx <= size(target.Data, 4)
+                    cData = double(target.Data(:,:,:,chanIdx));
+                    return;
+                end
+            end
+        end
+    catch
+        % Fallback if lookup fails
+    end
+end
+
+% Priority 2: Cached Current Data (if valid)
+if isfield(d, 'currentData') && ~isempty(d.currentData) && chanIdx <= size(d.currentData, 4)
+    cData = double(d.currentData(:,:,:,chanIdx));
+    return;
+end
+
+% Priority 3: Legacy/Root Data
 if isfield(d, 'ProcData') && ~isempty(d.ProcData) && numel(d.ProcData) >= chanIdx && ~isempty(d.ProcData{chanIdx})
     cData = d.ProcData{chanIdx};
-else
+elseif isfield(d, 'RawData') && ~isempty(d.RawData)
     cData = squeeze(d.RawData(:,:,:,chanIdx));
+else
+    cData = [];
 end
 end
 
@@ -5143,7 +4681,6 @@ try
                         [maxCount, idxPeak] = max(counts);
                         idxLast = find(counts > 0, 1, 'last');
 
-                        tAuto = 0;
                         if idxPeak < idxLast
                             % 3. Triangle Geometry
                             x1 = idxPeak; y1 = maxCount;
@@ -5235,82 +4772,54 @@ end
 
 
 
-function onEditMask(fig, chanIdx)
-% 1. Get Data
-fprintf('onEditMask triggered for channel %d\n', chanIdx);
-data = fig.UserData;
-if isempty(data.RawData)
-    fprintf('RawData is empty, returning.\n');
-    return;
-end
-
-% Access correct channel
-[~, ~, ~, nC] = size(data.RawData);
-if chanIdx > nC, return; end
-
-cData = getChannelData(fig, chanIdx);
-projXY = sum(cData, 3);
-
-% 2. Get Current Mask (Same logic as refreshAllPlots)
-dataTabGroup = findobj(fig, 'Tag', 'dataTabGroup');
-if isempty(dataTabGroup), return; end
-thisTab = dataTabGroup.Children(chanIdx);
-meta = thisTab.UserData;
-
-if isfield(meta, 'CustomMask') && ~isempty(meta.CustomMask)
-    currentMask = meta.CustomMask;
-else
-    % Calc from threshold
-    spnThresh = findobj(thisTab, 'Tag', sprintf('spnThresh_Ch%d', chanIdx));
-    tVal = spnThresh.Value;
-    currentMask = (projXY <= tVal); % Background Mask
-end
-
-% 3. Call Editor
-try
-    if exist('MaskEditor', 'file')==2
-        [newMask, cancelled] = MaskEditor(projXY, currentMask);
-
-        if ~cancelled
-            % 4. Save
-            meta.CustomMask = newMask;
-            thisTab.UserData = meta;
-
-            % 5. Update Display
-            refreshXYProjection(fig);
-            refreshAllPlots(fig);
-        end
-    else
-        uialert(fig, 'MaskEditor.m not found. Please ensure it is in the path.', 'Missing File');
-    end
-catch ME
-    uialert(fig, ['MaskEditor Error: ' ME.message], 'Error');
-end
-end
+% onEditMask removed as unused.
+% onEditMask body removed
 
 function mask = getChannelMask(fig, chanIdx)
 % Helper to retrieve the current mask (Custom or Threshold)
 % Returns logical matrix where 1 = Background (masked out), 0 = Signal (valid)
 mask = [];
 dataTabGroup = findobj(fig, 'Tag', 'dataTabGroup');
-if isempty(dataTabGroup), return; end
-if chanIdx > numel(dataTabGroup.Children), return; end
 
-thisTab = dataTabGroup.Children(chanIdx);
+thisTab = [];
+if ~isempty(dataTabGroup) && chanIdx <= numel(dataTabGroup.Children)
+    thisTab = dataTabGroup.Children(chanIdx);
+end
+
+if isempty(thisTab) || ~isvalid(thisTab)
+    % Attempt to find within Unified Image View
+    thisTab = findobj(fig, 'Tag', 'dataPlotArea');
+    if isempty(thisTab) || ~isvalid(thisTab), return; end
+end
 meta = thisTab.UserData;
 
 if isfield(meta, 'CustomMask') && ~isempty(meta.CustomMask)
     mask = logical(meta.CustomMask);
 else
     % Threshold calculation
-    spnThresh = findobj(thisTab, 'Tag', sprintf('spnThresh_Ch%d', chanIdx));
-    if ~isempty(spnThresh)
-        val = spnThresh.Value;
-        guiData = fig.UserData;
-        if ~isempty(guiData.RawData)
+
+    % Priority 1: Unified Config (Global intensity threshold)
+    guiData = fig.UserData;
+    thVal = [];
+    if isfield(guiData, 'config') && isfield(guiData.config, 'thresholdMin') && ~isempty(guiData.config.thresholdMin)
+        thVal = guiData.config.thresholdMin;
+    end
+
+    % Priority 2: Legacy Tab Spinner
+    if isempty(thVal)
+        spnThresh = findobj(thisTab, 'Tag', sprintf('spnThresh_Ch%d', chanIdx));
+        if ~isempty(spnThresh), thVal = spnThresh.Value; end
+    end
+
+    if ~isempty(thVal)
+        if ~isempty(guiData.RawData) || (isfield(guiData, 'currentData') && ~isempty(guiData.currentData))
             cData = getChannelData(fig, chanIdx);
-            projXY = sum(cData, 3);
-            mask = (projXY <= val);
+            if ~isempty(cData)
+                projXY = sum(cData, 3);
+                mask = (projXY <= thVal);
+            else
+                mask = [];
+            end
         else
             mask = [];
         end
@@ -5340,7 +4849,6 @@ val = dd.Value;
 % Update Sweep Dropdowns
 ddSx = findobj(fig, 'Tag', 'ddSweepParamX');
 ddSy = findobj(fig, 'Tag', 'ddSweepParamY');
-sweepItems = {};
 
 lblCh = findobj(fig, 'Tag', 'lblNumCh');
 spnCh = findobj(fig, 'Tag', 'numChannelsField');
@@ -5534,6 +5042,9 @@ try
                 hImg.ButtonDownFcn = @(src, ev) updatePixelAnalysis(ancestor(tab, 'figure'), ev.IntersectionPoint);
             else
                 hImg.CData = meta.Maps.(pName);
+                if isempty(hImg.ButtonDownFcn)
+                    hImg.ButtonDownFcn = @(src, ev) updatePixelAnalysis(ancestor(tab, 'figure'), ev.IntersectionPoint);
+                end
             end
         end
 
@@ -5579,37 +5090,13 @@ catch ME
 end
 end
 
-function updateTauHistLines(tab, clim)
-meta = tab.UserData;
-hists = {meta.axHist, meta.axHistGT};
-for k = 1:2
-    axH = hists{k};
-    if ~isempty(axH) && isvalid(axH)
-        lMin = findobj(axH, 'Tag', 'lMin');
-        lMax = findobj(axH, 'Tag', 'lMax');
-        if ~isempty(lMin), lMin.Position = [clim(1) 0; clim(1) 1e9]; end
-        if ~isempty(lMax), lMax.Position = [clim(2) 0; clim(2) 1e9]; end
-    end
-end
-end
+% updateTauHistLines and onTauHistBinChange removed as unused.
 
 function onTauHistLineMoving(~, tab, type, src)
 val = src.Position(1,1);
 updateCLimFit(tab, type, val);
 end
 
-function onTauHistBinChange(src, ev, tab)
-% Power of 2 logic
-val = ev.Value;
-if val > ev.PreviousValue
-    newVal = 2^ceil(log2(val + 0.1));
-else
-    newVal = 2^floor(log2(val - 0.1));
-end
-newVal = max(min(newVal, 1024), 2);
-src.Value = newVal;
-refreshTauHist(tab);
-end
 
 function refreshTauHist(tab)
 meta = tab.UserData;
@@ -5897,7 +5384,7 @@ imgNorm = imgParam / max(imgParam(:));
 
 f = uiprogressdlg(fig, 'Title', 'Segmenting...', 'Indeterminate', 'on');
 try
-    [masks, flows] = d.CellSAMWrapper.segment(imgNorm);
+    masks = d.CellSAMWrapper.segment(imgNorm);
 
     tabCellSAM = findobj(fig, 'Title', 'CellSAM');
     if isempty(tabCellSAM), close(f); return; end
@@ -5910,7 +5397,7 @@ try
     imshow(imgNorm, 'Parent', ax); hold(ax, 'on');
 
     if ~isempty(masks)
-        [B,L] = bwboundaries(masks);
+        B = bwboundaries(masks);
         for k = 1:length(B)
             boundary = B{k};
             plot(ax, boundary(:,2), boundary(:,1), 'r', 'LineWidth', 2);
@@ -5924,7 +5411,7 @@ end
 close(f);
 end
 
-function handleIRFChange(fig, tab, lblIRFExpl, algo, src)
+function handleIRFChange(fig, ~, lblIRFExpl, algo, src)
 if isempty(lblIRFExpl) || ~isgraphics(lblIRFExpl), return; end
 set(lblIRFExpl, 'Text', getIRFExplString(algo, src));
 updatePixelAnalysis(fig, [nan nan]);
@@ -5946,11 +5433,35 @@ end
 function [irf, irf_t] = getIRFFromSource(fig, tab, RawData)
 data = fig.UserData;
 meta = tab.UserData;
-config = data.config;
+% Unified Config Retrieval (same as runFitAnalysis)
+dFlow = flows_getData(fig);
+config = data.config; % Default
+if isfield(dFlow, 'navGroup') && isfield(dFlow, 'navFile') && isfield(dFlow, 'Conditions') && ~isempty(dFlow.Conditions)
+    try
+        cIdx = dFlow.navGroup; fIdx = dFlow.navFile;
+        if cIdx <= numel(dFlow.Conditions) && fIdx <= numel(dFlow.Conditions{cIdx}.Analysis)
+            if isfield(dFlow.Conditions{cIdx}.Analysis(fIdx), 'Config')
+                fileCfg = dFlow.Conditions{cIdx}.Analysis(fIdx).Config;
+                if ~isempty(fileCfg), config = fileCfg; end
+            end
+        end
+    catch
+    end
+end
 irf_src = meta.ddIRF.Value;
 
-dt = config.dt; T = config.T; t = 0:dt:T;
-gate_edges = config.gate_edges;
+% Robustness Check: Data Gates vs Config Gates
+nGatesData = size(RawData, 3);
+if isempty(config.gate_edges) || numel(config.gate_edges) ~= nGatesData + 1
+    % Regenerate edges based on data dimension
+    gate_edges = linspace(0, config.T, nGatesData + 1);
+    % Also regenerate t if necessary for simulation model consistency
+    % (Assuming dt needs to be fine enough)
+    dt = config.dt; T = config.T; t = 0:dt:T;
+else
+    gate_edges = config.gate_edges;
+    dt = config.dt; T = config.T; t = 0:dt:T;
+end
 gate_centers = 0.5 * (gate_edges(1:end-1) + gate_edges(2:end));
 
 if strcmp(irf_src, 'Simulated')
@@ -6004,7 +5515,7 @@ elseif strcmp(irf_src, 'Estimated')
         % Improved Gaussian Fit:
         % 1. Find the numerical gradient
         d_decay = diff([0; signal]);
-        [~, gradPeakIdx] = max(d_decay);
+        [~, ~] = max(d_decay);
 
         % Peak of gradient is roughly the center of the IRF
         % Rise time (10% to 90%) relates to FWHM
@@ -6137,57 +5648,12 @@ for k = 1:numel(ats.Children)
 end
 end
 
-function autoInitFitRange(fig)
-data = fig.UserData;
-if isempty(data) || ~isfield(data, 'RawData') || isempty(data.RawData), return; end
-
-% Update all analysis tabs
-ats = findobj(fig, 'Tag', 'analysisTabs');
-if isempty(ats), return; end
-
-for k = 1:numel(ats.Children)
-    t = ats.Children(k);
-    meta = t.UserData;
-    if isstruct(meta) && isfield(meta, 'spnStart') && isfield(meta, 'spnEnd')
-
-        % Use currently active channel for this tab to determine peak position
-        % If activeChanIdx not present, default to 1
-        if isfield(meta, 'activeChanIdx'), cIdx = meta.activeChanIdx; else, cIdx = 1; end
-
-        % Safety check on dimension
-        if cIdx > size(data.RawData, 4), cIdx = 1; end
-
-        cData = data.RawData(:,:,:,cIdx);
-        sum_decay = squeeze(sum(double(cData), [1 2]));
-        [~, pIdx] = max(sum_decay);
-        nGates = numel(sum_decay);
-
-        % Smart Defaults: Start 1 gate AFTER peak, end 2 gates before absolute end
-        newStart = min(pIdx + 1, nGates - 1);
-        newEnd = max(newStart + 1, nGates - 2);
-
-        if isvalid(meta.spnStart)
-            meta.spnStart.Limits = [1 nGates];
-            meta.spnStart.Value = newStart;
-        end
-        if isvalid(meta.spnEnd)
-            meta.spnEnd.Limits = [1 nGates];
-            meta.spnEnd.Value = newEnd;
-        end
-    end
-end
-
-% Refresh pixel analysis for currently selected pixel
-updatePixelAnalysis(fig, [nan nan]);
-end
-
-function updateIRFStatsDisplay(irf, tab)
+function updateIRFStatsDisplay(irf, ~)
 % Helper to calculate and display FWHM/Pos from an IRF vector
 % Replicates logic from getIRFFromSource but without needing config struct
 if isempty(irf), return; end
-meta = tab.UserData;
 
-[m, p] = max(irf);
+[~, ~] = max(irf);
 % We assume standard gate time scaling if t vector unknown
 % Just approximation for display if accurate t not passed
 % But we really want consistent values.
@@ -6217,7 +5683,7 @@ switch val
             uialert(fig, 'Invalid config file', 'Error');
         end
     case 'Save Current...'
-        [file, path] = uiputfile('*.mat', 'Save Config');
+        [file, path] = uiputfile('*.mat', 'Save Config', 'HILIGHTer_Config.mat');
         if isequal(file, 0), return; end
         simConfig = struct(); % Placeholder
         save(fullfile(path, file), 'simConfig');
@@ -6251,7 +5717,7 @@ if ~isempty(src)
                 val = 2^(ceil(log2(oldVal)) - 1);
             end
         else
-            % Manual Entry: Snap nearest
+            % Manual entry: Snap nearest
             val = 2^round(log2(newVal));
         end
 
@@ -6429,7 +5895,7 @@ if contains(tag, 'rotation') || contains(tag, 'Rotation'), u = 'ps'; end
 if contains(tag, 'R0'), u = ''; end
 end
 
-function tag = getTagForParam(paramName, fig)
+function tag = getTagForParam(paramName, ~)
 tag = '';
 switch paramName
     case 'Lifetime 1', tag = 'tau1Field';
@@ -6585,14 +6051,14 @@ end
 
 function flows_refreshCondList(fig)
 d = flows_getData(fig);
-items = {};
-for i = 1:numel(d.Conditions)
-    prefix = "";
+nC = numel(d.Conditions);
+items = cell(1, nC);
+for i = 1:nC
     if strcmp(d.Conditions{i}.Type, 'Positive Control'), prefix = "✓ [P] ";
     elseif strcmp(d.Conditions{i}.Type, 'Negative Control'), prefix = "✗ [N] ";
     else, prefix = "○ [E] ";
     end
-    items{end+1} = sprintf('%s%s (%d)', prefix, d.Conditions{i}.Name, numel(d.Conditions{i}.Files));
+    items{i} = sprintf('%s%s (%d)', prefix, d.Conditions{i}.Name, numel(d.Conditions{i}.Files));
 end
 % Find Listbox in the new panel
 lb = findobj(fig, 'Tag', 'condListBox');
@@ -6618,11 +6084,12 @@ if isempty(idx)
 end
 d = flows_getData(fig);
 files = d.Conditions{idx}.Files;
-dispFiles = {};
-for i = 1:numel(files)
+nF = numel(files);
+dispFiles = cell(1, nF);
+for i = 1:nF
     [p, n, e] = fileparts(files{i});
     [~, parent] = fileparts(p);
-    dispFiles{end+1} = sprintf('[%s] %s%s', parent, n, e);
+    dispFiles{i} = sprintf('[%s] %s%s', parent, n, e);
 end
 lbFiles.Items = dispFiles;
 lbFiles.UserData = files; % Store raw paths in listbox userdata for easy access
@@ -6630,7 +6097,7 @@ end
 
 function flows_promptConditionName(fig, newFiles)
 d = flows_getData(fig);
-newName = char(inputdlg('Enter Name for New Condition:', 'Create Condition', [1 50], {['Group_' datestr(now, 'HHMMSS')]}));
+newName = char(inputdlg('Enter Name for New Condition:', 'Create Condition', [1 50], {['Group_' char(datetime("now", 'Format', 'HHmmss'))]}));
 if isempty(newName), return; end
 
 newCond = struct('Name', newName, 'Type', 'Experimental', 'Files', {newFiles(:)});
@@ -6744,11 +6211,8 @@ if ischar(sel), sel = {sel}; end
 
 d = flows_getData(fig);
 uPaths = lbFiles.UserData;
-pathsToRemove = {};
-for i = 1:numel(sel)
-    m = find(strcmp(lbFiles.Items, sel{i}));
-    if ~isempty(m), pathsToRemove = [pathsToRemove; uPaths(m)]; end
-end
+isSel = ismember(lbFiles.Items, sel);
+pathsToRemove = uPaths(isSel);
 d.Conditions{cIdx}.Files = setdiff(d.Conditions{cIdx}.Files, pathsToRemove);
 flows_setData(fig, d);
 flows_updateFileDisplay(fig);
@@ -6766,12 +6230,9 @@ names = cellfun(@(c) c.Name, d.Conditions, 'UniformOutput', false);
 if ~ok || isequal(dIdx, cIdx), return; end
 
 uPaths = lbFiles.UserData;
-pathsToMove = {};
 if ischar(sel), sel = {sel}; end
-for i = 1:numel(sel)
-    m = find(strcmp(lbFiles.Items, sel{i}));
-    if ~isempty(m), pathsToMove = [pathsToMove; uPaths(m)]; end
-end
+isSel = ismember(lbFiles.Items, sel);
+pathsToMove = uPaths(isSel);
 d.Conditions{cIdx}.Files = setdiff(d.Conditions{cIdx}.Files, pathsToMove);
 d.Conditions{dIdx}.Files = unique([d.Conditions{dIdx}.Files; pathsToMove(:)]);
 flows_setData(fig, d);
@@ -6816,9 +6277,9 @@ d.config.channelVal = chVal;
 
 % Check duplicate load
 if isfield(d.Conditions{1}, 'Analysis') && ~isempty(d.Conditions{1}.Analysis)
-    ans = uiconfirm(fig, 'Data seems to be already loaded. Reload?', 'Load Data', ...
+    choice = uiconfirm(fig, 'Data seems to be already loaded. Reload?', 'Load Data', ...
         'Options', {'Reload', 'Keep Existing'}, 'DefaultOption', 'Keep Existing');
-    if strcmp(ans, 'Keep Existing')
+    if strcmp(choice, 'Keep Existing')
         groupsTab_refreshUI(fig);
         return;
     end
@@ -6829,6 +6290,7 @@ for i = 1:numel(d.Conditions), totalFiles = totalFiles + numel(d.Conditions{i}.F
 if totalFiles == 0, uialert(fig, 'No files to load!', 'Error'); return; end
 
 prog = uiprogressdlg(fig, 'Title', 'Loading Data', 'Message', 'Initializing...', 'Cancelable', true);
+cleanObj = onCleanup(@() delete(prog)); % Ensure progress dialog is closed
 
 try
     % Ensure read_SDT
@@ -6839,7 +6301,8 @@ try
     count = 0;
     for i = 1:numel(d.Conditions)
         files = d.Conditions{i}.Files;
-        d.Conditions{i}.Analysis = struct();
+        % Pre-initialize struct to ensure Data field exists even if empty
+        d.Conditions{i}.Analysis = struct('Config', cell(1, numel(files)), 'Data', cell(1, numel(files)));
 
         for f = 1:numel(files)
             if prog.CancelRequested, error('UserCancelled'); end
@@ -6869,7 +6332,7 @@ try
                     % Pre-Processing
                     if ~strcmp(d.config.binType, 'None') && d.config.spatialBinning > 0
                         param = d.config.spatialBinning;
-                        [nY, nX, nT, nC] = size(sdt);
+                        [~, ~, nT, nC] = size(sdt);
                         if strcmp(d.config.binType, 'Simple Binning')
                             scale = 1/param;
                             tmp = imresize(sdt(:,:,1,1), scale, 'box');
@@ -7000,15 +6463,14 @@ if ~isempty(bg)
 end
 
 % 2. Dropdowns
-ctrlGroups = {}; expGroups = {};
 if ~isempty(d.Conditions)
-    for i = 1:numel(d.Conditions)
-        if contains(d.Conditions{i}.Type, 'Control', 'IgnoreCase', true)
-            ctrlGroups{end+1} = d.Conditions{i}.Name;
-        else
-            expGroups{end+1} = d.Conditions{i}.Name;
-        end
-    end
+    types = cellfun(@(c) c.Type, d.Conditions, 'UniformOutput', false);
+    names = cellfun(@(c) c.Name, d.Conditions, 'UniformOutput', false);
+    isCtrl = contains(types, 'Control', 'IgnoreCase', true);
+    ctrlGroups = names(isCtrl);
+    expGroups = names(~isCtrl);
+else
+    ctrlGroups = {}; expGroups = {};
 end
 if isempty(ctrlGroups), ctrlGroups = {'None'}; end
 if isempty(expGroups), expGroups = {'None'}; end
@@ -7073,7 +6535,7 @@ groupsTab_updateTabs(fig, 'Ctrl');
 groupsTab_updateTabs(fig, 'Exp');
 end
 
-function createImageTabInterface(fig, parentTab, ds)
+function createImageTabInterface(fig, parentTab, ~)
 % Main Layout
 mainGrid = uigridlayout(parentTab, [3 1]);
 mainGrid.RowHeight = {40, 40, '1x'};
@@ -7087,8 +6549,8 @@ fileGrid.ColumnWidth = {150, 40, 40, '1x'};
 fileGrid.Padding = [2 2 2 2];
 
 uidropdown(fileGrid, 'Tag', 'ddImgGroup', 'Items', {'No Groups'}, 'ValueChangedFcn', @(s,e) navFile(fig, 'group'));
-uibutton(fileGrid, 'Text', '◀', 'ButtonPushedFcn', @(s,e) navFile(fig, 'prev'), 'Tooltip', 'Prev File');
-uibutton(fileGrid, 'Text', '▶', 'ButtonPushedFcn', @(s,e) navFile(fig, 'next'), 'Tooltip', 'Next File');
+uibutton(fileGrid, 'Text', '◀', 'ButtonPushedFcn', @(s,e) navFile(fig, 'prevFile'), 'Tooltip', 'Prev File');
+uibutton(fileGrid, 'Text', '▶', 'ButtonPushedFcn', @(s,e) navFile(fig, 'nextFile'), 'Tooltip', 'Next File');
 uidropdown(fileGrid, 'Tag', 'ddImgFile', 'Items', {'No Files'}, 'ValueChangedFcn', @(s,e) navFile(fig, 'file'));
 
 % --- 2. Channel Navigation Bar ---
@@ -7210,6 +6672,34 @@ if ~isempty(dd), dd.Value = sprintf('Channel %d', curr); end
 
 % Refresh plots
 refreshUnifiedPlots(fig);
+
+% Update Analysis Tabs to match the new channel context
+updateAnalysisContext(fig, curr);
+end
+
+function updateAnalysisContext(fig, newChan)
+try
+    ats = findobj(fig, 'Tag', 'analysisTabs');
+    if isempty(ats), return; end
+    for k = 1:numel(ats.Children)
+        t = ats.Children(k);
+        if isstruct(t.UserData) && isfield(t.UserData, 'activeChanIdx')
+            meta = t.UserData;
+            meta.activeChanIdx = newChan;
+            t.UserData = meta;
+
+            % Trigger live refresh if the tab is visible
+            if strcmp(ats.SelectedTab.Title, t.Title)
+                try
+                    if contains(t.Title, 'Phasor'), refreshPhasorPlot(fig, []); end
+                    % Add others if they have specific refresh fns
+                catch
+                end
+            end
+        end
+    end
+catch
+end
 end
 
 function refreshUnifiedPlots(fig)
@@ -7247,8 +6737,9 @@ if isfield(d, 'Conditions') && ~isempty(d.Conditions)
     % Files
     if isfield(d.Conditions{d.navGroup}, 'Files')
         files = d.Conditions{d.navGroup}.Files;
-        fileNames = {};
-        for k=1:numel(files), [~,n,~]=fileparts(files{k}); fileNames{end+1}=n; end
+        nF = numel(files);
+        fileNames = cell(1, nF);
+        for k=1:nF, [~,n,~]=fileparts(files{k}); fileNames{k}=n; end
         if isempty(fileNames), fileNames = {'No Files'}; end
         ddFile.Items = fileNames;
 
@@ -7298,12 +6789,14 @@ mn = uiData.spnMin.Value; mx = uiData.spnMax.Value;
 if (mn == 0 && mx == 1000) || (mx <= mn)
     mn = min(imgXY(:)); mx = max(imgXY(:));
     if mx <= mn, mx = mn + 1; end
-    if isnan(mn), mn=0; end; if isnan(mx), mx=1; end;
+    if isnan(mn), mn=0; end
+    if isnan(mx), mx=1; end
     uiData.spnMin.Value = mn; uiData.spnMax.Value = mx;
 end
 
 % Plot XY
-imagesc(axXY, imgXY);
+hImg = imagesc(axXY, imgXY);
+hImg.ButtonDownFcn = @(src, ev) updatePixelAnalysis(fig, ev.IntersectionPoint);
 colormap(axXY, getAppColormap());
 colorbar(axXY);
 axis(axXY, 'image', 'off');
@@ -7312,7 +6805,8 @@ title(axXY, sprintf('Channel %d - XY Projection', ch), 'Color', 'white');
 
 % 2. XT Projection (Sum over Y -> X, Time)
 imgXT = squeeze(sum(dataCh, 1))';
-imagesc(axXT, imgXT);
+hImgXT = imagesc(axXT, imgXT);
+hImgXT.HitTest = 'off'; % XT usually doesn't need click
 colormap(axXT, getAppColormap());
 axis(axXT, 'normal', 'off');
 title(axXT, 'XT Projection', 'Color', 'white');
@@ -7329,13 +6823,7 @@ function cmap = getAppColormap()
 cmap = turbo(256);
 end
 
-function loadSelectedToControls(fig)
-uialert(fig, 'Loaded into Analysis Controls (Placeholder)', 'Info');
-end
-
-function loadSelectedToExp(fig)
-uialert(fig, 'Loaded into Experimental Conditions (Placeholder)', 'Info');
-end
+% loadSelected placeholders removed as unused.
 
 function openGroupsThresholdGUI(parentFig)
 % Create Modal Dialog
@@ -7377,23 +6865,37 @@ uilabel(cGrid, 'Text', 'Max:');
 spnMax = uispinner(cGrid, 'Limits', [0 Inf], 'Value', 10000, 'Tag', 'thMax');
 
 % Histogram Data Loading
-d = flows_getData(parentFig);
-allData = [];
+fData = flows_getData(parentFig);
+AGG_DATA_SIZE = 0;
+if ~isempty(fData.Conditions)
+    for i = 1:numel(fData.Conditions)
+        if isfield(fData.Conditions{i}, 'Analysis')
+            AGG_DATA_SIZE = AGG_DATA_SIZE + numel(fData.Conditions{i}.Analysis);
+        end
+    end
+end
+allDataCell = cell(1, AGG_DATA_SIZE);
+kIter = 1;
 % Aggregate data for histogram
-if ~isempty(d.Conditions)
-    for i = 1:numel(d.Conditions)
-        if isfield(d.Conditions{i}, 'Analysis')
-            for f = 1:numel(d.Conditions{i}.Analysis)
-                tmp = d.Conditions{i}.Analysis(f).Data;
+if ~isempty(fData.Conditions)
+    for i = 1:numel(fData.Conditions)
+        if isfield(fData.Conditions{i}, 'Analysis')
+            for f = 1:numel(fData.Conditions{i}.Analysis)
+                if ~isfield(fData.Conditions{i}.Analysis(f), 'Data'), continue; end
+                tmp = fData.Conditions{i}.Analysis(f).Data;
                 if ~isempty(tmp)
                     % Use sum projection for intensity
                     img = sum(tmp, 3);
-                    allData = [allData; img(:)];
+                    allDataCell{kIter} = img(:);
+                    kIter = kIter + 1;
                 end
             end
         end
     end
 end
+% Trim empty cells if any
+allDataCell = allDataCell(1:kIter-1);
+allData = cell2mat(allDataCell(:));
 
 if isempty(allData)
     title(ax, 'No Data Available');
@@ -7402,8 +6904,8 @@ else
     grid(ax, 'on');
 
     mn = min(allData); mx = max(allData);
-    if isfield(d.config, 'thresholdMin'), mn = d.config.thresholdMin; end
-    if isfield(d.config, 'thresholdMax'), mx = d.config.thresholdMax; end
+    if isfield(fData.config, 'thresholdMin'), mn = fData.config.thresholdMin; end
+    if isfield(fData.config, 'thresholdMax'), mx = fData.config.thresholdMax; end
 
     spnMin.Value = mn;
     spnMax.Value = mx;
@@ -7441,10 +6943,10 @@ uibutton(btnGrid, 'Text', 'APPLY', 'FontWeight', 'bold', 'BackgroundColor', [0.2
     end
 
     function applyThreshold(fig, dlg, mn, mx)
-        d = flows_getData(fig);
-        d.config.thresholdMin = mn;
-        d.config.thresholdMax = mx;
-        flows_setData(fig, d);
+        fData = flows_getData(fig);
+        fData.config.thresholdMin = mn;
+        fData.config.thresholdMax = mx;
+        flows_setData(fig, fData);
 
         delete(dlg);
         groupsTab_refreshUI(fig);
@@ -7493,9 +6995,8 @@ catch ME
 end
 end
 
-function navFile(fig, action)
+function navFile(fig, action, jumpIdx)
 d = flows_getData(fig);
-% Ensure nav state exists
 if ~isfield(d, 'navGroup'), d.navGroup = 1; end
 if ~isfield(d, 'navFile'), d.navFile = 1; end
 if ~isfield(d, 'navChannel'), d.navChannel = 1; end
@@ -7508,17 +7009,25 @@ end
 
 switch action
     case 'group'
-        dd = findobj(fig, 'Tag', 'ddImgGroup');
-        idx = find(strcmp(dd.Items, dd.Value), 1);
-        if ~isempty(idx), d.navGroup = idx; end
-        d.navFile = 1; % Reset file on group change
+        if nargin > 2 && ~isempty(jumpIdx)
+            d.navGroup = jumpIdx;
+        else
+            dd = findobj(fig, 'Tag', 'ddImgGroup');
+            idx = find(strcmp(dd.Items, dd.Value), 1);
+            if ~isempty(idx), d.navGroup = idx; end
+        end
+        d.navFile = 1;
     case 'prevGroup'
         d.navGroup = max(d.navGroup - 1, 1);
         d.navFile = 1;
     case 'file'
-        dd = findobj(fig, 'Tag', 'ddImgFile');
-        idx = find(strcmp(dd.Items, dd.Value), 1);
-        if ~isempty(idx), d.navFile = idx; end
+        if nargin > 2 && ~isempty(jumpIdx)
+            d.navFile = jumpIdx;
+        else
+            dd = findobj(fig, 'Tag', 'ddImgFile');
+            idx = find(strcmp(dd.Items, dd.Value), 1);
+            if ~isempty(idx), d.navFile = idx; end
+        end
     case 'prevFile'
         d.navFile = max(d.navFile - 1, 1);
     case 'nextFile'
@@ -7529,4 +7038,154 @@ switch action
 end
 flows_setData(fig, d); % Save updated state
 refreshUnifiedPlots(fig);
+end
+
+function runBatchAnalysis(fig, tab)
+data = fig.UserData;
+if ~isfield(data, 'navGroup') || isempty(data.Conditions), return; end
+cIdx = data.navGroup;
+nFiles = numel(data.Conditions{cIdx}.Analysis);
+d = uiprogressdlg(fig, 'Title', 'Batch Analysis', 'Message', 'Starting...', 'Indeterminate', 'off');
+originalFile = data.navFile;
+try
+    for f = 1:nFiles
+        d.Value = (f-1)/nFiles;
+        d.Message = sprintf('Analyzing file %d of %d...', f, nFiles);
+        navFile(fig, 'file', f); % Pass 'file' action and file index
+        drawnow;
+        meta = tab.UserData;
+        if isfield(meta, 'algo')
+            algo = meta.algo;
+            if contains(lower(algo), 'phasor')
+                refreshPhasorPlot(fig, meta.axPhasor);
+            elseif contains(lower(algo), 'lima')
+                runLimaAnalysis(fig);
+            elseif contains(lower(algo), 'fisher')
+                runFisherAnalysis(fig);
+            elseif contains(lower(algo), 'pattern')
+                runPatternFit(fig);
+            else
+                runFitAnalysis(fig, tab, true);
+            end
+        end
+    end
+catch ME
+    uialert(fig, ME.message, 'Batch Error');
+end
+navFile(fig, 'file', originalFile); % Pass 'file' action and original file index
+close(d);
+end
+
+function toggleDebugMode(fig, state)
+if strcmp(state, 'On')
+    showDebugLabels(fig);
+else
+    hideDebugLabels(fig);
+end
+end
+
+function showDebugLabels(fig)
+% Remove existing if any to avoid duplicates
+hideDebugLabels(fig);
+
+% Find all relevant UI components
+% We want controls that user interacts with (Buttons, Dropdowns, Spinners, EditFields, etc.)
+allObjs = findall(fig, '-property', 'Tag');
+relevantTypes = {'matlab.ui.control.Button', 'matlab.ui.control.DropDown', ...
+    'matlab.ui.control.Spinner', 'matlab.ui.control.EditField', ...
+    'matlab.ui.control.CheckBox', 'matlab.ui.control.Switch', ...
+    'matlab.ui.control.ListBox', 'matlab.ui.control.Slider', ...
+    'matlab.ui.control.Label', 'matlab.ui.container.Panel', 'matlab.ui.container.Tab', ...
+    'matlab.ui.control.Image', 'matlab.ui.control.UIAxes'};
+
+for i = 1:numel(allObjs)
+    obj = allObjs(i);
+    if isempty(obj.Tag), continue; end
+    if strcmp(obj.Tag, 'debugOverlayLabel'), continue; end % constant ignore
+
+    % Check type
+    if ~ismember(class(obj), relevantTypes), continue; end
+
+    % Calculations for position
+    try
+        absPos = getAbsolutePosition(obj);
+        if isempty(absPos), continue; end
+
+        % Create overlay label
+        % Using HTML for better visibility (Yellow background, Black text)
+        txt = sprintf('<div style="background-color:yellow; color:black; border:1px solid red; font-size:10px; padding:1px;">%s</div>', obj.Tag);
+
+        lbl = uilabel(fig, 'Text', txt, 'Interpreter', 'html');
+
+        % Position: Top-Left of the component
+        % absPos is [x, y, w, h] relative to bottom-left of figure
+        % We want label at top-left of component
+        % uilabel is also bottom-left relative
+
+        lW = min(150, absPos(3));
+        lH = 15;
+        lX = absPos(1);
+        lY = absPos(2) + absPos(4) - lH;
+
+        lbl.Position = [lX, lY, lW, lH];
+        lbl.BackgroundColor = [1 1 0];
+        lbl.Tag = 'debugOverlayLabel';
+
+        % Pass through clicks
+        % lbl.Interactions = []; % Not supported on labels?
+        % We just hope it doesn't block too much.
+    catch
+        % ignore layout errors
+    end
+end
+end
+
+function hideDebugLabels(fig)
+delete(findall(fig, 'Tag', 'debugOverlayLabel'));
+end
+
+function pos = getAbsolutePosition(h)
+% Recursively calculate absolute position in pixels relative to the Figure
+pos = [0 0 0 0];
+if ~isvalid(h), return; end
+
+try
+    % Current object position
+    % If it is a child of uigridlayout, Position is read-only pixel value relative to parent
+    % If it is child of uipanel/figure (absolute), Position is relative to parent
+
+    p = h.Position;
+    % Handle unit conversion if necessary (assuming pixels mostly)
+
+    parent = h.Parent;
+
+
+    absX = p(1);
+    absY = p(2);
+
+    while ~isempty(parent) && ~isa(parent, 'matlab.ui.Figure')
+        % Add parent's position
+        % Caveat: If parent is uigridlayout, it has a Position property relative to ITS parent
+        % If parent is Tab, it doesn't really have a position offset relative to TabGroup content area easily accessible?
+        % Actually TabGroup content area is usually defined by TabGroup position.
+
+        if isa(parent, 'matlab.ui.container.Tab')
+            % Tab inner area usually starts at (0,0) of TabGroup?
+            % Need to find TabGroup
+            parent = parent.Parent; % Go to TabGroup
+            continue;
+        end
+
+        if isprop(parent, 'Position')
+            pp = parent.Position;
+            absX = absX + pp(1);
+            absY = absY + pp(2);
+        end
+        parent = parent.Parent;
+    end
+
+    pos = [absX, absY, p(3), p(4)];
+catch
+    pos = [];
+end
 end

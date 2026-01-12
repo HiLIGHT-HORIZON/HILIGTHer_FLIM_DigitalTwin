@@ -75,7 +75,32 @@ The **MockData_GUI** includes a diagnostic tool for pixel-level inspection:
 
 ---
 
-## 5. Getting Started
-1. Run `FLIM_GUI` to set laser and gate parameters.
-2. Launch `MockData_GUI` to test system performance.
-3. Click the **"?"** button in any panel for context-specific help.
+## 5. Workflows (Experimental Analysis)
+
+### Importing Data
+1. Open the **Data > Groups** tab.
+2. Click **Create Group** to select one or more FLIM files.
+3. Click **Analyse** (Red Button) to load and process the data.
+4. Data will appear in the **Data > Image** tab.
+
+### Unified Navigation
+1. Use the **Group** and **File** dropdowns in the **Image** tab to select your dataset.
+2. Use the **Channel Navigation Bar** (bottom of Image tab) to cycle through spectral or polarization channels.
+3. Switching channels automatically updates the context for all active **Analysis Tabs** (Phasor, Fit, etc.).
+
+## 6. Technical Reference
+
+| GUI Element | Tag | Algorithm / Reference |
+| :--- | :--- | :--- |
+| **Spectral Maps** | `dataPlotArea` | Displays projections (XY, XT) of the 4D hypercube $(x, y, t, c)$. |
+| **Phasor Plot** | `axPhasorRun` | Harmonics $\mathcal{G}$ and $\mathcal{S}$ calculation. Uses `refreshPhasorPlot`. |
+| **Grid MLE** | `pnlParams` | Brute-force lookup in `DTpmod` library. Optimal for low-count data. |
+| **LiMA moments** | `axMu` | Non-parametric lifetime estimation via statistical moments. |
+| **Fisher Maps** | `mapTg_Fisher` | Statistical optimality mapping ($1/\sqrt{I}$). |
+
+---
+
+## 7. Getting Started
+1. Run `startup.m` to ensure all library paths are set.
+2. Run `HILIGHTer.m` to launch the main application.
+3. Use the **Simulator** tab for benchmarking and the **Data** tab for experimental analysis.
