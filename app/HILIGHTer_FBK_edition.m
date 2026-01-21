@@ -9,6 +9,7 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
         TabGroup      matlab.ui.container.TabGroup
         GatesTab      matlab.ui.container.Tab
         DataTab       matlab.ui.container.Tab
+        ExportTab     matlab.ui.container.Tab
 
         % Left Panel Components
         btnImportGates      matlab.ui.control.Button
@@ -71,6 +72,39 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
         % Histogram Settings
         spnHistRes     matlab.ui.control.Spinner
 
+        % Right Panel Components (Tab: Export)
+        axExportOverlay matlab.ui.control.UIAxes
+        sldBrightness  matlab.ui.control.Slider
+        sldContrast    matlab.ui.control.Slider
+        sldGamma       matlab.ui.control.Slider
+        spnCLimMin     matlab.ui.control.NumericEditField
+        spnCLimMax     matlab.ui.control.NumericEditField
+
+        % Export Image Checkboxes
+        chkExpTotal    matlab.ui.control.CheckBox
+        chkExpG1       matlab.ui.control.CheckBox
+        chkExpG2       matlab.ui.control.CheckBox
+        chkExpG3       matlab.ui.control.CheckBox
+        chkExpG4       matlab.ui.control.CheckBox
+        chkExpMapA     matlab.ui.control.CheckBox
+        chkExpMapTau   matlab.ui.control.CheckBox
+        chkExpMapB     matlab.ui.control.CheckBox
+        chkExpMapChi2  matlab.ui.control.CheckBox
+        chkExpHistA    matlab.ui.control.CheckBox
+        chkExpHistTau  matlab.ui.control.CheckBox
+        chkExpHistB    matlab.ui.control.CheckBox
+        chkExpHistChi2  matlab.ui.control.CheckBox
+        chkExpOverlay  matlab.ui.control.CheckBox
+
+        chkSaveWithCMap matlab.ui.control.CheckBox
+
+        % Export Format Checkboxes
+        chkFormatMat   matlab.ui.control.CheckBox
+        chkFormatPng   matlab.ui.control.CheckBox
+        chkFormatCsv   matlab.ui.control.CheckBox
+
+        btnExecuteExport matlab.ui.control.Button
+
         % Interactive Selection
         SelectedPixel  (1,2) double = [1, 1]
         hCrossH        matlab.graphics.chart.primitive.Line
@@ -98,7 +132,7 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             % Left Panel: Controls
             app.LeftPanel = uipanel(app.GridLayout, 'Title', 'Settings & Controls');
             glLeft = uigridlayout(app.LeftPanel, [6, 1]);
-            glLeft.RowHeight = {35, 280, 155, 205, 35, '1x'};
+            glLeft.RowHeight = {35, 230, 155, 300, 35, '1x'};
             glLeft.RowSpacing = 10;
             glLeft.Padding = [10 10 10 10];
 
@@ -110,16 +144,17 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             app.btnImportData = uibutton(glImport, 'Text', 'Import Standard', 'ButtonPushedFcn', @(~,~) app.importDataCallback(), ...
                 'Tooltip', 'Load experimental multi-gate data from .sdt or .mat files.');
 
-            app.btnImportFBK = uibutton(glImport, 'Text', 'Import FBK Legacy', 'ButtonPushedFcn', @(~,~) app.importFBKCallback(), ...
+            app.btnImportFBK = uibutton(glImport, 'Text', 'Import FBK data', 'ButtonPushedFcn', @(~,~) app.importFBKCallback(), ...
                 'Tooltip', 'Load legacy FBK binary data folder (4 gates).');
 
             % 2. IRF & Characterization Section
             pIRF = uipanel(glLeft, 'Title', '2. IRF & Characterization');
             pIRF.Layout.Row = 2;
-            glIRF = uigridlayout(pIRF, [6, 3]);
+            glIRF = uigridlayout(pIRF, [5, 3]);
             glIRF.Padding = [5 5 5 5];
-            glIRF.RowHeight = {25, 22, 25, 35, 50, 35};
-            glIRF.ColumnWidth = {'1x', '1x', '1x'};
+            glIRF.RowHeight = {25, 28, 28, 55, 28};
+            glIRF.ColumnWidth = {'fit', '1x', '1x'};
+            glIRF.RowSpacing = 5;
 
             app.btnImportGates = uibutton(glIRF, 'Text', 'Import Gate Sweep', 'FontSize', 9, 'ButtonPushedFcn', @(~,~) app.importSweepCallback(), ...
                 'Tooltip', 'Import hardware gate measurements (Experimental Sweep) from a CSV file to characterize gate kinetics.');
@@ -135,35 +170,29 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
 
             app.chkUseEIRF = uicheckbox(glIRF, 'Text', 'Use eIRF', 'Value', true, 'Enable', 'off', 'ValueChangedFcn', @(~,~) app.updateUseEIRF(), ...
                 'Tooltip', 'Enable to convolve the theoretical decay model with the experimental laser pulse during fitting.');
-            app.chkUseEIRF.Layout.Row = 2; app.chkUseEIRF.Layout.Column = [1 3];
+            app.chkUseEIRF.Layout.Row = 2; app.chkUseEIRF.Layout.Column = 1;
 
-            app.btnDistillGates = uibutton(glIRF, 'Text', 'Distill Gate Shapes', 'ButtonPushedFcn', @(~,~) app.distillGatesCallback(), ...
+            app.btnDistillGates = uibutton(glIRF, 'Text', 'Distill Gate Shapes', 'FontSize', 10, 'ButtonPushedFcn', @(~,~) app.distillGatesCallback(), ...
                 'Tooltip', 'Trigger the hardware characterization workflow: Fits global kinetics from the gate sweep.');
-            app.btnDistillGates.Layout.Row = 3; app.btnDistillGates.Layout.Column = [1 3];
+            app.btnDistillGates.Layout.Row = 2; app.btnDistillGates.Layout.Column = [2 3];
+
+            % Row 2, Col 2-3 were filter, now empty or for other use.
 
             % Gate Method (inside IRF)
             uilabel(glIRF, 'Text', 'Method:', 'FontSize', 10);
             app.ddGateMethod = uidropdown(glIRF, 'Items', {'Ideal', 'Experimental', 'Synthetic'}, 'ValueChangedFcn', @(~,~) app.updateGateMethod(), ...
                 'Tooltip', 'Select gate representation.');
-            app.ddGateMethod.Layout.Row = 4; app.ddGateMethod.Layout.Column = [2 3];
+            app.ddGateMethod.Layout.Row = 3; app.ddGateMethod.Layout.Column = [2 3];
             % Method label needs its own layout too or it will overlap
             lblM = uilabel(glIRF, 'Text', 'Method:', 'FontSize', 10);
-            lblM.Layout.Row = 4; lblM.Layout.Column = 1;
+            lblM.Layout.Row = 3; lblM.Layout.Column = 1;
 
-            % Median Filter (Row 5 - replacing edges for a moment? No, shift down)
-            % Actually row 5 is Edges. Let's squeeze or use unused slot.
-            % Row 2 is Checkbox (Use EIRF).
-            % Let's put Filter next to Checkbox.
-            lblF = uilabel(glIRF, 'Text', 'Filter [px]:', 'FontSize', 9, 'HorizontalAlignment', 'right');
-            lblF.Layout.Row = 2; lblF.Layout.Column = 2;
-            app.spnMedianFilter = uispinner(glIRF, 'Value', 0, 'Limits', [0 15], 'Step', 1, 'ValueChangedFcn', @(~,~) app.updateMedianFilter(), ...
-                'Tooltip', 'Kernel size for total Median Filter (0=Off). Applies to all gates.');
-            app.spnMedianFilter.Layout.Row = 2; app.spnMedianFilter.Layout.Column = 3;
+            % Note: Filter moved to Pane 4 as requested.
 
             % Gate Edges (inside IRF)
             glE = uigridlayout(glIRF, [2, 1]);
             glE.Padding = [0 0 0 0]; glE.RowSpacing = 1;
-            glE.Layout.Row = 5; glE.Layout.Column = [1 3];
+            glE.Layout.Row = 4; glE.Layout.Column = [1 3];
             uilabel(glE, 'Text', 'Gate Edges [ns]:', 'FontSize', 10);
             glEdges = uigridlayout(glE, [1, 5]);
             glEdges.Padding = [0 0 0 0]; glEdges.ColumnSpacing = 2;
@@ -179,10 +208,10 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
 
             % Skewness (inside IRF)
             lblS = uilabel(glIRF, 'Text', 'Skewness [ps]:', 'FontSize', 10);
-            lblS.Layout.Row = 6; lblS.Layout.Column = 1;
+            lblS.Layout.Row = 5; lblS.Layout.Column = 1;
             app.spnSkewness = uispinner(glIRF, 'Value', 0, 'Step', 50, 'ValueDisplayFormat', '%d', 'LowerLimit', 0, ...
                 'ValueChangedFcn', @(~,~) app.updateSkewness(), 'Tooltip', 'Std of Gaussian used to smooth ideal gates.');
-            app.spnSkewness.Layout.Row = 6; app.spnSkewness.Layout.Column = [2 3];
+            app.spnSkewness.Layout.Row = 5; app.spnSkewness.Layout.Column = [2 3];
 
             % 3. Simulation Section
             pSim = uipanel(glLeft, 'Title', '3. Simulation Params');
@@ -213,13 +242,21 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             % 4. Data Fitting Section
             pFitting = uipanel(glLeft, 'Title', '4. Data Fitting');
             pFitting.Layout.Row = 4;
-            glFit = uigridlayout(pFitting, [4, 1]);
+            glFit = uigridlayout(pFitting, [5, 1]);
             glFit.Padding = [5 5 5 5];
-            glFit.RowHeight = {42, 38, 35, 25};
-            glFit.RowSpacing = 5;
+            glFit.RowHeight = {35, 45, 50, 40, 25};
+            glFit.RowSpacing = 8;
+
+            % Filter (New position as requested)
+            glFilt = uigridlayout(glFit, [1, 2]); glFilt.Padding = [0 0 0 0];
+            uilabel(glFilt, 'Text', 'Median Filter [px]:', 'FontSize', 10);
+            app.spnMedianFilter = uispinner(glFilt, 'Value', 0, 'Limits', [0 15], 'Step', 1, 'ValueChangedFcn', @(~,~) app.updateMedianFilter(), ...
+                'Tooltip', 'Kernel size for total Median Filter (0=Off). Applies to all gates.');
+            glFilt.Layout.Row = 1;
 
             % Bg
             glB = uigridlayout(glFit, [2, 1]); glB.Padding = [0 0 0 0]; glB.RowSpacing = 1;
+            glB.Layout.Row = 2;
             uilabel(glB, 'Text', 'Background Mode:', 'FontSize', 10);
             glB2 = uigridlayout(glB, [1, 3]); glB2.Padding = [0 0 0 0]; glB2.ColumnWidth = {'1x', 50, 30};
 
@@ -232,8 +269,8 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             app.btnImportBg = uibutton(glB2, 'Text', '📁', 'Tooltip', 'Import Background Map', 'Enable', 'off', 'ButtonPushedFcn', @(~,~) app.importBgCallback());
 
             % Threshold
-            % Threshold
             glT = uigridlayout(glFit, [2, 3]); glT.Padding = [0 0 0 0]; glT.ColumnWidth = {'1x', '1x', '1x'}; glT.RowHeight = {20, 20};
+            glT.Layout.Row = 3;
 
             % Row 1: Source Selector
             uilabel(glT, 'Text', 'Threshold On:', 'FontSize', 9);
@@ -251,9 +288,11 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             % Fit Button
             app.btnRunFit = uibutton(glFit, 'Text', 'Run Iterative Fit', 'BackgroundColor', [0.8 1.0 0.8], 'ButtonPushedFcn', @(~,~) app.runFitCallback(), ...
                 'Tooltip', 'Execute the iterative reconvolution fitting algorithm across all valid pixels to extract A, Tau, and B maps.');
+            app.btnRunFit.Layout.Row = 4;
 
             % Hist Res
             glH = uigridlayout(glFit, [1, 2]); glH.Padding = [0 0 0 0];
+            glH.Layout.Row = 5;
             uilabel(glH, 'Text', 'Hist Res:', 'FontSize', 10);
             app.spnHistRes = uispinner(glH, 'Value', 64, 'ValueChangedFcn', @(~,~) app.updateHistRes(), ...
                 'Tooltip', 'Number of bins used for the analysis maps histograms.');
@@ -309,6 +348,89 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             app.axHistTau  = uiaxes(app.glData); title(app.axHistTau, 'Tau Histogram');
             app.axHistB    = uiaxes(app.glData); title(app.axHistB, 'B Histogram');
             app.axHistChi2 = uiaxes(app.glData); title(app.axHistChi2, 'Chi2 Histogram');
+
+            % Tab 3: Export Tab
+            app.ExportTab = uitab(app.TabGroup, 'Title', 'Export');
+            glExp = uigridlayout(app.ExportTab, [1, 2]);
+            glExp.ColumnWidth = {'1.5x', '1x'};
+            glExp.Padding = [15 15 15 15];
+            glExp.ColumnSpacing = 20;
+
+            % Column 1: Image Overlay and Controls
+            glExpL = uigridlayout(glExp, [2, 1]);
+            glExpL.RowHeight = {'1x', 140};
+            glExpL.Padding = [0 0 0 0];
+            app.axExportOverlay = uiaxes(glExpL);
+            title(app.axExportOverlay, 'Lifetime Overlay on Total Counts (Masked)');
+            disableDefaultInteractivity(app.axExportOverlay);
+
+            glExpCtrl = uigridlayout(glExpL, [3, 4]);
+            glExpCtrl.Padding = [5 5 5 5];
+            glExpCtrl.RowHeight = {25, 25, 25};
+            glExpCtrl.ColumnWidth = {80, '1x', 40, 60};
+
+            % Sliders and Spinners
+            uilabel(glExpCtrl, 'Text', 'Brightness:');
+            app.sldBrightness = uislider(glExpCtrl, 'Limits', [0 2], 'Value', 1, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
+            app.sldBrightness.Layout.Column = 2;
+
+            uilabel(glExpCtrl, 'Text', 'C-Lim Min:');
+            app.spnCLimMin = uieditfield(glExpCtrl, 'numeric', 'Value', 0, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
+            app.spnCLimMin.Layout.Column = 4;
+
+            uilabel(glExpCtrl, 'Text', 'Contrast:');
+            app.sldContrast = uislider(glExpCtrl, 'Limits', [0 2], 'Value', 1, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
+            app.sldContrast.Layout.Column = 2;
+
+            uilabel(glExpCtrl, 'Text', 'C-Lim Max:');
+            app.spnCLimMax = uieditfield(glExpCtrl, 'numeric', 'Value', 5, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
+            app.spnCLimMax.Layout.Column = 4;
+
+            uilabel(glExpCtrl, 'Text', 'Gamma:');
+            app.sldGamma = uislider(glExpCtrl, 'Limits', [0.1 3], 'Value', 1, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
+            app.sldGamma.Layout.Column = 2;
+
+            % Column 2: Export List and Settings
+            glExpR = uigridlayout(glExp, [4, 1]);
+            glExpR.RowHeight = {'1.5x', 'fit', '1x', 40};
+            glExpR.Padding = [0 0 0 0];
+
+            % Image List
+            pList = uipanel(glExpR, 'Title', 'Images to Export');
+            glList = uigridlayout(pList, [4, 4]);
+            glList.Padding = [5 5 5 5];
+            glList.RowHeight = {22, 22, 22, 22};
+
+            app.chkExpTotal = uicheckbox(glList, 'Text', 'Total Counts', 'Value', true);
+            app.chkExpG1 = uicheckbox(glList, 'Text', 'Gate 1', 'Value', true);
+            app.chkExpG2 = uicheckbox(glList, 'Text', 'Gate 2', 'Value', true);
+            app.chkExpG3 = uicheckbox(glList, 'Text', 'Gate 3', 'Value', true);
+            app.chkExpG4 = uicheckbox(glList, 'Text', 'Gate 4', 'Value', true);
+            app.chkExpMapA = uicheckbox(glList, 'Text', 'Amplitude (A)', 'Value', true);
+            app.chkExpMapTau = uicheckbox(glList, 'Text', 'Lifetime (Tau)', 'Value', true);
+            app.chkExpMapB = uicheckbox(glList, 'Text', 'Background (B)', 'Value', true);
+            app.chkExpMapChi2 = uicheckbox(glList, 'Text', 'Red. Chi2', 'Value', true);
+            app.chkExpHistA = uicheckbox(glList, 'Text', 'Hist A', 'Value', true);
+            app.chkExpHistTau = uicheckbox(glList, 'Text', 'Hist Tau', 'Value', true);
+            app.chkExpHistB = uicheckbox(glList, 'Text', 'Hist B', 'Value', true);
+            app.chkExpHistChi2 = uicheckbox(glList, 'Text', 'Hist Chi2', 'Value', true);
+            app.chkExpOverlay = uicheckbox(glList, 'Text', 'Overlay', 'Value', true);
+
+            % Options
+            pOpts = uipanel(glExpR, 'Title', 'Options');
+            glOpts = uigridlayout(pOpts, [1, 1]);
+            app.chkSaveWithCMap = uicheckbox(glOpts, 'Text', 'Save with Colormap (PNG only)', 'Value', true);
+
+            % Formats
+            pFormats = uipanel(glExpR, 'Title', 'Output Formats');
+            glFmt = uigridlayout(pFormats, [1, 3]);
+            app.chkFormatMat = uicheckbox(glFmt, 'Text', '.mat', 'Value', true);
+            app.chkFormatPng = uicheckbox(glFmt, 'Text', '.png', 'Value', true);
+            app.chkFormatCsv = uicheckbox(glFmt, 'Text', '.csv', 'Value', true);
+
+            % Execute Button
+            app.btnExecuteExport = uibutton(glExpR, 'Text', 'Execute Export', 'BackgroundColor', [0.7 0.9 1.0], ...
+                'ButtonPushedFcn', @(~,~) app.executeExportCallback());
         end
 
         function updateSimRes(app)
@@ -582,19 +704,39 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
                 return;
             end
 
-            % Indicate busy status
-            app.UIFigure.Pointer = 'watch';
-            drawnow;
+            % Reset model abortion flag
+            app.Model.IsAborted = false;
 
+            % Create Progress Dialog inside try to catch creation errors too
+            d = [];
             try
-                app.Model.runFit();
+                d = uiprogressdlg(app.UIFigure, 'Title', 'Fitting Data', ...
+                    'Message', 'Initializing...', 'Cancelable', 'on');
+
+                % Pass updater to model - use a local function or explicit property sets
+                progUpdate = @(v, m) app.updateProg(d, v, m);
+
+                app.Model.runFit(app.Model.RawData, progUpdate);
+
+                if isvalid(d), close(d); end
                 app.updateDataTab();
+                app.updateExportOverlay();
                 uialert(app.UIFigure, 'Fitting complete.', 'Success', 'Icon', 'info');
             catch ME
+                if ~isempty(d) && isvalid(d), close(d); end
                 uialert(app.UIFigure, ME.message, 'Fit Error');
             end
+        end
 
-            app.UIFigure.Pointer = 'arrow';
+        function updateProg(app, d, v, m)
+            if ~isempty(d) && isvalid(d)
+                d.Value = v;
+                d.Message = m;
+                % Poll for cancellation
+                if d.CancelRequested
+                    app.Model.IsAborted = true;
+                end
+            end
         end
 
         function plotGates(app)
@@ -723,7 +865,6 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             app.plotData(app.axTotal, totalData, 'Total Counts', true, totalScale, 'gray');
             app.plotData(app.axGate1, gate1Data, 'Gate 1', true, gateScale, 'gray');
             app.plotData(app.axGate2, g2, 'Gate 2', true, gateScale, 'gray');
-
             if size(data, 3) >= 3
                 g3 = double(data(:,:,3)); g3(~mask) = NaN;
                 app.plotData(app.axGate3, g3, 'Gate 3', true, gateScale, 'gray');
@@ -732,6 +873,9 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
                 g4 = double(data(:,:,4)); g4(~mask) = NaN;
                 app.plotData(app.axGate4, g4, 'Gate 4', true, gateScale, 'gray');
             end
+
+            % Refresh Export Overlay too
+            app.updateExportOverlay();
 
             % Row 2, Col 1: Mixed Decay Plot (YYAXIS) + Selection Update
             app.updatePixelSelection();
@@ -1017,6 +1161,186 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             title(app.axGateSumBar, 'Decay');
             grid(app.axGateSumBar, 'on'); box(app.axGateSumBar, 'on');
             legend(app.axGateSumBar, 'Location', 'northoutside', 'FontSize', 8, 'Orientation', 'horizontal');
+        end
+
+        function updateExportOverlay(app)
+            % Ensure we have what we need
+            if isempty(app.Model.RawData), return; end
+
+            % 1. Prepare Base Image (Total Counts)
+            data = app.Model.RawData;
+            totalData = double(sum(data, 3));
+
+            % Apply Mask
+            if strcmpi(app.Model.ThresholdSource, 'Gate1')
+                metric = double(data(:,:,1));
+            else
+                metric = totalData;
+            end
+            mask = (metric > app.Model.ThresholdMin) & (metric < app.Model.ThresholdMax);
+
+            % Base adjustment
+            imgBase = totalData / max(totalData(:) + 1e-10);
+
+            % Apply Brightness, Contrast, Gamma
+            b = app.sldBrightness.Value;
+            c = app.sldContrast.Value;
+            g = app.sldGamma.Value;
+
+            imgBase = (imgBase * b);
+            imgBase = (c * (imgBase - 0.5) + 0.5);
+            imgBase = max(0, min(1, imgBase)).^g;
+
+            % Convert to RGB Grayscale
+            imgBaseRGB = repmat(imgBase, [1 1 3]);
+
+            % 2. Prepare Overlay Image (Lifetime)
+            cla(app.axExportOverlay);
+            hold(app.axExportOverlay, 'on');
+
+            % Draw Base
+            imagesc(app.axExportOverlay, imgBaseRGB);
+
+            if ~isempty(app.Model.TauMap)
+                tau = app.Model.TauMap;
+                % Normalize Tau for coloring using turbo and spinners
+                cmin = app.spnCLimMin.Value;
+                cmax = app.spnCLimMax.Value;
+
+                tauNorm = (tau - cmin) / (cmax - cmin + 1e-10);
+                tauNorm = max(0, min(1, tauNorm));
+
+                % Map to Turbo RGB
+                cmap = turbo(256);
+                idx = round(tauNorm * 255) + 1;
+                idx(isnan(tau)) = 1;
+
+                imgTauRGB = ind2rgb(idx, cmap);
+
+                % Overlay with Mask as Alpha
+                hOver = imagesc(app.axExportOverlay, imgTauRGB);
+                alphaMap = double(mask) * 0.5; % 50% transparency for overlay
+                set(hOver, 'AlphaData', alphaMap);
+            end
+
+            axis(app.axExportOverlay, 'image');
+            app.axExportOverlay.XTick = [];
+            app.axExportOverlay.YTick = [];
+            hold(app.axExportOverlay, 'off');
+        end
+
+        function executeExportCallback(app)
+            if isempty(app.Model.RawData)
+                uialert(app.UIFigure, 'No data loaded to export.', 'Export Error');
+                return;
+            end
+
+            % Select Directory
+            folder = uigetdir(pwd, 'Select Export Folder');
+            if isequal(folder, 0), return; end
+
+            app.UIFigure.Pointer = 'watch';
+            drawnow;
+
+            try
+                % Determine what needs to be saved
+                doMat = app.chkFormatMat.Value;
+                doPng = app.chkFormatPng.Value;
+                doCsv = app.chkFormatCsv.Value;
+                useCMap = app.chkSaveWithCMap.Value;
+
+                % Maps to process: Name in checkbox, Model Property, Title for filename
+                mapList = {
+                    'Total', app.chkExpTotal, 'TotalCounts', sum(double(app.Model.RawData), 3), 'gray';
+                    'G1', app.chkExpG1, 'Gate1', double(app.Model.RawData(:,:,1)), 'gray';
+                    'G2', app.chkExpG2, 'Gate2', double(app.Model.RawData(:,:,2)), 'gray';
+                    'G3', app.chkExpG3, 'Gate3', double(app.Model.RawData(:,:,3)), 'gray';
+                    'G4', app.chkExpG4, 'Gate4', double(app.Model.RawData(:,:,4)), 'gray';
+                    'A', app.chkExpMapA, 'Amplitude_A', app.Model.AMap, 'turbo';
+                    'Tau', app.chkExpMapTau, 'Lifetime_Tau', app.Model.TauMap, 'turbo';
+                    'B', app.chkExpMapB, 'Background_B', app.Model.BMap, 'turbo';
+                    'Chi2', app.chkExpMapChi2, 'Reduced_Chi2', app.Model.Chi2Map, 'turbo'
+                    };
+
+                % 1. Handle .mat (Global save)
+                if doMat
+                    app.Model.exportResults(fullfile(folder, 'FBK_Full_Workspace.mat'));
+                end
+
+                % 2. Process maps (PNG, CSV)
+                for i = 1:size(mapList, 1)
+                    if mapList{i, 2}.Value
+                        data = mapList{i, 4};
+                        name = mapList{i, 3};
+                        mapType = mapList{i, 5};
+
+                        if isempty(data), continue; end
+
+                        % CSV
+                        if doCsv
+                            writematrix(data, fullfile(folder, [name '.csv']));
+                        end
+
+                        % PNG
+                        if doPng
+                            outPath = fullfile(folder, [name '.png']);
+                            if useCMap
+                                % Apply colormap and save as RGB
+                                if strcmpi(name, 'Lifetime_Tau')
+                                    clims = [app.spnCLimMin.Value, app.spnCLimMax.Value];
+                                else
+                                    vals = data(~isnan(data));
+                                    if isempty(vals), clims = [0 1]; else, clims = [min(vals) max(vals)]; end
+                                end
+
+                                % Scale to [0, 1]
+                                dNorm = (data - clims(1)) / (clims(2) - clims(1) + 1e-10);
+                                dNorm = max(0, min(1, dNorm));
+
+                                % Handle NaNs (background)
+                                alpha = ~isnan(data);
+
+                                if strcmpi(mapType, 'turbo')
+                                    rgb = ind2rgb(round(dNorm * 255) + 1, turbo(256));
+                                else
+                                    rgb = repmat(dNorm, [1 1 3]);
+                                end
+                                imwrite(rgb, outPath, 'Alpha', double(alpha));
+                            else
+                                dNorm = (data - min(data(:))) / (max(data(:)) - min(data(:)) + 1e-10);
+                                imwrite(dNorm, outPath);
+                            end
+                        end
+                    end
+                end
+
+                % 3. Histograms (PNG only)
+                hists = {
+                    app.chkExpHistA, app.axHistA, 'Histogram_A';
+                    app.chkExpHistTau, app.axHistTau, 'Histogram_Tau';
+                    app.chkExpHistB, app.axHistB, 'Histogram_B';
+                    app.chkExpHistChi2, app.axHistChi2, 'Histogram_Chi2'
+                    };
+
+                if doPng
+                    for i = 1:size(hists, 1)
+                        if hists{i, 1}.Value
+                            exportgraphics(hists{i, 2}, fullfile(folder, [hists{i, 3} '.png']), 'Resolution', 300);
+                        end
+                    end
+
+                    % Overlay
+                    if app.chkExpOverlay.Value
+                        exportgraphics(app.axExportOverlay, fullfile(folder, 'Lifetime_Overlay.png'), 'Resolution', 300);
+                    end
+                end
+
+                uialert(app.UIFigure, 'Export complete successfully.', 'Success', 'Icon', 'info');
+            catch ME
+                uialert(app.UIFigure, ME.message, 'Export Error');
+            end
+
+            app.UIFigure.Pointer = 'arrow';
         end
     end
 

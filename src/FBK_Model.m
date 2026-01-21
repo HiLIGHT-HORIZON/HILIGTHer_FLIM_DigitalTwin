@@ -171,12 +171,14 @@ classdef FBK_Model < handle
             end
         end
 
-        function runFit(obj, pixelData)
+        function runFit(obj, pixelData, statusCallback)
             % RUNFIT - Main iterative reconvolution fitting loop.
             % pixelData: (nY, nX, nGates) matrix
+            % statusCallback: (Value, Message) function handle for progress reporting
             arguments
                 obj
                 pixelData (:,:,:) double = obj.RawData
+                statusCallback = []
             end
 
             if isempty(pixelData) || isempty(obj.GateShapes)
@@ -200,34 +202,42 @@ classdef FBK_Model < handle
             end
 
             validIdx = find(metric > obj.ThresholdMin & metric < obj.ThresholdMax);
+            nValid = length(validIdx);
+
+            if nValid == 0
+                error('No pixels passed the threshold criteria.');
+            end
 
             options = optimset('Display', 'off', 'TolX', 1e-4);
 
             % Pre-calculate Global Background if using 'gate4'
             globalBgVal = 0;
             if strcmpi(obj.BgOption, 'gate4') && nGates >= 4
-                % 1. Calculate Mean Counts in Gate 4 (using valid pixels to avoid masking artifacts)
-                % Only use pixels that have passed the threshold to avoid skewing by empty areas
-                if ~isempty(validIdx)
-                    g4_counts = flatData(4, validIdx);
-                    mean_g4 = mean(g4_counts);
+                g4_counts = flatData(4, validIdx);
+                mean_g4 = mean(g4_counts);
 
-                    % 2. Scaling Factor (Wtotal / W4)
-                    Wj = sum(obj.GateShapes, 2);
-                    if Wj(4) > 0
-                        ratio = sum(Wj) / Wj(4);
-                        globalBgVal = mean_g4 * ratio;
-                    end
+                % 2. Scaling Factor (Wtotal / W4)
+                Wj = sum(obj.GateShapes, 2);
+                if Wj(4) > 0
+                    ratio = sum(Wj) / Wj(4);
+                    globalBgVal = mean_g4 * ratio;
                 end
             end
 
             % Loop over valid pixels
             obj.IsAborted = false;
-            for i = validIdx
+            for k = 1:nValid
+                i = validIdx(k);
                 if obj.IsAborted, return; end
 
-                % Periodically allow UI events (like Close) to be processed
-                if mod(i, 50) == 0, drawnow limitrate; end
+                % Periodically allow UI events and update progress
+                if mod(k, 50) == 0
+                    if ~isempty(statusCallback)
+                        statusCallback(k/nValid, sprintf('Fitting pixel %d of %d...', k, nValid));
+                    else
+                        drawnow limitrate;
+                    end
+                end
 
                 obs = flatData(:, i);
 
@@ -240,8 +250,6 @@ classdef FBK_Model < handle
                 end
 
                 % Fit with initial values (A=photoncount, Tau=3ns, B=0)
-                % We use fminsearch for Tau starting at 3.0 ns.
-                % A and B are computed analytically starting from the requested levels.
                 tau0 = 3.0;
                 tau_est = fminsearch(@(t) obj.objFunc(t, obs, pixelBg), tau0, options);
 
@@ -405,11 +413,12 @@ classdef FBK_Model < handle
         end
 
         function exportResults(obj, filePath)
-            % EXPORTRESULTS - Saves fitting maps to a .mat file.
-            results.TauMap = obj.TauMap;
-            results.AMap = obj.AMap;
-            results.BMap = obj.BMap;
-            results.Chi2Map = obj.Chi2Map;
+            % EXPORTRESULTS - Saves all model properties and fitting maps to a .mat file.
+            props = properties(obj);
+            results = struct();
+            for i = 1:length(props)
+                results.(props{i}) = obj.(props{i});
+            end
             results.Timestamp = char(datetime('now'));
             save(filePath, '-struct', 'results');
         end
@@ -607,7 +616,7 @@ classdef FBK_Model < handle
                 % Use manually fixed background value
                 % k = FixedBg / TotalCounts
                 k = min(1, obj.FixedBgValue / max(Dtotal, 1));
-            elseif strcmpi(obj.BgOption, 'gate4')
+            elseif strcmpi(obj.BgOption, 'gate4') || strcmpi(obj.BgOption, 'measurement')
                 % Use provided total background for this pixel
                 k = min(1, fixedBg / max(Dtotal, 1));
 
