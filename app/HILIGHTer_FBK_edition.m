@@ -77,8 +77,9 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
         sldBrightness  matlab.ui.control.Slider
         sldContrast    matlab.ui.control.Slider
         sldGamma       matlab.ui.control.Slider
-        spnCLimMin     matlab.ui.control.NumericEditField
-        spnCLimMax     matlab.ui.control.NumericEditField
+        sldAlpha       matlab.ui.control.Slider
+        sldCLimMin     matlab.ui.control.Slider
+        sldCLimMax     matlab.ui.control.Slider
 
         % Export Image Checkboxes
         chkExpTotal    matlab.ui.control.CheckBox
@@ -366,29 +367,34 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
 
             glExpCtrl = uigridlayout(glExpL, [3, 4]);
             glExpCtrl.Padding = [5 5 5 5];
-            glExpCtrl.RowHeight = {25, 25, 25};
-            glExpCtrl.ColumnWidth = {80, '1x', 40, 60};
+            glExpCtrl.RowHeight = {30, 30, 30};
+            glExpCtrl.ColumnWidth = {'fit', '1x', 'fit', '1x'};
+            glExpCtrl.ColumnSpacing = 15;
 
-            % Sliders and Spinners
+            % Sliders for Image and Overlay control
             uilabel(glExpCtrl, 'Text', 'Brightness:');
             app.sldBrightness = uislider(glExpCtrl, 'Limits', [0 2], 'Value', 1, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
             app.sldBrightness.Layout.Column = 2;
 
             uilabel(glExpCtrl, 'Text', 'C-Lim Min:');
-            app.spnCLimMin = uieditfield(glExpCtrl, 'numeric', 'Value', 0, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
-            app.spnCLimMin.Layout.Column = 4;
+            app.sldCLimMin = uislider(glExpCtrl, 'Limits', [0 10], 'Value', 0, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
+            app.sldCLimMin.Layout.Column = 4;
 
             uilabel(glExpCtrl, 'Text', 'Contrast:');
             app.sldContrast = uislider(glExpCtrl, 'Limits', [0 2], 'Value', 1, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
             app.sldContrast.Layout.Column = 2;
 
             uilabel(glExpCtrl, 'Text', 'C-Lim Max:');
-            app.spnCLimMax = uieditfield(glExpCtrl, 'numeric', 'Value', 5, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
-            app.spnCLimMax.Layout.Column = 4;
+            app.sldCLimMax = uislider(glExpCtrl, 'Limits', [0 10], 'Value', 5, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
+            app.sldCLimMax.Layout.Column = 4;
 
             uilabel(glExpCtrl, 'Text', 'Gamma:');
             app.sldGamma = uislider(glExpCtrl, 'Limits', [0.1 3], 'Value', 1, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
             app.sldGamma.Layout.Column = 2;
+
+            uilabel(glExpCtrl, 'Text', 'Overlay Alpha:');
+            app.sldAlpha = uislider(glExpCtrl, 'Limits', [0 1], 'Value', 0.5, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
+            app.sldAlpha.Layout.Column = 4;
 
             % Column 2: Export List and Settings
             glExpR = uigridlayout(glExp, [4, 1]);
@@ -1203,15 +1209,17 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
 
             if ~isempty(app.Model.TauMap)
                 tau = app.Model.TauMap;
-                % Normalize Tau for coloring using turbo and spinners
-                cmin = app.spnCLimMin.Value;
-                cmax = app.spnCLimMax.Value;
+                % Normalize Tau for coloring using turbo and sliders
+                cmin = app.sldCLimMin.Value;
+                cmax = app.sldCLimMax.Value;
 
                 tauNorm = (tau - cmin) / (cmax - cmin + 1e-10);
                 tauNorm = max(0, min(1, tauNorm));
 
                 % Map to Turbo RGB
                 cmap = turbo(256);
+                colormap(app.axExportOverlay, cmap); % Set for colorbar
+
                 idx = round(tauNorm * 255) + 1;
                 idx(isnan(tau)) = 1;
 
@@ -1219,8 +1227,15 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
 
                 % Overlay with Mask as Alpha
                 hOver = imagesc(app.axExportOverlay, imgTauRGB);
-                alphaMap = double(mask) * 0.5; % 50% transparency for overlay
+                alphaMap = double(mask) * app.sldAlpha.Value;
                 set(hOver, 'AlphaData', alphaMap);
+
+                % Display Colorbar
+                cb = colorbar(app.axExportOverlay);
+                cb.Label.String = 'Lifetime [ns]';
+                clim(app.axExportOverlay, [cmin cmax]);
+            else
+                colorbar(app.axExportOverlay, 'off');
             end
 
             axis(app.axExportOverlay, 'image');
@@ -1287,7 +1302,7 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
                             if useCMap
                                 % Apply colormap and save as RGB
                                 if strcmpi(name, 'Lifetime_Tau')
-                                    clims = [app.spnCLimMin.Value, app.spnCLimMax.Value];
+                                    clims = [app.sldCLimMin.Value, app.sldCLimMax.Value];
                                 else
                                     vals = data(~isnan(data));
                                     if isempty(vals), clims = [0 1]; else, clims = [min(vals) max(vals)]; end
