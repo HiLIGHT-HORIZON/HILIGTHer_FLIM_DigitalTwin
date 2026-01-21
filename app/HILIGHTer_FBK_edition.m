@@ -15,14 +15,19 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
         btnImportExactGates matlab.ui.control.Button
         btnImportLaser      matlab.ui.control.Button
         btnImportData  matlab.ui.control.Button
+        btnImportFBK   matlab.ui.control.Button
         ddGateMethod   matlab.ui.control.DropDown
         ddBgOption     matlab.ui.control.DropDown
         btnImportBg    matlab.ui.control.Button
-        spnThreshold   matlab.ui.control.NumericEditField
+        spnFixedBg     matlab.ui.control.NumericEditField
+        ddThresholdSource matlab.ui.control.DropDown
+        spnThresholdMin matlab.ui.control.NumericEditField
+        spnThresholdMax matlab.ui.control.NumericEditField
         btnRunFit      matlab.ui.control.Button
         btnSaveResults matlab.ui.control.Button
         chkUseEIRF     matlab.ui.control.CheckBox
         btnDistillGates matlab.ui.control.Button
+        spnMedianFilter matlab.ui.control.Spinner
         spnEdges       (1, 5) matlab.ui.control.NumericEditField
 
         % Right Panel Components (Tab: Gate Characterization)
@@ -97,10 +102,16 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             glLeft.RowSpacing = 10;
             glLeft.Padding = [10 10 10 10];
 
-            % 1. Import Data
-            app.btnImportData = uibutton(glLeft, 'Text', '1. Import Sample Data', 'ButtonPushedFcn', @(~,~) app.importDataCallback(), ...
-                'Tooltip', 'Load experimental multi-gate data from .sdt or .mat files. Data should be a 3D matrix (Y, X, Gates).');
-            app.btnImportData.Layout.Row = 1;
+            % 1. Import Section (Split into standard and FBK)
+            glImport = uigridlayout(glLeft, [1, 2]);
+            glImport.Padding = [0 0 0 0];
+            glImport.Layout.Row = 1;
+
+            app.btnImportData = uibutton(glImport, 'Text', 'Import Standard', 'ButtonPushedFcn', @(~,~) app.importDataCallback(), ...
+                'Tooltip', 'Load experimental multi-gate data from .sdt or .mat files.');
+
+            app.btnImportFBK = uibutton(glImport, 'Text', 'Import FBK Legacy', 'ButtonPushedFcn', @(~,~) app.importFBKCallback(), ...
+                'Tooltip', 'Load legacy FBK binary data folder (4 gates).');
 
             % 2. IRF & Characterization Section
             pIRF = uipanel(glLeft, 'Title', '2. IRF & Characterization');
@@ -138,6 +149,16 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             % Method label needs its own layout too or it will overlap
             lblM = uilabel(glIRF, 'Text', 'Method:', 'FontSize', 10);
             lblM.Layout.Row = 4; lblM.Layout.Column = 1;
+
+            % Median Filter (Row 5 - replacing edges for a moment? No, shift down)
+            % Actually row 5 is Edges. Let's squeeze or use unused slot.
+            % Row 2 is Checkbox (Use EIRF).
+            % Let's put Filter next to Checkbox.
+            lblF = uilabel(glIRF, 'Text', 'Filter [px]:', 'FontSize', 9, 'HorizontalAlignment', 'right');
+            lblF.Layout.Row = 2; lblF.Layout.Column = 2;
+            app.spnMedianFilter = uispinner(glIRF, 'Value', 0, 'Limits', [0 15], 'Step', 1, 'ValueChangedFcn', @(~,~) app.updateMedianFilter(), ...
+                'Tooltip', 'Kernel size for total Median Filter (0=Off). Applies to all gates.');
+            app.spnMedianFilter.Layout.Row = 2; app.spnMedianFilter.Layout.Column = 3;
 
             % Gate Edges (inside IRF)
             glE = uigridlayout(glIRF, [2, 1]);
@@ -200,16 +221,32 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             % Bg
             glB = uigridlayout(glFit, [2, 1]); glB.Padding = [0 0 0 0]; glB.RowSpacing = 1;
             uilabel(glB, 'Text', 'Background Mode:', 'FontSize', 10);
-            glB2 = uigridlayout(glB, [1, 2]); glB2.Padding = [0 0 0 0]; glB2.ColumnWidth = {'1x', 30};
-            app.ddBgOption = uidropdown(glB2, 'Items', {'Fit', 'Fix to 0', 'Measurement'}, 'ValueChangedFcn', @(~,~) app.updateBgOption(), ...
-                'Tooltip', 'Choose how to handle background: Fit (pixel-wise estimate), Fix to 0, or Measurement (uses imported background file).');
+            glB2 = uigridlayout(glB, [1, 3]); glB2.Padding = [0 0 0 0]; glB2.ColumnWidth = {'1x', 50, 30};
+
+            app.ddBgOption = uidropdown(glB2, 'Items', {'Fit', 'Fix to Value', 'Gate 4', 'Measurement'}, 'ValueChangedFcn', @(~,~) app.updateBgOption(), ...
+                'Tooltip', 'Choose how to handle background.');
+
+            app.spnFixedBg = uieditfield(glB2, 'numeric', 'Value', 0, 'Enable', 'off', 'ValueChangedFcn', @(~,~) app.updateFixedBg(), ...
+                'Tooltip', 'Manual background value [counts/pixel].');
+
             app.btnImportBg = uibutton(glB2, 'Text', '📁', 'Tooltip', 'Import Background Map', 'Enable', 'off', 'ButtonPushedFcn', @(~,~) app.importBgCallback());
 
             % Threshold
-            glT = uigridlayout(glFit, [1, 2]); glT.Padding = [0 0 0 0];
-            uilabel(glT, 'Text', 'Threshold:', 'FontSize', 10);
-            app.spnThreshold = uieditfield(glT, 'numeric', 'Value', 10, 'ValueChangedFcn', @(~,~) app.updateThreshold(), ...
-                'Tooltip', 'Minimum total photon count required to perform a fit on a pixel. Areas below this are ignored.');
+            % Threshold
+            glT = uigridlayout(glFit, [2, 3]); glT.Padding = [0 0 0 0]; glT.ColumnWidth = {'1x', '1x', '1x'}; glT.RowHeight = {20, 20};
+
+            % Row 1: Source Selector
+            uilabel(glT, 'Text', 'Threshold On:', 'FontSize', 9);
+            app.ddThresholdSource = uidropdown(glT, 'Items', {'Total Counts', 'Gate 1'}, 'ValueChangedFcn', @(~,~) app.updateThresholdSource(), ...
+                'Tooltip', 'Apply threshold filters on Total Counts or on Gate 1 Counts.');
+            app.ddThresholdSource.Layout.Column = [2 3];
+
+            % Row 2: Min/Max Inputs
+            uilabel(glT, 'Text', 'Range (Min/Max):', 'FontSize', 9);
+            app.spnThresholdMin = uieditfield(glT, 'numeric', 'Value', 10, 'ValueChangedFcn', @(~,~) app.updateThresholdMin(), ...
+                'Tooltip', 'Minimum counts.');
+            app.spnThresholdMax = uieditfield(glT, 'numeric', 'Value', Inf, 'ValueChangedFcn', @(~,~) app.updateThresholdMax(), ...
+                'Tooltip', 'Maximum counts.');
 
             % Fit Button
             app.btnRunFit = uibutton(glFit, 'Text', 'Run Iterative Fit', 'BackgroundColor', [0.8 1.0 0.8], 'ButtonPushedFcn', @(~,~) app.runFitCallback(), ...
@@ -285,6 +322,12 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             end
             app.LastSimRes = app.spnSimRes.Value;
             app.Model.SimRes = app.LastSimRes;
+        end
+
+        function updateMedianFilter(app)
+            app.Model.MedianFilterSize = app.spnMedianFilter.Value;
+            app.Model.applyMedianFilter();
+            app.updateDataTab();
         end
 
         function updateSimA(app), app.Model.SimA = app.spnSimA.Value; end
@@ -411,15 +454,32 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
                 [~, ~, ext] = fileparts(file);
                 if strcmpi(ext, '.mat')
                     s = load(fullfile(path, file));
-                    if isfield(s, 'RawData'), app.Model.RawData = s.RawData;
+                    if isfield(s, 'RawData'), app.Model.setRawData(s.RawData);
                     else, error('MAT file must contain "RawData" variable.'); end
                 else
-                    app.Model.RawData = read_SDT(fullfile(path, file)); % Reuses HILIGHTer tool
+                    app.Model.setRawData(read_SDT(fullfile(path, file)));
                 end
                 uialert(app.UIFigure, 'Data loaded successfully.', 'Success', 'Icon', 'info');
+                app.updateDataTab();
             catch ME
                 uialert(app.UIFigure, ME.message, 'Import Error');
             end
+        end
+
+        function importFBKCallback(app)
+            path = uigetdir(pwd, 'Select FBK Data Folder (containing image2D_G*.bin)');
+            if isequal(path, 0), return; end
+
+            app.UIFigure.Pointer = 'watch';
+            drawnow;
+            try
+                app.Model.importFBKDataFolder(path);
+                uialert(app.UIFigure, 'FBK Data loaded successfully.', 'Success', 'Icon', 'info');
+                app.updateDataTab();
+            catch ME
+                uialert(app.UIFigure, ME.message, 'Import Error');
+            end
+            app.UIFigure.Pointer = 'arrow';
         end
 
         function updateGateMethod(app)
@@ -434,14 +494,22 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
 
         function setUpdateBusy(app, val), app.IsUpdateBusy = val; end
 
+        function updateFixedBg(app), app.Model.FixedBgValue = app.spnFixedBg.Value; end
+
         function updateBgOption(app)
             val = app.ddBgOption.Value;
+
+            % Reset controls
+            app.btnImportBg.Enable = 'off';
+            app.spnFixedBg.Enable = 'off';
+
             if strcmpi(val, 'Fit')
                 app.Model.BgOption = 'fit';
-                app.btnImportBg.Enable = 'off';
-            elseif strcmpi(val, 'Fix to 0')
-                app.Model.BgOption = 'fix0';
-                app.btnImportBg.Enable = 'off';
+            elseif strcmpi(val, 'Fix to Value')
+                app.Model.BgOption = 'fix_manual';
+                app.spnFixedBg.Enable = 'on';
+            elseif strcmpi(val, 'Gate 4')
+                app.Model.BgOption = 'gate4';
             else
                 app.Model.BgOption = 'measurement';
                 app.btnImportBg.Enable = 'on';
@@ -471,8 +539,17 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             end
         end
 
-        function updateThreshold(app)
-            app.Model.Threshold = app.spnThreshold.Value;
+        function updateThresholdMin(app), app.Model.ThresholdMin = app.spnThresholdMin.Value; app.updateDataTab(); end
+        function updateThresholdMax(app), app.Model.ThresholdMax = app.spnThresholdMax.Value; app.updateDataTab(); end
+
+        function updateThresholdSource(app)
+            val = app.ddThresholdSource.Value;
+            if strcmpi(val, 'Total Counts')
+                app.Model.ThresholdSource = 'Total';
+            else
+                app.Model.ThresholdSource = 'Gate1';
+            end
+            app.updateDataTab();
         end
 
         function updateEdges(app)
@@ -617,18 +694,44 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             % Scaling Logic
             % 1. Total counts has its own scale
             totalData = sum(data, 3);
+
+            % Calculate Mask based on Thresholds and Source
+            if strcmpi(app.Model.ThresholdSource, 'Gate1')
+                metric = data(:,:,1);
+            else
+                metric = totalData;
+            end
+
+            mask = (metric > app.Model.ThresholdMin) & (metric < app.Model.ThresholdMax);
+
+            % Apply Mask to totalData (set outside to NaN)
+            % Convert to double just in case
+            totalData = double(totalData);
+            totalData(~mask) = NaN;
+
             totalScale = [0, max(max(totalData(:)), 1)];
 
             % 2. Gate 1 has its own scale and sets the scale for Gates 2-4
-            gate1Data = data(:,:,1);
+            gate1Data = double(data(:,:,1));
+            gate1Data(~mask) = NaN;
             gateScale = [0, max(max(gate1Data(:)), 1)];
+
+            % Mask other gates
+            g2 = double(data(:,:,2)); g2(~mask) = NaN;
 
             % Row 1: Images of Raw Data (using 'gray' colormap)
             app.plotData(app.axTotal, totalData, 'Total Counts', true, totalScale, 'gray');
-            app.plotData(app.axGate1, data(:,:,1), 'Gate 1', true, gateScale, 'gray');
-            app.plotData(app.axGate2, data(:,:,2), 'Gate 2', true, gateScale, 'gray');
-            if size(data, 3) >= 3, app.plotData(app.axGate3, data(:,:,3), 'Gate 3', true, gateScale, 'gray'); end
-            if size(data, 3) >= 4, app.plotData(app.axGate4, data(:,:,4), 'Gate 4', true, gateScale, 'gray'); end
+            app.plotData(app.axGate1, gate1Data, 'Gate 1', true, gateScale, 'gray');
+            app.plotData(app.axGate2, g2, 'Gate 2', true, gateScale, 'gray');
+
+            if size(data, 3) >= 3
+                g3 = double(data(:,:,3)); g3(~mask) = NaN;
+                app.plotData(app.axGate3, g3, 'Gate 3', true, gateScale, 'gray');
+            end
+            if size(data, 3) >= 4
+                g4 = double(data(:,:,4)); g4(~mask) = NaN;
+                app.plotData(app.axGate4, g4, 'Gate 4', true, gateScale, 'gray');
+            end
 
             % Row 2, Col 1: Mixed Decay Plot (YYAXIS) + Selection Update
             app.updatePixelSelection();
@@ -948,8 +1051,10 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             modelVal = app.Model.BgOption;
             if strcmpi(modelVal, 'fit')
                 mapVal = 'Fit';
-            elseif strcmpi(modelVal, 'fix0')
-                mapVal = 'Fix to 0';
+            elseif strcmpi(modelVal, 'fix0') || strcmpi(modelVal, 'fix_manual')
+                mapVal = 'Fix to Value';
+            elseif strcmpi(modelVal, 'gate4')
+                mapVal = 'Gate 4';
             else
                 mapVal = 'Measurement';
             end
@@ -958,9 +1063,22 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             if ~isempty(idx)
                 app.ddBgOption.Value = items{idx};
             end
+
+            app.spnFixedBg.Value = app.Model.FixedBgValue;
+
             app.updateBgOption(); % Sync button state
 
-            app.spnThreshold.Value = app.Model.Threshold;
+            app.spnThresholdMin.Value = app.Model.ThresholdMin;
+            app.spnThresholdMax.Value = app.Model.ThresholdMax;
+
+            if strcmpi(app.Model.ThresholdSource, 'Gate1')
+                app.ddThresholdSource.Value = 'Gate 1';
+            else
+                app.ddThresholdSource.Value = 'Total Counts';
+            end
+
+            % Median Filter
+            app.spnMedianFilter.Value = app.Model.MedianFilterSize;
 
             % Gate Edges
             for i = 1:5

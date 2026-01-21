@@ -10,6 +10,7 @@ The application is divided into two primary workspaces: **Gate Characterization*
 
 ### 1.1 Characterization & Settings (Left Panel)
 *   **1. Import Sample Data**: Loads experimental multi-gate data (.sdt or .mat).
+*   **Import FBK Legacy**: Loads data from the legacy FBK folder structure (4 binary files).
 *   **2. IRF & Characterization**:
     *   **Import Gate Sweep**: Loads a hardware sweep CSV (multiple gate widths). 
     *   **Import Gates**: Loads the 4 exact experimental gate profiles as CSV.
@@ -19,11 +20,11 @@ The application is divided into two primary workspaces: **Gate Characterization*
         *   `Ideal`: Theoretical rectangular gates + manual skewness.
         *   `Experimental`: Uses loaded exact hardware profiles.
         *   `Synthetic`: Uses ideal boundaries smoothed by fitted hardware kinetics.
-    *   **Gate Edges [ns]**: Set the temporal boundaries for integration.
+    *   **Gate Edges [ns]**: Set the temporal boundaries for integration. Default: `0, 1.1, 3.4, 9.0, 25.0` ns.
 *   **3. Simulation Parameters**: Configure synthetic data generation (Amplitude, Background, Tau gradient, Resolution).
 *   **4. Data Fitting**:
-    *   **Background Mode**: Choice of `Fit` (analytical estimate), `Fix to 0`, or `Measurement` (external file).
-    *   **Threshold**: Minimum total photons required to attempt a fit.
+    *   **Background Mode**: Choice of `Fit` (analytical estimate), `Fix to Value` (manual count/pixel), `Gate 4` (estimate from 4th gate), or `Measurement` (external file).
+    *   **Thresh (Min/Max)**: The analysis runs only on pixels where intensity is between Min/Max. Use the **Threshold On** dropdown to choose between `Total Counts` or `Gate 1` as the reference.
     *   **Run Fit**: Triggers the iterative reconvolution engine.
 
 ---
@@ -88,3 +89,8 @@ The application automatically performs a **Runs Test** on the residuals to verif
 1.  Configure the **Simulation Parameters** (e.g., Tau 1: 1.5ns, Tau 2: 4.5ns).
 2.  Click **Generate Simulated Data**.
 3.  The system wipes previous results and populates the analysis window with a "ground truth" gradient, perfect for benchmarking your precision limits.
+
+### 4.4 Loading Legacy FBK Data
+1.  Click **Import FBK Legacy**.
+2.  Select the folder containing the `image2D_G*.bin` files (e.g., `100x_1`).
+3.   The data will be loaded, processed (cumulative subtraction), and visualized.

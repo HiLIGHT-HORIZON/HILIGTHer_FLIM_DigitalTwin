@@ -4,7 +4,8 @@ classdef FBK_Model < handle
     % Physical Units: Time [ns], Counts [photons], Lifetime [ns]
 
     properties
-        RawData       % (nY, nX, nGates) matrix of photon counts [counts]
+        RawData       % (nY, nX, nGates) matrix of photon counts [counts] (Current Working Data)
+        RawDataOriginal % (nY, nX, nGates) matrix of photon counts [counts] (Backup)
         LaserDelay    % Vector of laser delay values from sweep [ns]
         MinGateData   % Table containing laser delay, gate width, and counts
         LaserPulse    % Struct with .t and .p for laser impulse response
@@ -25,15 +26,19 @@ classdef FBK_Model < handle
         Chi2Map       % Map of reduced chi-squared values
 
         % Settings
-        Threshold = 10 % [counts] Total photon threshold per pixel
+        ThresholdMin = 10 % [counts] Minimum photon count per pixel
+        ThresholdMax = Inf % [counts] Maximum photon count per pixel
+        ThresholdSource = 'Total' % 'Total' or 'Gate1'
         DtInput = 0.05 % [ns] Interpolation step for gate distillation
-        BgOption = 'fit' % 'fit', 'fix0', or 'measurement'
+        BgOption = 'fit' % 'fit', 'fix_manual', 'gate4' or 'measurement'
         BgData          % (nY, nX) matrix of background counts
+        FixedBgValue = 0 % [counts] Manual background level per pixel (for 'fix_manual')
         BgMeanMeasurement = 0 % mean background per unit gate area
         GateMethod = 'ideal' % 'experimental', 'synthetic', or 'ideal'
-        GateEdges = [0.5, 1.5, 2.5, 3.5, 4.5] % [ns] 5 edges for 4 gates
+        GateEdges = [0, 1.1, 3.4, 9.0, 25.0] % [ns] Default edges
         Skewness = 0 % [ps] Gaussian smoothing for ideal gates
         UseEIRF = true % Use experimental IRF for reconvolution
+        MedianFilterSize = 0 % [pixels] Kernel size for median filtering (0 = off)
 
         % Simulation Parameters
         SimA = 1000
@@ -56,6 +61,7 @@ classdef FBK_Model < handle
         function obj = FBK_Model()
             % Constructor - initialize empty state
             obj.RawData = [];
+            obj.RawDataOriginal = [];
             obj.GateShapes = [];
             obj.loadSettings();
         end
@@ -91,6 +97,68 @@ classdef FBK_Model < handle
             obj.LaserPulse.p = data(idx, 2);
         end
 
+        function importFBKDataFolder(obj, folderPath)
+            % IMPORTFBKDATAFOLDER - Imports 4-gate binary data from a legacy FBK folder.
+            % Expects files: image2D_G0.bin, ... G3.bin inside the folder.
+            % Performs cumulative subtraction and orientation correction.
+
+            arguments
+                obj
+                folderPath (1,1) string
+            end
+
+            % Define filenames
+            files = ["image2D_G0.bin", "image2D_G1.bin", "image2D_G2.bin", "image2D_G3.bin"];
+            rawCells = cell(1, 4);
+
+            % 1. Read Raw Binary Data (uint32)
+            for i = 1:4
+                fullPath = fullfile(folderPath, files(i));
+                if ~exist(fullPath, 'file')
+                    error('FBK Data file missing: %s', fullPath);
+                end
+                fid = fopen(fullPath, 'r');
+                cleaner = onCleanup(@() fclose(fid));
+                rawCells{i} = fread(fid, 'uint32');
+                % File closes automatically due to onCleanup
+            end
+
+            % 2. Decode Cumulative Gates
+            % Logic from displayFLIM.m:
+            % G0vec = G0raw;
+            % G1vec = G1raw - G0raw; ...
+            g0 = rawCells{1};
+            g1 = rawCells{2} - rawCells{1};
+            g2 = rawCells{3} - rawCells{2};
+            g3 = rawCells{4} - rawCells{3};
+
+            gateVecs = {g0, g1, g2, g3};
+
+            % 3. Reshape and Orient
+            % displayFLIM.m: fliplr(rot90(rot90(rot90(reshape(..., 100, 100)))))
+            % rot90 x 3 is equivalent to rot90(x, -1) (clockwise) or rot90(x, 3).
+
+            % Check size - assume 100x100 based on legacy, but should be dynamic if possible?
+            % displayFLIM hardcodes 100x100. Length is 10000.
+            nPixels = length(g0);
+            dim = sqrt(nPixels);
+            if floor(dim) ~= dim
+                error('Data length %d is not a perfect square. Cannot reshape.', nPixels);
+            end
+
+            data = zeros(dim, dim, 4);
+
+            for k = 1:4
+                mat = reshape(gateVecs{k}, dim, dim);
+                % Apply orientation transform: Rotated 270 deg (or -90) then flipped LR
+                % rot90(A, 3) is 270 counter-clockwise.
+                mat = rot90(mat, 3);
+                mat = fliplr(mat);
+                data(:, :, k) = mat;
+            end
+            obj.setRawData(data);
+        end
+
         function distillGates(obj)
             % DISTILLGATES - Infers gate shapes based on current method.
             switch lower(obj.GateMethod)
@@ -124,10 +192,34 @@ classdef FBK_Model < handle
             % Flatten and Threshold
             M = nY * nX;
             flatData = reshape(pixelData, M, nGates)'; % (nGates x M)
-            totalCounts = sum(flatData, 1);
-            validIdx = find(totalCounts > obj.Threshold);
+
+            if strcmpi(obj.ThresholdSource, 'Gate1')
+                metric = flatData(1, :);
+            else
+                metric = sum(flatData, 1);
+            end
+
+            validIdx = find(metric > obj.ThresholdMin & metric < obj.ThresholdMax);
 
             options = optimset('Display', 'off', 'TolX', 1e-4);
+
+            % Pre-calculate Global Background if using 'gate4'
+            globalBgVal = 0;
+            if strcmpi(obj.BgOption, 'gate4') && nGates >= 4
+                % 1. Calculate Mean Counts in Gate 4 (using valid pixels to avoid masking artifacts)
+                % Only use pixels that have passed the threshold to avoid skewing by empty areas
+                if ~isempty(validIdx)
+                    g4_counts = flatData(4, validIdx);
+                    mean_g4 = mean(g4_counts);
+
+                    % 2. Scaling Factor (Wtotal / W4)
+                    Wj = sum(obj.GateShapes, 2);
+                    if Wj(4) > 0
+                        ratio = sum(Wj) / Wj(4);
+                        globalBgVal = mean_g4 * ratio;
+                    end
+                end
+            end
 
             % Loop over valid pixels
             obj.IsAborted = false;
@@ -143,6 +235,8 @@ classdef FBK_Model < handle
                 pixelBg = 0;
                 if strcmpi(obj.BgOption, 'measurement') && ~isempty(obj.BgData)
                     pixelBg = obj.BgData(i);
+                elseif strcmpi(obj.BgOption, 'gate4')
+                    pixelBg = globalBgVal;
                 end
 
                 % Fit with initial values (A=photoncount, Tau=3ns, B=0)
@@ -164,11 +258,16 @@ classdef FBK_Model < handle
         function saveSettings(obj)
             % Persistent settings and gate characterization
             s.BgOption = obj.BgOption;
+            s.FixedBgValue = obj.FixedBgValue;
+            s.ThresholdSource = obj.ThresholdSource;
             s.GateMethod = obj.GateMethod;
-            s.Threshold = obj.Threshold;
+            s.ThresholdMin = obj.ThresholdMin;
+            s.ThresholdMax = obj.ThresholdMax;
+            s.GateEdges = obj.GateEdges;
             s.GateEdges = obj.GateEdges;
             s.GateShapes = obj.GateShapes;
             s.TimeVector = obj.TimeVector;
+            s.MedianFilterSize = obj.MedianFilterSize;
 
             % Save characterization data if available
             s.MinGateData = obj.MinGateData;
@@ -195,10 +294,42 @@ classdef FBK_Model < handle
                 s = load(obj.LastSettingsFile);
                 obj.BgOption = s.BgOption;
                 obj.GateMethod = s.GateMethod;
-                obj.Threshold = s.Threshold;
-                if isfield(s, 'GateEdges'), obj.GateEdges = s.GateEdges; end
+
+                if isfield(s, 'FixedBgValue'), obj.FixedBgValue = s.FixedBgValue; end
+
+                % Migration: Map 'fix0' to 'fix_manual' with value 0
+                if strcmpi(obj.BgOption, 'fix0')
+                    obj.BgOption = 'fix_manual';
+                    obj.FixedBgValue = 0;
+                end
+
+                % Backward compatibility for single threshold
+                if isfield(s, 'Threshold')
+                    obj.ThresholdMin = s.Threshold;
+                elseif isfield(s, 'ThresholdMin')
+                    obj.ThresholdMin = s.ThresholdMin;
+                end
+
+                if isfield(s, 'ThresholdSource')
+                    obj.ThresholdSource = s.ThresholdSource;
+                else
+                    obj.ThresholdSource = 'Total';
+                end
+
+                if isfield(s, 'ThresholdMax'), obj.ThresholdMax = s.ThresholdMax; end
+
+                if isfield(s, 'GateEdges')
+                    % Migration: If legacy default edges are found, upgrade them to new defaults
+                    legacyEdges = [0.5, 1.5, 2.5, 3.5, 4.5];
+                    if isequal(s.GateEdges, legacyEdges)
+                        obj.GateEdges = [0, 1.1, 3.4, 9.0, 25.0];
+                    else
+                        obj.GateEdges = s.GateEdges;
+                    end
+                end
                 if isfield(s, 'GateShapes'), obj.GateShapes = s.GateShapes; end
                 if isfield(s, 'TimeVector'), obj.TimeVector = s.TimeVector; end
+                if isfield(s, 'MedianFilterSize'), obj.MedianFilterSize = s.MedianFilterSize; end
 
                 % Load characterization data
                 if isfield(s, 'MinGateData'), obj.MinGateData = s.MinGateData; end
@@ -233,7 +364,7 @@ classdef FBK_Model < handle
             end
 
             nGates = size(obj.GateShapes, 1);
-            obj.RawData = zeros(nY, nX, nGates);
+            synData = zeros(nY, nX, nGates);
 
             % Reset fitting results
             obj.TauMap = [];
@@ -267,9 +398,10 @@ classdef FBK_Model < handle
 
                 % Add Poisson noise and expand to column
                 for g = 1:nGates
-                    obj.RawData(:, x, g) = poissrnd(pixelCounts(g), [nY, 1]);
+                    synData(:, x, g) = poissrnd(pixelCounts(g), [nY, 1]);
                 end
             end
+            obj.setRawData(synData);
         end
 
         function exportResults(obj, filePath)
@@ -302,7 +434,7 @@ classdef FBK_Model < handle
                 td = t_sweep(rows);
                 cd = obj.MinGateData.Counts(rows);
                 [td, idx] = sort(td);
-                sweep_data{i} = [td(:), cd(:)];
+                sweep_data{i} = [td(:), cd(idx)];
             end
 
             % 2. Global Fit: Sigma (global) and Widths (individual)
@@ -418,6 +550,34 @@ classdef FBK_Model < handle
         end
     end
 
+    methods
+        function setRawData(obj, data)
+            % SETRAWDATA - Populates RawData and RawDataOriginal
+            obj.RawDataOriginal = data;
+            obj.RawData = data;
+
+            % Re-apply filters if necessary
+            obj.applyMedianFilter();
+        end
+
+        function applyMedianFilter(obj)
+            if isempty(obj.RawDataOriginal), return; end
+
+            k = obj.MedianFilterSize;
+            if k <= 1
+                obj.RawData = obj.RawDataOriginal;
+            else
+                % Apply medfilt2 to each gate channel
+                [nY, nX, nG] = size(obj.RawDataOriginal);
+                filtered = zeros(nY, nX, nG);
+                for g = 1:nG
+                    filtered(:,:,g) = medfilt2(obj.RawDataOriginal(:,:,g), [k k]);
+                end
+                obj.RawData = filtered;
+            end
+        end
+    end
+
     methods (Access = private)
         function [ssq, a, b] = objFunc(obj, tau, obs, fixedBg)
             % Penalty for invalid tau (used by fminsearch)
@@ -443,11 +603,16 @@ classdef FBK_Model < handle
             Dtotal = sum(obs);
 
             % 3. Determine Background Fraction 'k'
-            if strcmpi(obj.BgOption, 'fix0')
-                k = 0;
-            elseif strcmpi(obj.BgOption, 'measurement')
+            if strcmpi(obj.BgOption, 'fix_manual')
+                % Use manually fixed background value
+                % k = FixedBg / TotalCounts
+                k = min(1, obj.FixedBgValue / max(Dtotal, 1));
+            elseif strcmpi(obj.BgOption, 'gate4')
                 % Use provided total background for this pixel
                 k = min(1, fixedBg / max(Dtotal, 1));
+
+
+                k = max(0, min(1, k));
             else % 'fit' mode
                 % Find k that minimizes WLS: sum (wj * (obs - F(k))^2)
                 % F(k) = Dtotal * (Pj + k*(Qj - Pj))

@@ -41,3 +41,15 @@ The `getChannelData` function acts as the "Gatekeeper". It prioritizes data sour
 1.  **Dynamic Lookup**: Uses `navGroup` and `navFile` indices to fetch `d.Conditions{navGroup}.Analysis(navFile).Data`.
 2.  **Cached View**: `d.currentData` (The slice currently shown in the Image Tab).
 3.  **Legacy/Simulation**: `d.RawData` (Output from the internal simulator).
+
+
+
+
+
+
+
+## FBK Edition Specifics (HILIGHTer_FBK_edition)
+| Component | Intention | Responsible Function(s) |
+| :--- | :--- | :--- |
+| **FBK_Model** | Domain model for FBK-specific physics (Gate fitting, fractional background). Inherits `handle` for reference semantics. | `src/FBK_Model.m` |
+| **Legacy Import** | Translates proprietary FBK binary format (cumulative gates) into standard `(Y,X,Gate)` histograms. | `importFBKDataFolder` |
