@@ -377,7 +377,7 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             app.sldBrightness.Layout.Column = 2;
 
             uilabel(glExpCtrl, 'Text', 'C-Lim Min:');
-            app.sldCLimMin = uislider(glExpCtrl, 'Limits', [0 10], 'Value', 0, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
+            app.sldCLimMin = uislider(glExpCtrl, 'Limits', [0 25], 'Value', 0, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
             app.sldCLimMin.Layout.Column = 4;
 
             uilabel(glExpCtrl, 'Text', 'Contrast:');
@@ -385,7 +385,7 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
             app.sldContrast.Layout.Column = 2;
 
             uilabel(glExpCtrl, 'Text', 'C-Lim Max:');
-            app.sldCLimMax = uislider(glExpCtrl, 'Limits', [0 10], 'Value', 5, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
+            app.sldCLimMax = uislider(glExpCtrl, 'Limits', [0 25], 'Value', 5, 'ValueChangedFcn', @(~,~) app.updateExportOverlay());
             app.sldCLimMax.Layout.Column = 4;
 
             uilabel(glExpCtrl, 'Text', 'Gamma:');
@@ -1211,7 +1211,7 @@ classdef HILIGHTer_FBK_edition < matlab.apps.AppBase
                 tau = app.Model.TauMap;
                 % Normalize Tau for coloring using turbo and sliders
                 cmin = app.sldCLimMin.Value;
-                cmax = app.sldCLimMax.Value;
+                cmax = max(cmin + 0.1, app.sldCLimMax.Value); % Ensure min < max
 
                 tauNorm = (tau - cmin) / (cmax - cmin + 1e-10);
                 tauNorm = max(0, min(1, tauNorm));
