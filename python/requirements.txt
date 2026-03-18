@@ -1,0 +1,11 @@
+numpy
+scipy
+pytest
+pydantic
+fastapi
+uvicorn
+numba
+h5py
+matplotlib
+pandas
+sdtfile

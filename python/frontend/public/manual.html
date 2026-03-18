@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HILIGHTer Digital Twin | Official Manual</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --panel: #1e293b;
+            --text: #f1f5f9;
+            --accent: #3b82f6;
+            --muted: #94a3b8;
+        }
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        h1, h2, h3 { color: var(--accent); }
+        h1 { border-bottom: 2px solid var(--panel); padding-bottom: 10px; }
+        .card {
+            background: var(--panel);
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border: 1px solid #334155;
+        }
+        code {
+            background: #000;
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #fbbf24;
+        }
+        pre {
+            background: #000;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            text-align: left;
+            padding: 12px;
+            border-bottom: 1px solid #334155;
+        }
+        th { color: var(--accent); }
+        .theory-box {
+            background: #1e1b4b;
+            border-left: 4px solid #818cf8;
+            padding: 15px;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔬 HILIGHTer Digital Twin Manual</h1>
+    <p>A comprehensive guide to modeling, simulating, and optimizing FLIM instrument architectures.</p>
+
+    <div class="card">
+        <h2>1. System Architecture</h2>
+        <p>The Digital Twin is built on a three-layer orchestrator:</p>
+        <ul>
+            <li><b>Physics Engine (Forward Model)</b>: Simulates IRF, Decay, and Gating non-idealities.</li>
+            <li><b>Estimation Layer (Inverse Problem)</b>: Implements High-speed MLE and Phasor mapping.</li>
+            <li><b>Precision Layer (CRLB)</b>: Calculates the absolute physical limits of the configuration.</li>
+        </ul>
+    </div>
+
+    <div class="card">
+        <h2>2. Fisher Information & F-Value Theory</h2>
+        <p>The F-value is the primary metric for evaluating instrument quality. It represents the SNR-normalized precision: the ratio of the achieved precision to the best possible precision constrained by Poisson statistics.</p>
+        <div class="theory-box">
+            $$F = \frac{\sigma_\tau}{\tau} \sqrt{N}$$
+        </div>
+        <h3>Estimation Framework</h3>
+        <p>The system calculates the <b>Cramer-Rao Lower Bound (CRLB)</b>, which is the inverse of the <b>Fisher Information Matrix (FIM)</b>. The FIM accounts for the coupling between all free parameters (e.g., how uncertainty in background affects lifetime precision):</p>
+        <pre>
+FIM_uv = N * sum( (dP_i/dTheta_u * dP_i/dTheta_v) / P_i )
+sigma_u = sqrt( inv(FIM)[u,u] )
+        </pre>
+        <p><b>Numerical Method</b>: Detection probabilities $P_i$ are calculated by integrating the wrapped decay PDF with realistic <b>Sigmoid gate profiles</b>. The Jacobian $(\partial P / \partial \Theta)$ is estimated via central difference with $\epsilon=10^{-4}$.</p>
+    </div>
+
+    <div class="card">
+        <h2>3. Advanced Physics: Pulse Trains & Wrapping</h2>
+        <p>In high-repetition systems (e.g., 80MHz), the molecular decay may not reach zero before the next laser pulse arrives.</p>
+        <p><b>PDF Wrapping</b>: The backend handles this by modulo-summing the intensity over the repetition period ($T_{rep}$):</p>
+        <div class="theory-box">
+            $$PDF_{wrapped}(t) = \sum_{k=0}^{\infty} PDF_{ideal}(t + k \cdot T_{rep})$$
+        </div>
+        <p>This "afterglow" increases background bias and is essential for modeling realistic photon pile-up.</p>
+    </div>
+
+    <div class="card">
+        <h2>4. Theoretical Golden Reference</h2>
+        <p>The <b>Precision (Fisher Info)</b> plot always displays a dashed reference curve (the "Golden Reference") evaluated from a physically perfect system. This system represents the absolute theoretical limit (the <i>Ideal TCSPC</i>) for your current acquisition window, assuming:</p>
+        <ul>
+            <li><b>Dirac IRF</b>: Zero-width excitation impulse at $t=0$.</li>
+            <li><b>Ideal Rectangular Gates</b>: Perfectly sharp switching windows with zero rise-time.</li>
+            <li><b>Infinite Bandwidth</b>: 256 high-resolution bins to establish the theoretical F-value ceiling.</li>
+        </ul>
+        <p>Comparing your simulated instrument curve against this dashed line highlights the efficiency loss due to jitter, deadtime, and gating non-idealities.</p>
+    </div>
+
+    <div class="card">
+        <h2>5. Simulation Workflows</h2>
+        <h3>Lifetime Gradient</h3>
+        <p>Evaluates estimator linearity. Generates an image where the lifetime varies from X to Y along the horizontal axis.</p>
+        <h3>Uniform Model</h3>
+        <p>Uses the complex multi-exponential or stretched model for the entire field of view.</p>
+    </div>
+
+    <div class="card">
+        <h2>4. Interface Quick-Start</h2>
+        <table>
+            <tr><th>Tab</th><th>Description</th></tr>
+            <tr><td><b>Simulator</b></td><td>Configure photon counts, IRF, and simulation geometry.</td></tr>
+            <tr><td><b>Gating</b></td><td>Optimize time-gate edges using the SLSQP optimizer.</td></tr>
+            <tr><td><b>Decay Model</b></td><td>Set multi-exponential components or stretched (KWW) factors.</td></tr>
+            <tr><td><b>Batch Sweep</b></td><td>Run instrument sensitivity sweeps (e.g., F-value vs Jitter).</td></tr>
+        </table>
+    </div>
+
+    <footer style="margin-top: 50px; text-align: center; color: var(--muted); font-size: 0.8em;">
+        &copy; 2026 HILIGHT Project | Powered by TwinEngine Python
+    </footer>
+
+    <!-- MathJax for rendering equations -->
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</body>
+</html>

@@ -22,7 +22,8 @@ These algorithms retrieve the lifetime from the simulated data:
 
 ### C. Optimization & Evaluation
 Tools for hardware design and system evaluation:
-*   `DTcomputeFisherInfo.m`: Computes the **Fisher Information** matrix and **Cramér-Rao Lower Bound (CRLB)**—the absolute physical limit of precision ($1/\sqrt{I}$).
+*   `DTcomputeFisherInfo.m`: Computes the **Fisher Information** matrix and **Cramér-Rao Lower Bound (CRLB)**—the absolute physical limit of precision ($1/\sqrt{I}$). 
+    *   **Implementation Note**: The Python backend uses the same multi-parameter Jacobian method for F-value estimation, supporting non-ideal gate transitions (Sigmoid profiles) and high-order pulse train wrapping.
 
 ---
 
@@ -48,6 +49,14 @@ The simulator allows benchmarking algorithms under two primary biological scenar
 ### Background (Dark Counts)
 *   You can specify a constant background level (Dark Counts) added to every gate. 
 *   This simulates realistic detector noise floors and allows testing the robustness of estimators to non-signal photons.
+
+### Precision Runner
+*   The desktop **RUN PRECISION** workflow supports two complementary outputs:
+    *   **Theory**: CRLB / Fisher-derived F-value and photon-efficiency curves.
+    *   **Monte Carlo Validation**: repeated gated-photon simulations with lifetime recovery to verify whether the estimator reaches the theoretical limit.
+*   During parameter sweeps, the precision plot updates incrementally as each point is computed.
+*   The diagnostics panel is sweep-aware: every swept configuration is captured as an instrument snapshot that can be browsed or auto-played.
+*   The last completed precision run can be exported as an interactive HTML report containing the plotted curves, Monte Carlo summaries, and instrument-diagnostics frames.
 
 ### Standardized Residuals (Z)
 *   **Definition**: $Z = (\tau_{estimated} - \tau_{true}) / \sigma_{theoretical}$.

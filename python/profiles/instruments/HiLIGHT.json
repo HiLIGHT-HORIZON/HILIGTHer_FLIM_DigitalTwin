@@ -1,0 +1,41 @@
+{
+    "pt_trep": 50,
+    "irf_fwhm": 5,
+    "irf_profile": "rectangular",
+    "toff": 18,
+    "irf_rise_time": 0,
+    "irf_fall_time": 0,
+    "b_pulse_train": false,
+    "pt_sigma": 0.05,
+    "gate_type": "custom",
+    "expansion_ratio": 0.001,
+    "a_photons": 10000,
+    "n_repeats": 400,
+    "dt_input": 0.01,
+    "gate_widths": [
+        5.485481831026995,
+        2.0892448514705926,
+        7.130297431836087,
+        35.29497588357386
+    ],
+    "gate_edges": [
+        0.0,
+        5.485481831026995,
+        7.574726682497587,
+        14.705024114333674,
+        50.0
+    ],
+    "label": "HiLIGHT",
+    "decay_model": "exponential",
+    "n_components": 1,
+    "taus": [
+        2.5,
+        1.0
+    ],
+    "amplitudes": [
+        1.0,
+        0.0
+    ],
+    "beta": 1.0,
+    "background_level": 0.0
+}

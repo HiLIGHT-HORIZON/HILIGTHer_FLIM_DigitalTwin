@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HILIGHTer Digital Twin | Manual and API Reference</title>
+    <style>
+        :root {
+            --bg: #08111d;
+            --panel: #122235;
+            --panel-2: #0f1b2b;
+            --text: #e7eef8;
+            --muted: #93a8c1;
+            --accent: #38bdf8;
+            --line: #25415f;
+            --good: #34d399;
+            --warn: #fbbf24;
+        }
+        body {
+            font-family: "Segoe UI", Tahoma, sans-serif;
+            background: linear-gradient(180deg, #08111d 0%, #0c1726 100%);
+            color: var(--text);
+            line-height: 1.6;
+            margin: 0;
+        }
+        main {
+            max-width: 1180px;
+            margin: 0 auto;
+            padding: 32px 20px 64px;
+        }
+        h1, h2, h3 {
+            color: var(--accent);
+        }
+        h1 {
+            margin-top: 0;
+            border-bottom: 2px solid var(--line);
+            padding-bottom: 12px;
+        }
+        .card {
+            background: rgba(18, 34, 53, 0.96);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 20px;
+            margin: 18px 0;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 16px;
+        }
+        code, pre {
+            background: #06101a;
+            color: #fde68a;
+            border-radius: 8px;
+        }
+        code {
+            padding: 2px 6px;
+        }
+        pre {
+            padding: 14px;
+            overflow-x: auto;
+            border: 1px solid #1e3348;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 14px;
+        }
+        th, td {
+            text-align: left;
+            border-bottom: 1px solid #21384f;
+            padding: 10px 12px;
+            vertical-align: top;
+        }
+        th {
+            color: var(--accent);
+        }
+        ul {
+            padding-left: 22px;
+        }
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.85em;
+            margin-right: 8px;
+            background: #14314a;
+            color: var(--text);
+        }
+        .good { color: var(--good); }
+        .warn { color: var(--warn); }
+    </style>
+</head>
+<body>
+<main>
+    <h1>HILIGHTer Digital Twin Manual, API Reference, and MCP Guide</h1>
+    <p>This manual now documents the desktop workflow, the reusable backend/data/GUI APIs, the Model Context Protocol server, and the recommended prompt patterns for LLM-driven operation.</p>
+
+    <div class="card">
+        <h2>1. Architecture Overview</h2>
+        <div class="grid">
+            <div>
+                <h3>Physics Engine</h3>
+                <p><span class="badge">Module</span><code>python/backend/twin_engine.py</code></p>
+                <p>Forward model for excitation, decay PDFs, gating, Fisher precision, gridded MLE, Monte Carlo validation, and synthetic image generation.</p>
+            </div>
+            <div>
+                <h3>Service Layer</h3>
+                <p><span class="badge">Module</span><code>python/backend/service_api.py</code></p>
+                <p>Shared orchestration surface used by the HTTP API, future software integrations, and the MCP server. This is the preferred programmatic entry point.</p>
+            </div>
+            <div>
+                <h3>Desktop Automation</h3>
+                <p><span class="badge">Module</span><code>python/gui/automation_api.py</code></p>
+                <p>In-process API for controlling the live Qt workspace, reading plot state, and driving user workflows without scraping widgets manually.</p>
+            </div>
+            <div>
+                <h3>MCP Server</h3>
+                <p><span class="badge">Module</span><code>python/mcp_server.py</code></p>
+                <p>Stdio JSON-RPC server implementing MCP tools, resources, and prompts so LLM systems can use the Digital Twin as an external reasoning and simulation backend.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>2. Shared Service API</h2>
+        <p>The core reusable API is <code>DigitalTwinService</code>. Another Python application can import it directly and use the Twin without the GUI:</p>
+        <pre>from backend.service_api import DigitalTwinService
+
+service = DigitalTwinService()
+status = service.get_status()
+service.update_config({"f_x_param": "tau1", "precision_validate_mc": True})
+result = service.run_precision()</pre>
+
+        <table>
+            <tr><th>Method</th><th>Purpose</th><th>Returns</th></tr>
+            <tr><td><code>get_status()</code></td><td>Backend readiness and current engine summary.</td><td>Status payload with config summary and data availability.</td></tr>
+            <tr><td><code>get_config()</code></td><td>Full current <code>PhysicsConfig</code>.</td><td>JSON-serializable config dictionary.</td></tr>
+            <tr><td><code>update_config(config_patch)</code></td><td>Patch and validate configuration.</td><td>Updated config.</td></tr>
+            <tr><td><code>simulate_basic(params)</code></td><td>Headless basic synthetic dataset workflow.</td><td>Fit results and data summary.</td></tr>
+            <tr><td><code>simulate_advanced(params)</code></td><td>Advanced instrument simulation workflow.</td><td>Fit results and data summary.</td></tr>
+            <tr><td><code>run_precision(params)</code></td><td>Theory plus optional Monte Carlo precision workflow.</td><td>Ideal, theory, and optional MC outputs.</td></tr>
+            <tr><td><code>get_data_summary()</code></td><td>Summarize loaded raw data and result maps.</td><td>Shape and basic range statistics.</td></tr>
+            <tr><td><code>get_results_snapshot()</code></td><td>Expose current maps programmatically.</td><td>Tau, amplitude, background, and fit-quality maps.</td></tr>
+            <tr><td><code>get_diagnostics_snapshot()</code></td><td>Expose gates, IRF, and reference PDF.</td><td>Instrument diagnostics payload.</td></tr>
+            <tr><td><code>get_gui_schema()</code></td><td>Describe GUI regions and actionable elements.</td><td>Declarative workspace schema.</td></tr>
+            <tr><td><code>save_session()</code> / <code>load_session()</code></td><td>Persist or restore state and data.</td><td>Session status payload.</td></tr>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>3. HTTP API</h2>
+        <p><span class="badge">Server</span><code>python/backend/main.py</code></p>
+        <p>Run with a standard ASGI server, for example:</p>
+        <pre>uvicorn backend.main:app --reload --app-dir python</pre>
+
+        <table>
+            <tr><th>Route</th><th>Method</th><th>Description</th></tr>
+            <tr><td><code>/api/v1/backend/status</code></td><td>GET</td><td>Backend status and data availability.</td></tr>
+            <tr><td><code>/api/v1/backend/config</code></td><td>GET</td><td>Read the full configuration.</td></tr>
+            <tr><td><code>/api/v1/backend/config</code></td><td>POST</td><td>Patch the configuration with <code>{"config_patch": {...}}</code>.</td></tr>
+            <tr><td><code>/api/v1/backend/gui/schema</code></td><td>GET</td><td>Declarative GUI schema for software-driven frontends.</td></tr>
+            <tr><td><code>/api/v1/workflows/simulate/basic</code></td><td>POST</td><td>Run the basic synthetic data workflow.</td></tr>
+            <tr><td><code>/api/v1/workflows/simulate/advanced</code></td><td>POST</td><td>Run the advanced instrument simulation workflow.</td></tr>
+            <tr><td><code>/api/v1/workflows/precision</code></td><td>POST</td><td>Run precision analysis with optional config overrides.</td></tr>
+            <tr><td><code>/api/v1/data/summary</code></td><td>GET</td><td>Summarize loaded raw data and result maps.</td></tr>
+            <tr><td><code>/api/v1/data/results</code></td><td>GET</td><td>Get current tau/a/b/chi2 maps.</td></tr>
+            <tr><td><code>/api/v1/data/tau-map</code></td><td>GET</td><td>Get current tau map only.</td></tr>
+            <tr><td><code>/api/v1/data/phasor</code></td><td>GET</td><td>Get current phasor map.</td></tr>
+            <tr><td><code>/api/v1/data/pixel/{y}/{x}</code></td><td>GET</td><td>Inspect one pixel decay and fit.</td></tr>
+            <tr><td><code>/api/v1/data/diagnostics</code></td><td>GET</td><td>Get current gates, IRF, and reference PDF.</td></tr>
+            <tr><td><code>/api/v1/theory/locus</code></td><td>GET</td><td>Get the theoretical phasor locus.</td></tr>
+            <tr><td><code>/api/v1/data/import/sdt</code></td><td>POST</td><td>Import an SDT file.</td></tr>
+            <tr><td><code>/api/v1/session/save/{session_id}</code></td><td>POST</td><td>Persist the current state.</td></tr>
+            <tr><td><code>/api/v1/session/load/{session_id}</code></td><td>POST</td><td>Restore a saved state.</td></tr>
+        </table>
+
+        <h3>Example Precision Call</h3>
+        <pre>curl -X POST http://127.0.0.1:8000/api/v1/workflows/precision ^
+  -H "Content-Type: application/json" ^
+  -d "{\"config_patch\": {\"f_x_param\": \"tau1\", \"precision_validate_mc\": true}}"</pre>
+    </div>
+
+    <div class="card">
+        <h2>4. Data API Contract</h2>
+        <p>The Digital Twin now exposes stable data-oriented artifacts for software integration:</p>
+        <ul>
+            <li><span class="good">Tau maps</span>: fitted lifetime images for downstream visualization or QC.</li>
+            <li><span class="good">Diagnostics snapshots</span>: time vector, gates, IRF, and reference PDF for architecture introspection.</li>
+            <li><span class="good">Pixel analyses</span>: one-pixel decay, gate centers, analytic fit, and estimated lifetime.</li>
+            <li><span class="good">Precision payloads</span>: ideal reference, theory curve, and Monte Carlo statistics including compatibility tests.</li>
+            <li><span class="good">GUI schema</span>: software-readable description of workspace regions and actionable GUI elements.</li>
+        </ul>
+    </div>
+
+    <div class="card">
+        <h2>5. GUI Automation API</h2>
+        <p><span class="badge">Module</span><code>python/gui/automation_api.py</code></p>
+        <p>When another Python application embeds or drives the live desktop, use <code>window.desktop_api</code> instead of touching individual Qt widgets directly.</p>
+
+        <pre>from gui.main_window import HILIGHTMainWindow
+
+window = HILIGHTMainWindow()
+api = window.desktop_api
+api.set_controller_state({"precision_validate_mc": True})
+api.trigger_run()
+precision_plot = api.get_precision_plot()</pre>
+
+        <table>
+            <tr><th>Method</th><th>Description</th></tr>
+            <tr><td><code>get_layout()</code></td><td>Return the dock/layout contract for the workspace.</td></tr>
+            <tr><td><code>get_controller_state()</code></td><td>Return the current controller-driven config state.</td></tr>
+            <tr><td><code>set_controller_state(patch)</code></td><td>Patch controller-configurable state and refresh diagnostics.</td></tr>
+            <tr><td><code>trigger_run()</code></td><td>Execute the precision workflow.</td></tr>
+            <tr><td><code>trigger_test()</code></td><td>Execute the synthetic image workflow.</td></tr>
+            <tr><td><code>trigger_export_preview()</code></td><td>Open the precision-report HTML preview.</td></tr>
+            <tr><td><code>get_precision_plot()</code></td><td>Get the live precision plot payload, including MC compatibility masks.</td></tr>
+            <tr><td><code>get_accuracy_plot()</code></td><td>Get the live gridded MLE accuracy payload.</td></tr>
+            <tr><td><code>get_diagnostics_frames()</code></td><td>Read currently cached diagnostics sweep frames.</td></tr>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>6. MCP Server</h2>
+        <p><span class="badge">Module</span><code>python/mcp_server.py</code></p>
+        <p>The server speaks stdio MCP with JSON-RPC framing (<code>Content-Length</code> headers), and it reuses the shared service layer. This allows an LLM runtime to treat the Digital Twin as a tool/resource provider.</p>
+
+        <h3>Run</h3>
+        <pre>python python/mcp_server.py</pre>
+
+        <h3>Tools</h3>
+        <table>
+            <tr><th>Tool</th><th>Description</th></tr>
+            <tr><td><code>get_status</code></td><td>Backend readiness and current engine summary.</td></tr>
+            <tr><td><code>get_config</code></td><td>Current configuration.</td></tr>
+            <tr><td><code>update_config</code></td><td>Patch the current configuration.</td></tr>
+            <tr><td><code>run_precision</code></td><td>Run theory and optional Monte Carlo precision analysis.</td></tr>
+            <tr><td><code>simulate_basic</code></td><td>Generate a basic synthetic dataset.</td></tr>
+            <tr><td><code>simulate_advanced</code></td><td>Generate an advanced instrument simulation.</td></tr>
+            <tr><td><code>get_data_summary</code></td><td>Summarize loaded raw data and result maps.</td></tr>
+            <tr><td><code>get_diagnostics_snapshot</code></td><td>Return current gates, IRF, and reference PDF.</td></tr>
+            <tr><td><code>get_gui_schema</code></td><td>Return the declarative GUI schema.</td></tr>
+        </table>
+
+        <h3>Resources</h3>
+        <table>
+            <tr><th>URI</th><th>Description</th></tr>
+            <tr><td><code>hilight://status</code></td><td>Backend status snapshot.</td></tr>
+            <tr><td><code>hilight://config</code></td><td>Current configuration snapshot.</td></tr>
+            <tr><td><code>hilight://gui-schema</code></td><td>Declarative GUI schema snapshot.</td></tr>
+        </table>
+
+        <h3>Prompts</h3>
+        <table>
+            <tr><th>Name</th><th>Description</th></tr>
+            <tr><td><code>precision-audit</code></td><td>Audit theory vs Monte Carlo and focus on statistically incompatible regions.</td></tr>
+            <tr><td><code>instrument-design</code></td><td>Use sweeps to design a robust architecture for a lifetime regime.</td></tr>
+            <tr><td><code>data-inspection</code></td><td>Inspect current data products and explain estimator behavior.</td></tr>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>7. LLM Integration Strategy</h2>
+        <p>Recommended operating sequence for an LLM agent:</p>
+        <ol>
+            <li>Query <code>get_status</code> and <code>get_config</code>.</li>
+            <li>Retrieve <code>get_gui_schema</code> to align assistant language with the desktop workflow.</li>
+            <li>Run or propose configuration changes using <code>update_config</code>.</li>
+            <li>Use <code>run_precision</code> for theory and MC validation.</li>
+            <li>Treat Monte Carlo points with <code>compatible == false</code> as biased or statistically unsupported at the configured estimator-accuracy p-value threshold.</li>
+            <li>Explain recommendations in terms of both theory and validation, never theory alone.</li>
+        </ol>
+
+        <h3>Core Context Injection</h3>
+        <pre>You are operating the HILIGHTer Digital Twin through its APIs or MCP server.
+Always inspect backend status and current config before making recommendations.
+Treat Monte Carlo compatibility at p >= the configured estimator-accuracy threshold as the validation gate for estimator trust.
+Use the GUI schema to reference the correct controller tabs and widgets when guiding users.</pre>
+
+        <h3>Prompt Pack Location</h3>
+        <p>See <code>docs/llm_integration_prompts.md</code> for reusable prompt recipes and context blocks.</p>
+    </div>
+
+    <div class="card">
+        <h2>8. Notes and Limits</h2>
+        <ul>
+            <li>The HTTP API and MCP server currently operate on the shared service layer, not the live Qt desktop instance.</li>
+            <li>The desktop automation API is in-process. It is intended for Python software embedding the GUI or controlling it in the same runtime.</li>
+            <li>The MCP server is functional over stdio and suitable for tool/resource/prompt integration with an LLM host.</li>
+            <li>For production multi-user orchestration, the shared service layer should eventually move from global in-memory state to explicit session-scoped instances.</li>
+        </ul>
+    </div>
+
+    <footer style="margin-top: 42px; text-align: center; color: var(--muted); font-size: 0.85em;">
+        &copy; 2026 HILIGHT Project | Digital Twin API and MCP Reference
+    </footer>
+</main>
+</body>
+</html>

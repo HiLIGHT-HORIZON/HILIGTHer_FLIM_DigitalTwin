@@ -1,0 +1,41 @@
+{
+    "pt_trep": 12.5,
+    "irf_fwhm": 0.01,
+    "irf_profile": "rectangular",
+    "toff": 12.5,
+    "irf_rise_time": 0,
+    "irf_fall_time": 0,
+    "b_pulse_train": false,
+    "pt_sigma": 0.05,
+    "gate_type": "custom",
+    "expansion_ratio": 0.0001,
+    "a_photons": 2000.0,
+    "n_repeats": 1,
+    "dt_input": 0.05,
+    "gate_widths": [
+        1.2022312357422731,
+        1.5704123307679585,
+        6.640586156301755,
+        2.545252418853405
+    ],
+    "gate_edges": [
+        0.0,
+        1.2022312357422731,
+        2.7726435665102316,
+        9.413229722811987,
+        11.958482141665392
+    ],
+    "label": "TimeGating 4 bins - optimized",
+    "decay_model": "exponential",
+    "n_components": 1,
+    "taus": [
+        2.5,
+        1.0
+    ],
+    "amplitudes": [
+        1.0,
+        0.0
+    ],
+    "beta": 1.0,
+    "background_level": 0.0
+}

@@ -1,0 +1,12 @@
+PyQt6
+PyQt6-WebEngine
+pyqtgraph
+napari[all]
+qtpy
+qdarkstyle
+superqt
+vispy
+numpy
+scipy
+pydantic
+numba
