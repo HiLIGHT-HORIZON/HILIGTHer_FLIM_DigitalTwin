@@ -145,3 +145,48 @@ def test_monte_carlo_precision_returns_bootstrap_confidence_intervals(monkeypatc
     assert np.isfinite(payload["f_ci_upper"][0])
     assert payload["f_ci_lower"][0] < payload["f_value"][0] < payload["f_ci_upper"][0]
     assert payload["efficiency_ci_lower"][0] < payload["efficiency"][0] < payload["efficiency_ci_upper"][0]
+
+
+def test_log_tau_grid_uses_geometric_axis_and_padding():
+    """Log lifetime sweeps should build a geometric MLE axis with extra padding beyond the sweep."""
+    cfg = PhysicsConfig(
+        f_x_param="tau1",
+        f_x_min=0.25,
+        f_x_max=9.0,
+        f_x_steps=30,
+        f_x_scale="log",
+        grid_fine_factor=1,
+    )
+    engine = TwinEngine(cfg)
+    engine.distill_gates()
+    engine.ensure_grid_current()
+
+    axis = engine.grid_tau_axis
+    ratios = axis[1:] / axis[:-1]
+
+    assert axis[0] < cfg.f_x_min
+    assert axis[-1] > cfg.f_x_max
+    assert np.allclose(ratios, ratios[0], rtol=1e-4, atol=1e-8)
+
+
+def test_refined_gridded_mle_handles_log_grid_extremes():
+    """Sub-grid refinement should keep low and high lifetime estimates accurate on coarse log grids."""
+    cfg = PhysicsConfig(
+        gate_edges=[0.0, 1.1, 3.4, 9.0, 25.0],
+        f_x_param="tau1",
+        f_x_min=0.25,
+        f_x_max=9.0,
+        f_x_steps=30,
+        f_x_scale="log",
+        grid_fine_factor=1,
+    )
+    engine = TwinEngine(cfg)
+    engine.distill_gates()
+    t = engine.time_vector
+
+    for tau_true in [0.28, 0.35, 6.5, 8.5]:
+        counts = (engine.gate_shapes @ engine.dt_pdf(t, tau=tau_true)).reshape(1, -1)
+        estimate = engine.estimate_tau_batch(counts)[0]
+        assert np.isclose(estimate, tau_true, rtol=1.5e-2), (
+            f"Expected refined estimate near {tau_true}, got {estimate:.6f}"
+        )

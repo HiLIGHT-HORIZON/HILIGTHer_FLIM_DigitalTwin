@@ -90,6 +90,7 @@ class DiagnosticsWidget(QWidget):
 
         # Registry for dynamic gate curves
         self.gate_curves = []
+        self.bg_curves = []  # Registry for background/sweep reference curves
         self.frames = []
         self.current_frame_index = -1
         self._playback_timer = QTimer(self)
@@ -115,12 +116,27 @@ class DiagnosticsWidget(QWidget):
         for c in self.gate_curves:
             c.setVisible(visible)
 
-    def update_plot(self, time_vec, gate_shapes, irf=None, pdf=None, label=None):
+    def update_plot(self, time_vec, gate_shapes, irf=None, pdf=None, label=None, background_curves=None):
         """Updates the diagnostic view with master gate control."""
         # Clear old gates
         for c in self.gate_curves:
             self.plot_widget.removeItem(c)
         self.gate_curves = []
+
+        # Clear old background curves
+        for c in self.bg_curves:
+            self.plot_widget.removeItem(c)
+        self.bg_curves = []
+
+        # Plot Background Curves (Thin grey lines)
+        if background_curves:
+            for bg_data in background_curves:
+                bg_norm = bg_data / np.max(bg_data) if np.max(bg_data) > 0 else bg_data
+                c = self.plot_widget.plot(
+                    time_vec, bg_norm,
+                    pen=pg.mkPen(color='#555555', width=0.5)
+                )
+                self.bg_curves.append(c)
         
         # Plot Gate Shapes
         colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4']

@@ -6,7 +6,7 @@ import numpy as np
 from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QApplication, QDockWidget, 
                              QVBoxLayout, QWidget, QStatusBar, QFileDialog,
-                             QMenuBar, QDialog, QHBoxLayout, QPushButton)
+                             QMenuBar, QDialog, QHBoxLayout, QPushButton, QMessageBox)
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
 import qdarkstyle
@@ -211,7 +211,7 @@ class HILIGHTMainWindow(QMainWindow):
         self.control_widget.btn_export.clicked.connect(self.preview_last_precision_report)
         self.control_widget.btn_interrupt.clicked.connect(self.interrupt_simulation)
         self.control_widget.btn_manage_inst.clicked.connect(self.open_instrument_manager)
-        self.control_widget.btn_optimize.clicked.connect(self.open_optimizer)
+        self.control_widget.btn_run_optimization.clicked.connect(self.run_optimization_workflow)
         
         # Auto-refresh diagnostics on any param change
         from PyQt6.QtWidgets import QDoubleSpinBox, QSpinBox, QComboBox, QCheckBox, QLineEdit
@@ -243,6 +243,15 @@ class HILIGHTMainWindow(QMainWindow):
         dlg.setLayout(QVBoxLayout())
         
         opt_widget = OptimizerWidget(self.engine)
+        opt_widget.spin_n_gates.setValue(max(2, len(self.engine.config.gate_edges) - 1))
+        t_max = (
+            self.engine.config.detection_opt_end_time
+            if getattr(self.engine.config, "detection_opt_end_anchor", "period") == "custom"
+            else self.engine.config.period
+        )
+        opt_widget.spin_t_max.setValue(t_max)
+        opt_widget.spin_tau_min.setValue(self.engine.config.f_x_min)
+        opt_widget.spin_tau_max.setValue(self.engine.config.f_x_max)
         dlg.layout().addWidget(opt_widget)
         
         # Connect the export signal
@@ -250,6 +259,45 @@ class HILIGHTMainWindow(QMainWindow):
         opt_widget.gates_optimized.connect(dlg.accept)
         
         dlg.exec()
+
+    def run_optimization_workflow(self):
+        """
+        Entry point from the Optimization tab.
+        Currently supports the preserved detection-gate optimizer path.
+        """
+        self.sync_ui_to_config()
+        cfg = self.engine.config
+
+        run_detection = bool(getattr(cfg, "optimize_detection_gates", False))
+        run_excitation = bool(getattr(cfg, "optimize_excitation_profile", False))
+
+        if not run_detection and not run_excitation:
+            QMessageBox.information(
+                self,
+                "Optimization",
+                "Enable at least one optimization target in the Optimization tab.",
+            )
+            return
+
+        if run_excitation:
+            QMessageBox.information(
+                self,
+                "Optimization",
+                "Excitation-profile optimization is configured in the controller but is not implemented yet.\n\n"
+                "The currently supported runnable path is detection-gate optimization.",
+            )
+            return
+
+        if run_detection and run_excitation and getattr(cfg, "optimization_mode", "sequential") == "iterative":
+            QMessageBox.information(
+                self,
+                "Optimization",
+                "Iterative alternating optimization is not implemented yet.\n\n"
+                "The currently supported runnable path is a single detection-gate optimization.",
+            )
+            return
+
+        self.open_optimizer()
 
     def on_gates_optimized(self, edges):
         """Callback for when new gate edges are decided by the optimizer."""
@@ -296,12 +344,24 @@ class HILIGHTMainWindow(QMainWindow):
         cfg.f_x_max = cw.spin_fx_max.value()
         cfg.f_x_steps = cw.spin_fx_steps.value()
         cfg.grid_fine_factor = cw.spin_grid_fine_factor.value()
-        coarse_step = (cfg.f_x_max - cfg.f_x_min) / max(1, cfg.f_x_steps - 1)
-        cfg.grid_tau_min = max(1e-6, cfg.f_x_min - coarse_step)
-        cfg.grid_tau_max = cfg.f_x_max + coarse_step
-        cfg.grid_steps = max(3, ((cfg.f_x_steps - 1) + 2) * cfg.grid_fine_factor + 1)
         scale_map = {"log": "log", "linear": "linear", "exponential": "exp"}
         cfg.f_x_scale = scale_map.get(cw.combo_fx_scale.currentText().lower(), "log")
+        use_log_grid = (
+            cfg.f_x_scale == "log"
+            and cfg.f_x_param in {"tau1", "tau2", "beta"}
+            and cfg.f_x_min > 0
+            and cfg.f_x_max > 0
+        )
+        if use_log_grid:
+            step_ratio = (cfg.f_x_max / cfg.f_x_min) ** (1.0 / max(1, cfg.f_x_steps - 1))
+            pad_factor = max(step_ratio, 1.25)
+            cfg.grid_tau_min = max(1e-6, cfg.f_x_min / pad_factor)
+            cfg.grid_tau_max = max(cfg.grid_tau_min * 1.0001, cfg.f_x_max * pad_factor)
+        else:
+            coarse_step = (cfg.f_x_max - cfg.f_x_min) / max(1, cfg.f_x_steps - 1)
+            cfg.grid_tau_min = max(1e-6, cfg.f_x_min - coarse_step)
+            cfg.grid_tau_max = cfg.f_x_max + coarse_step
+        cfg.grid_steps = max(3, ((cfg.f_x_steps - 1) + 2) * cfg.grid_fine_factor + 1)
         cfg.precision_validate_mc = cw.chk_validate_mc.isChecked()
         cfg.precision_compute_ci = cw.chk_compute_ci.isChecked()
         cfg.precision_photons = cw.spin_precision_photons.value()
@@ -310,6 +370,68 @@ class HILIGHTMainWindow(QMainWindow):
         cfg.precision_bootstrap_samples = cw.spin_bootstrap_samples.value()
         cfg.precision_ci_level = cw.spin_ci_level.value()
         cfg.sweep_autoplay = self.diagnostics_widget.chk_autoplay.isChecked()
+
+        # Optimization
+        cfg.optimize_detection_gates = cw.chk_opt_detection.isChecked()
+        cfg.optimize_excitation_profile = cw.chk_opt_excitation.isChecked()
+        optimization_mode_map = {"sequential": "sequential", "iterative": "iterative"}
+        cfg.optimization_mode = optimization_mode_map.get(cw.combo_optimization_mode.currentText().lower(), "sequential")
+        optimization_first_map = {"detection first": "detection", "excitation first": "excitation"}
+        cfg.optimization_first = optimization_first_map.get(cw.combo_optimization_first.currentText().lower(), "detection")
+        cfg.optimization_iterations = cw.spin_optimization_iterations.value()
+        optimization_objective_map = {
+            "fisher information": "fisher_information",
+            "fisher throughput": "fisher_throughput",
+        }
+        cfg.optimization_objective = optimization_objective_map.get(
+            cw.combo_optimization_objective.currentText().lower(),
+            "fisher_information",
+        )
+        cfg.optimization_max_fi_loss_pct = cw.spin_optimization_fi_loss.value()
+
+        detection_algorithm_map = {
+            "direct mean f minimization": "direct_slsqp",
+            "partition theorem bottom-up": "partition_bottom_up",
+            "partition theorem top-down": "partition_top_down",
+            "fisher compression": "fisher_compression",
+        }
+        cfg.detection_optimization_algorithm = detection_algorithm_map.get(
+            cw.combo_detection_algorithm.currentText().lower(),
+            "direct_slsqp",
+        )
+        detection_start_map = {"stick to 0": "zero", "start after irf": "irf", "custom": "custom"}
+        cfg.detection_opt_start_anchor = detection_start_map.get(
+            cw.combo_detection_start_anchor.currentText().lower(),
+            "zero",
+        )
+        cfg.detection_opt_start_time = cw.spin_detection_start_anchor.value()
+        detection_end_map = {"stick to period": "period", "custom": "custom"}
+        cfg.detection_opt_end_anchor = detection_end_map.get(
+            cw.combo_detection_end_anchor.currentText().lower(),
+            "period",
+        )
+        cfg.detection_opt_end_time = cw.spin_detection_end_anchor.value()
+
+        excitation_profile_map = {
+            "gaussian": "gaussian",
+            "square": "rectangular",
+            "free form": "free_form",
+        }
+        cfg.excitation_optimization_profile = excitation_profile_map.get(
+            cw.combo_excitation_optimization_profile.currentText().lower(),
+            "gaussian",
+        )
+        excitation_constraint_map = {
+            "fixed dose (area)": "fixed_dose",
+            "fixed peak": "fixed_peak",
+        }
+        cfg.excitation_optimization_constraint = excitation_constraint_map.get(
+            cw.combo_excitation_constraint.currentText().lower(),
+            "fixed_dose",
+        )
+        cfg.excitation_optimization_width_min = cw.spin_excitation_width_min.value()
+        cfg.excitation_optimization_width_max = cw.spin_excitation_width_max.value()
+        cfg.excitation_optimization_control_points = cw.spin_excitation_control_points.value()
 
         # Laser & IRF
         cfg.period = cw.spin_period.value()
@@ -678,6 +800,7 @@ class HILIGHTMainWindow(QMainWindow):
             plot_results = {}
             accuracy_results = {}
             run_series = []
+            background_pdfs = [] # Accumulate PDFs for background visualization
 
             for raw_value in sweep_values:
                 if self.engine.config.b_interrupt:
@@ -691,7 +814,19 @@ class HILIGHTMainWindow(QMainWindow):
                     label = self._format_sweep_label(cfg.instr_sweep_param, raw_value, sweep_cfg)
 
                 frame = self._create_diagnostics_frame(sweep_cfg, label)
-                self._show_diagnostics_frame(frame, use_frames=True)
+                self.diagnostics_widget.append_frame(frame, focus=True)
+                
+                # Update with sweep history (thin lines)
+                background_pdfs.append(frame["pdf"]) # Add current PDF to background set
+                self.diagnostics_widget.update_plot(
+                    frame["time_vec"],
+                    frame["gate_shapes"],
+                    irf=frame.get("irf"),
+                    pdf=frame.get("pdf"),
+                    label=frame.get("label"),
+                    background_curves=background_pdfs
+                )
+                
                 self.diagnostics_widget.pause_playback()
                 QApplication.processEvents()
 

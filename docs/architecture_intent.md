@@ -1,86 +1,133 @@
-# Architecture Intent Map: HILIGHTer
+# Architecture Intent Map: HILIGHTer Digital Twin
 
+## Product Intent
+The Python Digital Twin is the main engineering platform for the project. It is no longer framed as a full experimental-data analysis clone of the MATLAB application. Its primary purpose is to model and benchmark virtual FLIM instruments, quantify estimator performance, and expose that capability through stable software interfaces.
 
-## Core Design Philosophy: Unified Data Flow
-The application has transitioned from a simulation-only tool to a dual-mode platform. All data (Synthetic and Experimental) is channeled through the **Unified Data Model**.
+The core product goals are:
 
-| Component | Intention | Responsible Function(s) |
+- Numerical Fisher Information and CRLB estimation.
+- Monte Carlo validation of those precision estimates.
+- Bootstrap-based estimator-accuracy testing and confidence intervals.
+- Rich virtual-instrument configuration across excitation, detection, gating, and acquisition parameters.
+- Synthetic image generation and testing workflows.
+- API-first interoperability for other software and LLM agents through Python APIs, HTTP APIs, and MCP.
+
+## Architectural Principles
+
+### 1. Simulation-First
+The Digital Twin is built around synthetic acquisition, not experimental import. Simulation, precision analysis, and diagnostics are the primary workflows.
+
+Experimental import endpoints may still exist as compatibility utilities, but they are not the central product scope and should not drive the architecture.
+
+### 2. Precision-First
+The main benchmark is estimator quality under a configurable virtual instrument.
+
+This means the platform must support:
+
+- ideal-reference precision curves,
+- numerical Fisher / F-value curves under non-ideal instrumentation,
+- Monte Carlo validation against the same sweep,
+- bootstrap p-value testing for estimator accuracy,
+- bootstrap confidence intervals for Monte Carlo precision metrics.
+
+### 3. API-First
+All major functionality should be reachable without manual GUI interaction.
+
+The intended control surfaces are:
+
+- shared Python service API for application and workflow integration,
+- FastAPI HTTP surface for remote or web-driven use,
+- desktop automation API for in-process control of the live Qt workspace,
+- MCP server for LLM tooling, data access, and prompt injection.
+
+### 4. One Core Engine, Many Frontends
+Physics logic should live once in the backend engine and be reused by every interface. The GUI, HTTP API, reports, tests, and MCP server should all depend on the same computational implementation rather than duplicating model logic.
+
+## Layered Architecture
+
+| Layer | Main Module | Intent |
 | :--- | :--- | :--- |
-| **Unified State** | Provides a single source of truth for the app's state, preventing "context drift." | `flows_getData`, `flows_setData` |
-| **Image Tab** | The "Master View." It handles navigation across groups, files, and channels. It DOES NOT perform analysis; it triggers it. | `createImageTabInterface`, `refreshUnifiedPlots` |
-| **Analysis Tabs** | Specialized "Worker Views." They perform mathematical operations on slices of data provided by the Image Tab context. | `createNewFitTab`, `createNewPhasorTab`, `createNewLimaTab` |
-| **Context Sync** | Ensures that switching a channel in the Image Tab updates the internal state of all background Analysis tabs. | `updateAnalysisContext`, `navChannel` |
+| Physics Engine | `python/backend/twin_engine.py` | Time-domain excitation, decay PDFs, gate distillation, Fisher estimation, gridded MLE, Monte Carlo workflows, bootstrap statistics, diagnostics, synthetic image generation. |
+| Shared State Models | `python/backend/models.py` | Validated configuration and state objects used across the backend and desktop. |
+| Service Layer | `python/backend/service_api.py` | Stable orchestration surface for workflows, data access, configuration changes, diagnostics, and sessions. |
+| HTTP API | `python/backend/main.py` | Remote programmatic access to the shared service layer. |
+| Desktop Workspace | `python/gui/main_window.py` and widgets | Interactive engineering environment for precision, diagnostics, image simulation, and plot inspection. |
+| Desktop Automation | `python/gui/automation_api.py` | In-process control of the live desktop, including controller state and plot payload access. |
+| MCP Server | `python/mcp_server.py` | Stdio MCP bridge exposing tools, resources, and prompts to LLM hosts. |
+| Documentation and Reports | `docs/` and HTML exporters | Human-readable manuals, parity reports, and precision-session outputs. |
 
-## Core Design Philosophy: Precision-First Logic
-The Digital Twin has evolved from a simple Monte Carlo simulator to a target-oriented **Optimality Profiler**.
+## State Model Intent
+The validated configuration object is the single source of truth for simulation and precision workflows.
 
-| Component | Intention | Logic |
-| :--- | :--- | :--- |
-| **Precision Analysis** | Evaluation of the **Cramér-Rao Lower Bound (CRLB)**. | Theoretical Fisher Matrix inversion based on model derivatives. |
-| **Target Parameter** | the X-axis of our benchmarks. | One model parameter (e.g. \(\tau_1\)) is swept while others are fixed. |
-| **Batch Instrumentation**| Evaluating hardware impact. | Sweeping instrument non-idealities (e.g. Jitter) to generate multiple precision curves. |
-| **Synthetic Imaging** | Monte Carlo verification. | Generates repeated gated photon-count experiments and compares the recovered precision against the CRLB/F-value curve. |
+Important state categories include:
 
-## 1. Unified State & Models
-All components share a pydantic `PhysicsConfig` state.
-*   **Fix Flags**: Determines which parameters the inverse problem (MLE) treats as constants.
-*   **F-Value Axis**: Selective targeting of which physical dimension is evaluated for precision.
-*   **Decay wrapping**: A mathematical logic representing the pulse-train excitation. Signal tails from previous periods wrap into the current window. Default: **ON**.
-*   **Measurement Period (\(T_{rep}\))**: The fundamental temporal window of the experiment (Standard: **50 ns / 20 MHz**). All simulations and visualizations are confined to this range.
-*   **Sensor Dead-time / Read-out**: A predefined period where detection is inactive (Standard: **18 ns**).
-*   **Burst Excitation**: A secondary high-frequency sub-structure. If active, the standard IRF (Gaussian/Rect) acts as a slow temporal envelope for a burst of ultra-fast pulses (Sweet spot: **5-7.5 ns**).
-*   **Precision Workspace**: The desktop `RUN PRECISION` flow now acts as a combined theory-and-validation runner. It can:
-    * compute the ideal reference and theoretical F-value curves,
-    * optionally run Monte Carlo validation for single-exponential `tau1` sweeps,
-    * update the precision plot incrementally while points are being computed,
-    * update and cache instrument-diagnostics frames for each sweep configuration,
-    * export the last completed precision session as an interactive HTML report.
+- decay model and component parameters,
+- excitation model, width, timing, rise/fall behavior, burst settings,
+- detection and gate geometry,
+- sweep definitions for parameter studies,
+- precision execution settings such as photon budget, Monte Carlo repeats, bootstrap samples, CI level, and estimator-accuracy threshold,
+- plotting and reporting options used by the desktop workspace and exports.
 
-## 2. Performance Benchmarks (Parity Targets)
-Based on Deliverable 6.1 (T6.2), the system must validate against these "Gold Standard" configurations:
+The GUI must synchronize to this model rather than holding independent hidden state.
 
-| configuration | Gate Edges (ns) | Target Performance |
-| :--- | :--- | :--- |
-| **8-Gate Reference** | Evenly spaced over 32 ns | Peak efficiency ~75% @ 4ns |
-| **4-Gate Baseline** | Edges: [0, 8, 16, 24, 32] | ~40% efficiency @ 2ns |
-| **4-Gate Optimized** | Edges: [0, 2.8, 7.5, 12.5, 32] | **~50% efficiency @ 2ns** |
-*   **IRF Morphing**: Adaptive control over IRF geometry.
-    *   **Gaussian**: Control over the **Center** of the peak.
-    *   **Rectangular**: Control over the **Start** of the wave, with optional asymmetric Rise/Fall transitions.
+## Workflow Intent
 
-## Frame Intentions & UIDs
+### Precision Workflow
+The precision workflow is the main engineering benchmark loop.
 
-### UID_Image_PlotArea
-*   **Intent**: Visual identification of raw vs processed data.
-*   **Interaction**: Click on the XY projection to trigger "Pixel Analysis" (visualizing the decay at that specific coordinate).
+Expected outputs:
 
-### UID_Phasor_Settings
-*   **Intent**: Controls for the Phasor plot visualization (Harmonics, ROIs, Zoom).
-*   **Physics Logic**: Maps time-domain decays to the complex unit circle.
+- ideal Fisher reference,
+- theory curve for the configured instrument,
+- optional Monte Carlo validation,
+- optional bootstrap confidence intervals,
+- compatibility statistics for estimator-accuracy checks,
+- diagnostics frames for the swept configurations,
+- exportable HTML report.
 
-### UID_Fit_ParamPanel
-*   **Intent**: Configuration of numerical fitting engines.
-*   **Mathematics**: Supports Grid MLE, Tail Fitting, and Iterative Reconvolution.
+### Synthetic Image Workflow
+The synthetic image workflow exists to test estimators and visualization paths on simulated datasets produced by the same instrument model.
 
-## Data Hierarchy & Retrieval Protocol
-**CRITICAL**: All analysis functions must NOT inspect `fig.UserData` directly. They MUST use `getChannelData(fig, chanIdx)` to guarantee they are analyzing the data visible to the user.
+Expected outputs:
 
-### 1. Data Structure (The "Database")
-Experimental and imported data resides in a nested structure within `fig.UserData`:
-*   `d.Conditions{group_index}`: A cell array representing logical groups (Conditions).
-*   `.Analysis(file_index)`: An array of structs representing individual files within a group.
-*   `.Data`: **The Primary Data Blob**. This contains the 4D hypercube `[Y, X, T, Channels]`.
-    *   **Access Path**: `d.Conditions{i}.Analysis(f).Data`.
+- synthetic gated data,
+- fit maps,
+- phasor products,
+- pixel-level inspection payloads,
+- data summaries for software integration.
 
-### 2. Retrieval Logic (`getChannelData`)
-The `getChannelData` function acts as the "Gatekeeper". It prioritizes data sources in this order:
-1.  **Dynamic Lookup**: Uses `navGroup` and `navFile` indices to fetch `d.Conditions{navGroup}.Analysis(navFile).Data`.
-2.  **Cached View**: `d.currentData` (The slice currently shown in the Image Tab).
-3.  **Legacy/Simulation**: `d.RawData` (Output from the internal simulator).
+## MCP and LLM Intent
+The MCP server is intended to let external LLM systems use the Digital Twin as a structured reasoning backend.
 
+MCP should expose:
 
+- configuration inspection and mutation,
+- workflow execution,
+- precision and diagnostics access,
+- data and result snapshots,
+- GUI schema metadata so an LLM can reference the desktop consistently,
+- reusable prompts that encode good operating patterns.
 
+The MCP layer currently targets backend and workspace-schema access. Live Qt widget driving remains the responsibility of the in-process desktop automation API unless a future dedicated desktop MCP bridge is introduced.
 
+## Documentation Intent
+The HTML manual must stay synchronized with the actual implementation and cover:
 
+- product scope,
+- architecture,
+- shared service API,
+- HTTP API,
+- desktop automation API,
+- MCP tools, resources, and prompts,
+- setup instructions for supported LLM hosts,
+- current scope limits and compatibility notes.
 
+## Validation Intent
+The Python Digital Twin should be validated against:
 
+- focused backend tests,
+- parity checks against known MATLAB or report benchmarks where applicable,
+- smoke tests of the MCP server,
+- interactive validation in the Qt workspace for plotting, legends, and diagnostics.
+
+Parity with MATLAB is important for core physics and benchmark trends, but the Python product is intentionally narrower in scope and more integration-oriented.

@@ -66,3 +66,50 @@ def test_optimization_improvement():
     
     # J should be <= baseline (minimization)
     assert best_j <= j_baseline + 1e-9
+
+
+@pytest.mark.parametrize(
+    "algorithm",
+    ["partition_bottom_up", "partition_top_down", "fisher_compression"],
+)
+def test_additional_detection_algorithms_return_valid_edges(algorithm):
+    engine = TwinEngine(PhysicsConfig(period=12.5))
+    best_edges, best_j, info = engine.optimize_gates(
+        n_gates=4,
+        t_max=12.5,
+        tau_range=(0.5, 5.0),
+        n_tau=12,
+        n_restarts=2,
+        algorithm=algorithm,
+    )
+
+    assert len(best_edges) == 5
+    assert np.all(np.diff(best_edges) > 0)
+    assert np.isclose(best_edges[0], 0.0)
+    assert np.isclose(best_edges[-1], 12.5)
+    assert np.isfinite(best_j)
+    assert info["algorithm"] == algorithm
+    assert info["f_val"].shape == (12,)
+
+
+def test_additional_detection_algorithms_honor_custom_window():
+    engine = TwinEngine(PhysicsConfig(period=12.5))
+    best_edges, best_j, info = engine.optimize_gates(
+        n_gates=3,
+        t_max=12.5,
+        tau_range=(0.5, 5.0),
+        n_tau=10,
+        algorithm="fisher_compression",
+        start_anchor="custom",
+        start_time=1.5,
+        end_anchor="custom",
+        end_time=10.0,
+    )
+
+    assert len(best_edges) == 4
+    assert np.all(np.diff(best_edges) > 0)
+    assert np.isclose(best_edges[0], 1.5)
+    assert np.isclose(best_edges[-1], 10.0)
+    assert np.isfinite(best_j)
+    assert np.isclose(info["window_start"], 1.5)
+    assert np.isclose(info["window_end"], 10.0)

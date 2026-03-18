@@ -301,12 +301,13 @@ class FisherWidget(QWidget):
             self._set_items_visible(group["mc"], series_enabled and show_mc)
 
     def _create_ci_band_items(self, x, lower, upper, color):
-        lower_curve = pg.PlotDataItem(x=x, y=lower, pen=None)
-        upper_curve = pg.PlotDataItem(x=x, y=upper, pen=None)
+        invisible_pen = pg.mkPen(QColor(0, 0, 0, 0), width=1)
+        lower_curve = pg.PlotDataItem(x=x, y=lower, pen=invisible_pen)
+        upper_curve = pg.PlotDataItem(x=x, y=upper, pen=invisible_pen)
         color_obj = pg.mkColor(color)
         fill = pg.FillBetweenItem(
-            upper_curve,
-            lower_curve,
+            upper_curve.curve,
+            lower_curve.curve,
             brush=QColor(color_obj.red(), color_obj.green(), color_obj.blue(), 70),
         )
         fill.setZValue(1)

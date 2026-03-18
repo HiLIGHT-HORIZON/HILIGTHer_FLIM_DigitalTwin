@@ -1,7 +1,7 @@
+import contextlib
 import json
 import os
 import sys
-import contextlib
 from typing import Any, Dict
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -12,7 +12,7 @@ from mcp_prompts import get_prompts
 
 SERVICE = DigitalTwinService()
 PROMPTS = get_prompts()
-SERVER_INFO = {"name": "hilighter-digital-twin-mcp", "version": "1.0.0"}
+SERVER_INFO = {"name": "hilighter-digital-twin-mcp", "version": "1.1.0"}
 
 
 def _read_message():
@@ -114,6 +114,41 @@ def _tool_definitions():
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
+            "name": "get_results_snapshot",
+            "description": "Return current tau, amplitude, background, chi2, and summary payloads.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "get_tau_map",
+            "description": "Return the current tau map only.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "get_phasor_map",
+            "description": "Return the current phasor map for a harmonic.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"harmonic": {"type": "integer"}},
+            },
+        },
+        {
+            "name": "get_theoretical_locus",
+            "description": "Return the theoretical phasor locus.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "get_pixel_analysis",
+            "description": "Return one pixel decay, fit, and estimated lifetime.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "y": {"type": "integer"},
+                    "x": {"type": "integer"},
+                },
+                "required": ["y", "x"],
+            },
+        },
+        {
             "name": "get_diagnostics_snapshot",
             "description": "Return time vector, gates, IRF, and reference PDF for the current instrument.",
             "inputSchema": {
@@ -125,6 +160,24 @@ def _tool_definitions():
             "name": "get_gui_schema",
             "description": "Return the declarative GUI schema for software-driven frontends.",
             "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "save_session",
+            "description": "Persist the current state and available data under a session identifier.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"session_id": {"type": "string"}},
+                "required": ["session_id"],
+            },
+        },
+        {
+            "name": "load_session",
+            "description": "Restore a previously saved session.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"session_id": {"type": "string"}},
+                "required": ["session_id"],
+            },
         },
     ]
 
@@ -144,10 +197,24 @@ def _call_tool(name: str, arguments: Dict[str, Any]):
         return SERVICE.simulate_advanced(arguments)
     if name == "get_data_summary":
         return SERVICE.get_data_summary()
+    if name == "get_results_snapshot":
+        return SERVICE.get_results_snapshot()
+    if name == "get_tau_map":
+        return SERVICE.get_tau_map()
+    if name == "get_phasor_map":
+        return SERVICE.get_phasor_map(harmonic=int(arguments.get("harmonic", 1)))
+    if name == "get_theoretical_locus":
+        return SERVICE.get_theoretical_locus()
+    if name == "get_pixel_analysis":
+        return SERVICE.get_pixel_analysis(int(arguments["y"]), int(arguments["x"]))
     if name == "get_diagnostics_snapshot":
         return SERVICE.get_diagnostics_snapshot(arguments.get("tau_ref"))
     if name == "get_gui_schema":
         return SERVICE.get_gui_schema()
+    if name == "save_session":
+        return SERVICE.save_session(str(arguments["session_id"]))
+    if name == "load_session":
+        return SERVICE.load_session(str(arguments["session_id"]))
     raise KeyError(f"Unknown tool: {name}")
 
 
@@ -156,6 +223,11 @@ def _resource_list():
         {"uri": "hilight://status", "name": "Backend Status", "mimeType": "application/json"},
         {"uri": "hilight://config", "name": "Current Config", "mimeType": "application/json"},
         {"uri": "hilight://gui-schema", "name": "GUI Schema", "mimeType": "application/json"},
+        {"uri": "hilight://data-summary", "name": "Data Summary", "mimeType": "application/json"},
+        {"uri": "hilight://results", "name": "Results Snapshot", "mimeType": "application/json"},
+        {"uri": "hilight://tau-map", "name": "Tau Map", "mimeType": "application/json"},
+        {"uri": "hilight://theory-locus", "name": "Theoretical Locus", "mimeType": "application/json"},
+        {"uri": "hilight://diagnostics", "name": "Diagnostics Snapshot", "mimeType": "application/json"},
     ]
 
 
@@ -166,6 +238,16 @@ def _resource_read(uri: str):
         return SERVICE.get_config()
     if uri == "hilight://gui-schema":
         return SERVICE.get_gui_schema()
+    if uri == "hilight://data-summary":
+        return SERVICE.get_data_summary()
+    if uri == "hilight://results":
+        return SERVICE.get_results_snapshot()
+    if uri == "hilight://tau-map":
+        return SERVICE.get_tau_map()
+    if uri == "hilight://theory-locus":
+        return SERVICE.get_theoretical_locus()
+    if uri == "hilight://diagnostics":
+        return SERVICE.get_diagnostics_snapshot()
     raise KeyError(f"Unknown resource: {uri}")
 
 
@@ -176,15 +258,18 @@ def handle_request(message: Dict[str, Any]):
 
     try:
         if method == "initialize":
-            return _success(msg_id, {
-                "protocolVersion": "2024-11-05",
-                "serverInfo": SERVER_INFO,
-                "capabilities": {
-                    "tools": {},
-                    "resources": {},
-                    "prompts": {},
+            return _success(
+                msg_id,
+                {
+                    "protocolVersion": "2024-11-05",
+                    "serverInfo": SERVER_INFO,
+                    "capabilities": {
+                        "tools": {},
+                        "resources": {},
+                        "prompts": {},
+                    },
                 },
-            })
+            )
         if method == "notifications/initialized":
             return
         if method == "tools/list":
@@ -198,16 +283,30 @@ def handle_request(message: Dict[str, Any]):
         if method == "resources/read":
             with contextlib.redirect_stdout(sys.stderr):
                 result = _resource_read(params["uri"])
-            return _success(msg_id, {"contents": [{"uri": params["uri"], "mimeType": "application/json", "text": json.dumps(result, indent=2)}]})
+            return _success(
+                msg_id,
+                {
+                    "contents": [
+                        {
+                            "uri": params["uri"],
+                            "mimeType": "application/json",
+                            "text": json.dumps(result, indent=2),
+                        }
+                    ]
+                },
+            )
         if method == "prompts/list":
             prompts = [{"name": item["name"], "description": item["description"]} for item in PROMPTS.values()]
             return _success(msg_id, {"prompts": prompts})
         if method == "prompts/get":
             prompt = PROMPTS[params["name"]]
-            return _success(msg_id, {
-                "description": prompt["description"],
-                "messages": [{"role": "user", "content": {"type": "text", "text": prompt["template"]}}],
-            })
+            return _success(
+                msg_id,
+                {
+                    "description": prompt["description"],
+                    "messages": [{"role": "user", "content": {"type": "text", "text": prompt["template"]}}],
+                },
+            )
         return _error(msg_id, -32601, f"Method not found: {method}")
     except Exception as exc:
         return _error(msg_id, -32000, str(exc))

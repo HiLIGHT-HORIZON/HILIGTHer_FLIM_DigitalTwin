@@ -1,32 +1,44 @@
 PROMPTS = {
     "precision-audit": {
         "name": "precision-audit",
-        "description": "Audit theory vs Monte Carlo precision and identify incompatible MC regions.",
+        "description": "Audit theory, Monte Carlo validation, and bootstrap confidence intervals for the active precision sweep.",
         "template": (
-            "You are controlling the HILIGHTer Digital Twin. "
-            "First inspect backend status and current config. "
-            "Then run the precision workflow, compare theory and Monte Carlo, "
-            "and explicitly report any Monte Carlo points marked incompatible at the configured estimator-accuracy p-value threshold. "
-            "Recommend instrument changes that improve compatibility and F-value together."
+            "You are controlling the HILIGHTer Digital Twin through MCP. "
+            "Start by reading backend status, current config, and GUI schema. "
+            "Run the precision workflow. "
+            "Compare ideal, theory, and Monte Carlo outputs. "
+            "If confidence intervals are present, use them instead of pointwise Monte Carlo values. "
+            "Explicitly report regions where Monte Carlo compatibility is false at the configured estimator-accuracy threshold, "
+            "and distinguish theory-only conclusions from statistically validated conclusions."
         ),
     },
     "instrument-design": {
         "name": "instrument-design",
-        "description": "Optimize excitation, detection, and gating parameters for a requested lifetime regime.",
+        "description": "Design or refine an excitation, detection, and gating architecture for a target lifetime regime.",
         "template": (
             "Use the Digital Twin as an instrument-design copilot. "
-            "Read the GUI schema and current config, identify the active target parameter, "
-            "and propose a batch sweep plan spanning excitation, detection, and gating. "
-            "After running precision, summarize tradeoffs and the most robust architecture."
+            "Inspect the current configuration, GUI schema, and diagnostics. "
+            "Identify the active target parameter and propose a sweep plan spanning excitation, detection, and gate settings. "
+            "Run precision analysis, compare theory and Monte Carlo, and recommend the most robust design. "
+            "Prioritize configurations that improve F-value while preserving Monte Carlo compatibility."
         ),
     },
     "data-inspection": {
         "name": "data-inspection",
-        "description": "Inspect imported or simulated data products and explain what they mean.",
+        "description": "Inspect simulated data products, maps, diagnostics, and representative pixels.",
         "template": (
-            "Use the Digital Twin data APIs to inspect the current dataset. "
-            "Retrieve the data summary, tau map, phasor map, diagnostics snapshot, and one representative pixel. "
-            "Explain what each artifact says about instrument behavior and estimator quality."
+            "Use the Digital Twin data interfaces to inspect the current simulated state. "
+            "Retrieve the data summary, full results snapshot, tau map, phasor map, theory locus, diagnostics snapshot, and one representative pixel analysis. "
+            "Explain what these artifacts say about estimator behavior, instrument performance, and likely failure modes."
+        ),
+    },
+    "workspace-navigation": {
+        "name": "workspace-navigation",
+        "description": "Guide a user or agent through the desktop workspace using the GUI schema and action identifiers.",
+        "template": (
+            "Use the GUI schema as the source of truth for the desktop workspace. "
+            "When referencing controls, name the controller tab, action button, or plot region explicitly by its schema label and identifier. "
+            "When proposing a workflow, map each step to concrete GUI elements such as RUN, EXPORT, TEST, or the Precision and Diagnostics widgets."
         ),
     },
 }

@@ -3,30 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HILIGHTer Digital Twin | Manual and API Reference</title>
+    <title>HILIGHTer Digital Twin | Manual, API Reference, and MCP Guide</title>
     <style>
         :root {
             --bg: #08111d;
-            --panel: #122235;
+            --panel: rgba(18, 34, 53, 0.96);
             --panel-2: #0f1b2b;
             --text: #e7eef8;
-            --muted: #93a8c1;
+            --muted: #9ab0c8;
             --accent: #38bdf8;
-            --line: #25415f;
+            --line: #27435f;
             --good: #34d399;
             --warn: #fbbf24;
         }
         body {
             font-family: "Segoe UI", Tahoma, sans-serif;
-            background: linear-gradient(180deg, #08111d 0%, #0c1726 100%);
+            background: linear-gradient(180deg, #08111d 0%, #0d1726 100%);
             color: var(--text);
             line-height: 1.6;
             margin: 0;
         }
         main {
-            max-width: 1180px;
+            max-width: 1220px;
             margin: 0 auto;
-            padding: 32px 20px 64px;
+            padding: 30px 20px 64px;
         }
         h1, h2, h3 {
             color: var(--accent);
@@ -36,8 +36,11 @@
             border-bottom: 2px solid var(--line);
             padding-bottom: 12px;
         }
+        p, li {
+            color: var(--text);
+        }
         .card {
-            background: rgba(18, 34, 53, 0.96);
+            background: var(--panel);
             border: 1px solid var(--line);
             border-radius: 14px;
             padding: 20px;
@@ -47,6 +50,28 @@
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
             gap: 16px;
+        }
+        .note {
+            border-left: 4px solid var(--accent);
+            padding: 10px 14px;
+            background: #0b1725;
+            border-radius: 10px;
+            margin-top: 12px;
+        }
+        .warn {
+            color: var(--warn);
+        }
+        .good {
+            color: var(--good);
+        }
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.85em;
+            margin-right: 8px;
+            background: #14314a;
+            color: var(--text);
         }
         code, pre {
             background: #06101a;
@@ -60,6 +85,7 @@
             padding: 14px;
             overflow-x: auto;
             border: 1px solid #1e3348;
+            white-space: pre-wrap;
         }
         table {
             width: 100%;
@@ -75,123 +101,171 @@
         th {
             color: var(--accent);
         }
-        ul {
+        ul, ol {
             padding-left: 22px;
         }
-        .badge {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 999px;
-            font-size: 0.85em;
-            margin-right: 8px;
-            background: #14314a;
-            color: var(--text);
+        .mono {
+            font-family: Consolas, "Courier New", monospace;
         }
-        .good { color: var(--good); }
-        .warn { color: var(--warn); }
     </style>
 </head>
 <body>
 <main>
     <h1>HILIGHTer Digital Twin Manual, API Reference, and MCP Guide</h1>
-    <p>This manual now documents the desktop workflow, the reusable backend/data/GUI APIs, the Model Context Protocol server, and the recommended prompt patterns for LLM-driven operation.</p>
+    <p>This manual documents the Python Digital Twin as a simulation-first, precision-first FLIM engineering platform. It covers the architecture, service and HTTP APIs, desktop automation interface, MCP surface, prompt pack, and LLM host setup patterns for Codex, Claude, Gemini CLI, and Antigravity IDE.</p>
 
     <div class="card">
-        <h2>1. Architecture Overview</h2>
+        <h2>1. Product Scope</h2>
+        <ul>
+            <li>Numerical Fisher Information and CRLB estimation for virtual instruments.</li>
+            <li>Monte Carlo validation of Fisher-based predictions.</li>
+            <li>Bootstrap-based estimator-accuracy tests and confidence intervals.</li>
+            <li>Configuration of excitation, detection, gate, and acquisition parameters for instrument design.</li>
+            <li>Synthetic image generation, fitting, diagnostics, and data products.</li>
+            <li>Software interoperability through Python APIs, HTTP APIs, desktop automation, and MCP.</li>
+        </ul>
+        <div class="note">
+            Experimental import may still exist in compatibility paths, but it is not the main product scope of this Python Digital Twin. The platform should be understood primarily as a virtual-instrument and estimator-engineering environment.
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>2. Architecture Overview</h2>
         <div class="grid">
             <div>
                 <h3>Physics Engine</h3>
                 <p><span class="badge">Module</span><code>python/backend/twin_engine.py</code></p>
-                <p>Forward model for excitation, decay PDFs, gating, Fisher precision, gridded MLE, Monte Carlo validation, and synthetic image generation.</p>
+                <p>Forward model for excitation, decay PDFs, gating, Fisher estimation, gridded MLE, Monte Carlo precision workflows, bootstrap statistics, and synthetic image generation.</p>
+            </div>
+            <div>
+                <h3>State Models</h3>
+                <p><span class="badge">Module</span><code>python/backend/models.py</code></p>
+                <p>Validated configuration and state objects shared across workflows, reports, APIs, and the desktop GUI.</p>
             </div>
             <div>
                 <h3>Service Layer</h3>
                 <p><span class="badge">Module</span><code>python/backend/service_api.py</code></p>
-                <p>Shared orchestration surface used by the HTTP API, future software integrations, and the MCP server. This is the preferred programmatic entry point.</p>
+                <p>The main reusable orchestration surface. HTTP, MCP, reports, and future integrations should prefer this layer over direct engine access.</p>
+            </div>
+            <div>
+                <h3>HTTP API</h3>
+                <p><span class="badge">Module</span><code>python/backend/main.py</code></p>
+                <p>Remote REST interface for workflows, configuration, data products, and diagnostics.</p>
+            </div>
+            <div>
+                <h3>Desktop Workspace</h3>
+                <p><span class="badge">Module</span><code>python/gui/main_window.py</code></p>
+                <p>Qt-based engineering workspace for precision, diagnostics, synthetic maps, pixel analysis, and report export.</p>
             </div>
             <div>
                 <h3>Desktop Automation</h3>
                 <p><span class="badge">Module</span><code>python/gui/automation_api.py</code></p>
-                <p>In-process API for controlling the live Qt workspace, reading plot state, and driving user workflows without scraping widgets manually.</p>
+                <p>In-process control surface for the live GUI, intended for Python software embedding or driving the desktop.</p>
             </div>
             <div>
                 <h3>MCP Server</h3>
                 <p><span class="badge">Module</span><code>python/mcp_server.py</code></p>
-                <p>Stdio JSON-RPC server implementing MCP tools, resources, and prompts so LLM systems can use the Digital Twin as an external reasoning and simulation backend.</p>
+                <p>Stdio MCP server exposing tools, resources, and prompts to LLM hosts using the shared service layer.</p>
+            </div>
+            <div>
+                <h3>Prompt Pack</h3>
+                <p><span class="badge">Module</span><code>python/mcp_prompts.py</code></p>
+                <p>Reusable MCP prompt templates for precision audit, instrument design, data inspection, and GUI-oriented guidance.</p>
             </div>
         </div>
     </div>
 
     <div class="card">
-        <h2>2. Shared Service API</h2>
-        <p>The core reusable API is <code>DigitalTwinService</code>. Another Python application can import it directly and use the Twin without the GUI:</p>
+        <h2>3. Shared State and Workflow Semantics</h2>
+        <p>The single source of truth is the validated configuration model. The GUI, HTTP layer, report generation, and MCP server all operate on that same backend configuration rather than each owning separate hidden state.</p>
+        <table>
+            <tr><th>State Area</th><th>Examples</th><th>Why It Matters</th></tr>
+            <tr><td>Decay and target parameters</td><td><code>tau1</code>, <code>tau2</code>, component count, target sweep axis</td><td>Defines the inverse problem and what is benchmarked.</td></tr>
+            <tr><td>Excitation and IRF</td><td>Pulse width, center/start, jitter, rise/fall, burst settings</td><td>Drives the instrument response and parity with MATLAB/report behavior.</td></tr>
+            <tr><td>Detection and gates</td><td>Gate edges, detector dead time, timing window</td><td>Directly changes Fisher curves and Monte Carlo performance.</td></tr>
+            <tr><td>Precision execution</td><td>Photon budget, MC repeats, p-value threshold, bootstrap resamples, CI level</td><td>Controls accuracy validation and uncertainty reporting.</td></tr>
+            <tr><td>Batch sweep</td><td>Swept parameter, range, scale, series definitions</td><td>Determines how many curves or diagnostics frames are produced.</td></tr>
+            <tr><td>Session and result caches</td><td>Maps, diagnostics frames, precision payloads</td><td>Feeds exports, plot refreshes, and software integrations.</td></tr>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>4. Precision Execution Pane</h2>
+        <p>The desktop precision workflow is the main engineering loop. It combines ideal reference curves, theory, optional Monte Carlo validation, bootstrap-based estimator checks, and optional confidence intervals.</p>
+        <table>
+            <tr><th>Control</th><th>Purpose</th><th>Current Default</th></tr>
+            <tr><td><code>Validate with Monte Carlo</code></td><td>Run repeated MC validation for the active precision sweep.</td><td>On</td></tr>
+            <tr><td><code>Compute 95% CI</code></td><td>Bootstrap the MC repeats and display an interval instead of single MC values.</td><td>Off</td></tr>
+            <tr><td><code>Precision Photons</code></td><td>Photon budget used by theory and MC precision analysis.</td><td>2000</td></tr>
+            <tr><td><code>MC Repeats</code></td><td>Number of repeats at each sweep point.</td><td>400</td></tr>
+            <tr><td><code>Estimator Accuracy p-value</code></td><td>Bootstrap-based compatibility threshold for estimator trust.</td><td>0.001</td></tr>
+            <tr><td><code>Bootstrap Resamples</code></td><td>Bootstrap sample count used for p-values and CIs.</td><td>2000</td></tr>
+            <tr><td><code>CI Level (%)</code></td><td>Confidence level for the interval patch.</td><td>95.0</td></tr>
+            <tr><td><code>Smooth MC</code></td><td>Display-only smoothing of MC series over the tau sweep.</td><td>Off</td></tr>
+        </table>
+        <div class="note">
+            In CI mode, the precision widget displays only the semitransparent interval patch for Monte Carlo. The MC mean line is intentionally omitted.
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>5. Shared Service API</h2>
+        <p><span class="badge">Class</span><code>backend.service_api.DigitalTwinService</code></p>
         <pre>from backend.service_api import DigitalTwinService
 
 service = DigitalTwinService()
 status = service.get_status()
 service.update_config({"f_x_param": "tau1", "precision_validate_mc": True})
-result = service.run_precision()</pre>
-
+precision = service.run_precision({"precision_compute_ci": True})</pre>
         <table>
-            <tr><th>Method</th><th>Purpose</th><th>Returns</th></tr>
-            <tr><td><code>get_status()</code></td><td>Backend readiness and current engine summary.</td><td>Status payload with config summary and data availability.</td></tr>
-            <tr><td><code>get_config()</code></td><td>Full current <code>PhysicsConfig</code>.</td><td>JSON-serializable config dictionary.</td></tr>
-            <tr><td><code>update_config(config_patch)</code></td><td>Patch and validate configuration.</td><td>Updated config.</td></tr>
-            <tr><td><code>simulate_basic(params)</code></td><td>Headless basic synthetic dataset workflow.</td><td>Fit results and data summary.</td></tr>
-            <tr><td><code>simulate_advanced(params)</code></td><td>Advanced instrument simulation workflow.</td><td>Fit results and data summary.</td></tr>
-            <tr><td><code>run_precision(params)</code></td><td>Theory plus optional Monte Carlo precision workflow.</td><td>Ideal, theory, and optional MC outputs.</td></tr>
-            <tr><td><code>get_data_summary()</code></td><td>Summarize loaded raw data and result maps.</td><td>Shape and basic range statistics.</td></tr>
-            <tr><td><code>get_results_snapshot()</code></td><td>Expose current maps programmatically.</td><td>Tau, amplitude, background, and fit-quality maps.</td></tr>
-            <tr><td><code>get_diagnostics_snapshot()</code></td><td>Expose gates, IRF, and reference PDF.</td><td>Instrument diagnostics payload.</td></tr>
-            <tr><td><code>get_gui_schema()</code></td><td>Describe GUI regions and actionable elements.</td><td>Declarative workspace schema.</td></tr>
-            <tr><td><code>save_session()</code> / <code>load_session()</code></td><td>Persist or restore state and data.</td><td>Session status payload.</td></tr>
+            <tr><th>Method</th><th>Purpose</th><th>Notes</th></tr>
+            <tr><td><code>get_status()</code></td><td>Backend readiness and summary.</td><td>Use first in any automation flow.</td></tr>
+            <tr><td><code>get_config()</code></td><td>Full validated configuration.</td><td>JSON-serializable config payload.</td></tr>
+            <tr><td><code>update_config(config_patch)</code></td><td>Patch configuration and rebuild dependent state.</td><td>Preferred way to change settings programmatically.</td></tr>
+            <tr><td><code>get_gui_schema()</code></td><td>Declarative desktop workspace schema.</td><td>Useful for LLM guidance and software-driven frontends.</td></tr>
+            <tr><td><code>get_data_summary()</code></td><td>Summary of raw data and maps.</td><td>Returns shapes and basic statistics.</td></tr>
+            <tr><td><code>get_results_snapshot()</code></td><td>Expose current maps and summary.</td><td>Includes tau, amplitude, background, and chi2 maps.</td></tr>
+            <tr><td><code>get_diagnostics_snapshot(tau_ref=None)</code></td><td>Return time vector, gates, IRF, and reference PDF.</td><td>Core instrument introspection payload.</td></tr>
+            <tr><td><code>simulate_basic(params)</code></td><td>Basic synthetic dataset workflow.</td><td>Generates and fits a synthetic image stack.</td></tr>
+            <tr><td><code>simulate_advanced(params)</code></td><td>Advanced instrument simulation workflow.</td><td>Useful for lifetime-gradient studies.</td></tr>
+            <tr><td><code>run_precision(params=None)</code></td><td>Ideal, theory, and optional MC precision workflow.</td><td>Main engineering benchmark surface.</td></tr>
+            <tr><td><code>get_tau_map()</code></td><td>Return only the current tau map.</td><td>Useful for lightweight polling.</td></tr>
+            <tr><td><code>get_phasor_map(harmonic=1)</code></td><td>Return current phasor map.</td><td>Uses current raw data state.</td></tr>
+            <tr><td><code>get_theoretical_locus()</code></td><td>Return theoretical phasor locus.</td><td>Independent of live phasor map state.</td></tr>
+            <tr><td><code>get_pixel_analysis(y, x)</code></td><td>Return one pixel decay, fit, and estimated lifetime.</td><td>For pixel-level inspection and automation.</td></tr>
+            <tr><td><code>import_sdt_path(path)</code> / <code>import_sdt_bytes(name, payload)</code></td><td>Compatibility import utilities.</td><td class="warn">Not part of the main scope.</td></tr>
+            <tr><td><code>save_session(session_id)</code> / <code>load_session(session_id)</code></td><td>Persist or restore state and cached data.</td><td>Useful for reproducibility and automation.</td></tr>
         </table>
     </div>
 
     <div class="card">
-        <h2>2.1 Precision Execution Pane</h2>
-        <p>The desktop precision workspace exposes both theory and Monte Carlo validation controls directly in the controller. The current defaults are tuned for engineering sweeps rather than quick demos.</p>
-        <table>
-            <tr><th>Control</th><th>Purpose</th><th>Default</th></tr>
-            <tr><td><code>Validate with Monte Carlo</code></td><td>Run repeated MC validation at each sweep point.</td><td>On</td></tr>
-            <tr><td><code>Compute 95% CI</code></td><td>Bootstrap the MC repeats and return an interval for <code>F</code> or <code>F^-2</code>.</td><td>Off</td></tr>
-            <tr><td><code>Precision Photons</code></td><td>Photon budget used for theory and MC precision analysis.</td><td>2000</td></tr>
-            <tr><td><code>MC Repeats</code></td><td>Number of MC repeats per target-parameter point.</td><td>400</td></tr>
-            <tr><td><code>Estimator Accuracy p-value</code></td><td>Bootstrap-based estimator-accuracy threshold.</td><td>0.001</td></tr>
-            <tr><td><code>Bootstrap Resamples</code></td><td>Number of bootstrap draws used for p-values and confidence intervals.</td><td>2000</td></tr>
-            <tr><td><code>CI Level (%)</code></td><td>Confidence level for the MC interval display.</td><td>95.0</td></tr>
-            <tr><td><code>Smooth MC</code></td><td>Visualization-only smoothing over the tau sweep; does not alter numeric outputs.</td><td>Off</td></tr>
-        </table>
-        <p>When confidence intervals are enabled, the desktop Fisher widget displays the interval only, without overlaying the Monte Carlo mean curve.</p>
-    </div>
-
-    <div class="card">
-        <h2>3. HTTP API</h2>
+        <h2>6. HTTP API</h2>
         <p><span class="badge">Server</span><code>python/backend/main.py</code></p>
-        <p>Run with a standard ASGI server, for example:</p>
         <pre>uvicorn backend.main:app --reload --app-dir python</pre>
-
         <table>
             <tr><th>Route</th><th>Method</th><th>Description</th></tr>
-            <tr><td><code>/api/v1/backend/status</code></td><td>GET</td><td>Backend status and data availability.</td></tr>
-            <tr><td><code>/api/v1/backend/config</code></td><td>GET</td><td>Read the full configuration.</td></tr>
-            <tr><td><code>/api/v1/backend/config</code></td><td>POST</td><td>Patch the configuration with <code>{"config_patch": {...}}</code>.</td></tr>
-            <tr><td><code>/api/v1/backend/gui/schema</code></td><td>GET</td><td>Declarative GUI schema for software-driven frontends.</td></tr>
-            <tr><td><code>/api/v1/workflows/simulate/basic</code></td><td>POST</td><td>Run the basic synthetic data workflow.</td></tr>
-            <tr><td><code>/api/v1/workflows/simulate/advanced</code></td><td>POST</td><td>Run the advanced instrument simulation workflow.</td></tr>
-            <tr><td><code>/api/v1/workflows/precision</code></td><td>POST</td><td>Run precision analysis with optional config overrides.</td></tr>
-            <tr><td><code>/api/v1/data/summary</code></td><td>GET</td><td>Summarize loaded raw data and result maps.</td></tr>
-            <tr><td><code>/api/v1/data/results</code></td><td>GET</td><td>Get current tau/a/b/chi2 maps.</td></tr>
-            <tr><td><code>/api/v1/data/tau-map</code></td><td>GET</td><td>Get current tau map only.</td></tr>
-            <tr><td><code>/api/v1/data/phasor</code></td><td>GET</td><td>Get current phasor map.</td></tr>
-            <tr><td><code>/api/v1/data/pixel/{y}/{x}</code></td><td>GET</td><td>Inspect one pixel decay and fit.</td></tr>
-            <tr><td><code>/api/v1/data/diagnostics</code></td><td>GET</td><td>Get current gates, IRF, and reference PDF.</td></tr>
-            <tr><td><code>/api/v1/theory/locus</code></td><td>GET</td><td>Get the theoretical phasor locus.</td></tr>
-            <tr><td><code>/api/v1/data/import/sdt</code></td><td>POST</td><td>Import an SDT file.</td></tr>
-            <tr><td><code>/api/v1/session/save/{session_id}</code></td><td>POST</td><td>Persist the current state.</td></tr>
+            <tr><td><code>/</code></td><td>GET</td><td>Root status and docs pointers.</td></tr>
+            <tr><td><code>/api/v1/backend/status</code></td><td>GET</td><td>Backend readiness and summary.</td></tr>
+            <tr><td><code>/api/v1/backend/config</code></td><td>GET</td><td>Read full config.</td></tr>
+            <tr><td><code>/api/v1/backend/config</code></td><td>POST</td><td>Patch config with <code>{"config_patch": {...}}</code>.</td></tr>
+            <tr><td><code>/api/v1/backend/gui/schema</code></td><td>GET</td><td>Read GUI schema.</td></tr>
+            <tr><td><code>/api/v1/workflows/simulate/basic</code></td><td>POST</td><td>Run basic synthetic simulation.</td></tr>
+            <tr><td><code>/api/v1/workflows/simulate/advanced</code></td><td>POST</td><td>Run advanced synthetic simulation.</td></tr>
+            <tr><td><code>/api/v1/workflows/precision</code></td><td>POST</td><td>Run ideal/theory/MC precision workflow.</td></tr>
+            <tr><td><code>/api/v1/data/summary</code></td><td>GET</td><td>Return summary of current data and maps.</td></tr>
+            <tr><td><code>/api/v1/data/results</code></td><td>GET</td><td>Return full map snapshot.</td></tr>
+            <tr><td><code>/api/v1/data/tau-map</code></td><td>GET</td><td>Return tau map only.</td></tr>
+            <tr><td><code>/api/v1/data/phasor</code></td><td>GET</td><td>Return phasor map for the requested harmonic.</td></tr>
+            <tr><td><code>/api/v1/data/pixel/{y}/{x}</code></td><td>GET</td><td>Return decay, fit, and tau for one pixel.</td></tr>
+            <tr><td><code>/api/v1/data/diagnostics</code></td><td>GET</td><td>Return time vector, gates, IRF, and reference PDF.</td></tr>
+            <tr><td><code>/api/v1/theory/locus</code></td><td>GET</td><td>Return theoretical phasor locus.</td></tr>
+            <tr><td><code>/api/v1/data/import/sdt</code></td><td>POST</td><td>Compatibility SDT import endpoint.</td></tr>
+            <tr><td><code>/api/v1/session/save/{session_id}</code></td><td>POST</td><td>Persist current state and data.</td></tr>
             <tr><td><code>/api/v1/session/load/{session_id}</code></td><td>POST</td><td>Restore a saved state.</td></tr>
+            <tr><td><code>/simulate</code></td><td>POST</td><td>Legacy alias for basic simulation.</td></tr>
+            <tr><td><code>/simulate/advanced</code></td><td>POST</td><td>Legacy alias for advanced simulation.</td></tr>
+            <tr><td><code>/results/fisher/{n_photons}</code></td><td>GET</td><td>Legacy Fisher endpoint for compatibility.</td></tr>
         </table>
-
         <h3>Example Precision Call</h3>
         <pre>curl -X POST http://127.0.0.1:8000/api/v1/workflows/precision ^
   -H "Content-Type: application/json" ^
@@ -199,22 +273,9 @@ result = service.run_precision()</pre>
     </div>
 
     <div class="card">
-        <h2>4. Data API Contract</h2>
-        <p>The Digital Twin now exposes stable data-oriented artifacts for software integration:</p>
-        <ul>
-            <li><span class="good">Tau maps</span>: fitted lifetime images for downstream visualization or QC.</li>
-            <li><span class="good">Diagnostics snapshots</span>: time vector, gates, IRF, and reference PDF for architecture introspection.</li>
-            <li><span class="good">Pixel analyses</span>: one-pixel decay, gate centers, analytic fit, and estimated lifetime.</li>
-            <li><span class="good">Precision payloads</span>: ideal reference, theory curve, Monte Carlo statistics, bootstrap compatibility tests, and optional configurable confidence intervals.</li>
-            <li><span class="good">GUI schema</span>: software-readable description of workspace regions and actionable GUI elements.</li>
-        </ul>
-    </div>
-
-    <div class="card">
-        <h2>5. GUI Automation API</h2>
+        <h2>7. Desktop Automation API</h2>
         <p><span class="badge">Module</span><code>python/gui/automation_api.py</code></p>
-        <p>When another Python application embeds or drives the live desktop, use <code>window.desktop_api</code> instead of touching individual Qt widgets directly.</p>
-
+        <p>This API drives the live Qt workspace from inside the same Python process. It is the correct interface for desktop control. It is not the same thing as the stdio MCP server.</p>
         <pre>from gui.main_window import HILIGHTMainWindow
 
 window = HILIGHTMainWindow()
@@ -222,41 +283,44 @@ api = window.desktop_api
 api.set_controller_state({"precision_validate_mc": True})
 api.trigger_run()
 precision_plot = api.get_precision_plot()</pre>
-
         <table>
             <tr><th>Method</th><th>Description</th></tr>
-            <tr><td><code>get_layout()</code></td><td>Return the dock/layout contract for the workspace.</td></tr>
-            <tr><td><code>get_controller_state()</code></td><td>Return the current controller-driven config state.</td></tr>
-            <tr><td><code>set_controller_state(patch)</code></td><td>Patch controller-configurable state and refresh diagnostics.</td></tr>
-            <tr><td><code>trigger_run()</code></td><td>Execute the precision workflow.</td></tr>
-            <tr><td><code>trigger_test()</code></td><td>Execute the synthetic image workflow.</td></tr>
-            <tr><td><code>trigger_export_preview()</code></td><td>Open the precision-report HTML preview.</td></tr>
-            <tr><td><code>get_precision_plot()</code></td><td>Get the live precision plot payload, including MC compatibility masks and optional bootstrap confidence bands.</td></tr>
-            <tr><td><code>get_accuracy_plot()</code></td><td>Get the live gridded MLE accuracy payload.</td></tr>
-            <tr><td><code>get_diagnostics_frames()</code></td><td>Read currently cached diagnostics sweep frames.</td></tr>
+            <tr><td><code>get_layout()</code></td><td>Return the dock and workspace contract.</td></tr>
+            <tr><td><code>get_controller_state()</code></td><td>Read the current controller-backed configuration.</td></tr>
+            <tr><td><code>set_controller_state(patch)</code></td><td>Patch controller state and refresh diagnostics.</td></tr>
+            <tr><td><code>trigger_run()</code></td><td>Run the precision workflow.</td></tr>
+            <tr><td><code>trigger_test()</code></td><td>Run the synthetic image workflow.</td></tr>
+            <tr><td><code>trigger_export_preview()</code></td><td>Open the latest precision report preview.</td></tr>
+            <tr><td><code>get_precision_plot()</code></td><td>Read ideal and per-series precision payloads, including compatibility masks and CI arrays.</td></tr>
+            <tr><td><code>get_accuracy_plot()</code></td><td>Read the live MLE accuracy plot payload.</td></tr>
+            <tr><td><code>get_diagnostics_frames()</code></td><td>Read cached diagnostics sweep frames.</td></tr>
         </table>
     </div>
 
     <div class="card">
-        <h2>6. MCP Server</h2>
+        <h2>8. MCP Server</h2>
         <p><span class="badge">Module</span><code>python/mcp_server.py</code></p>
-        <p>The server speaks stdio MCP with JSON-RPC framing (<code>Content-Length</code> headers), and it reuses the shared service layer. This allows an LLM runtime to treat the Digital Twin as a tool/resource provider.</p>
-
-        <h3>Run</h3>
+        <p>The server uses stdio with JSON-RPC framing and exposes the shared backend service layer to LLM hosts.</p>
         <pre>python python/mcp_server.py</pre>
-
         <h3>Tools</h3>
         <table>
             <tr><th>Tool</th><th>Description</th></tr>
-            <tr><td><code>get_status</code></td><td>Backend readiness and current engine summary.</td></tr>
-            <tr><td><code>get_config</code></td><td>Current configuration.</td></tr>
+            <tr><td><code>get_status</code></td><td>Backend readiness and summary.</td></tr>
+            <tr><td><code>get_config</code></td><td>Read the current configuration.</td></tr>
             <tr><td><code>update_config</code></td><td>Patch the current configuration.</td></tr>
-            <tr><td><code>run_precision</code></td><td>Run theory and optional Monte Carlo precision analysis.</td></tr>
-            <tr><td><code>simulate_basic</code></td><td>Generate a basic synthetic dataset.</td></tr>
-            <tr><td><code>simulate_advanced</code></td><td>Generate an advanced instrument simulation.</td></tr>
-            <tr><td><code>get_data_summary</code></td><td>Summarize loaded raw data and result maps.</td></tr>
-            <tr><td><code>get_diagnostics_snapshot</code></td><td>Return current gates, IRF, and reference PDF.</td></tr>
+            <tr><td><code>run_precision</code></td><td>Run ideal, theory, and optional MC precision analysis.</td></tr>
+            <tr><td><code>simulate_basic</code></td><td>Run the basic synthetic simulation workflow.</td></tr>
+            <tr><td><code>simulate_advanced</code></td><td>Run the advanced synthetic simulation workflow.</td></tr>
+            <tr><td><code>get_data_summary</code></td><td>Summarize data and result maps.</td></tr>
+            <tr><td><code>get_results_snapshot</code></td><td>Return full result maps and summary.</td></tr>
+            <tr><td><code>get_tau_map</code></td><td>Return the tau map only.</td></tr>
+            <tr><td><code>get_phasor_map</code></td><td>Return the phasor map for a chosen harmonic.</td></tr>
+            <tr><td><code>get_theoretical_locus</code></td><td>Return the theoretical phasor locus.</td></tr>
+            <tr><td><code>get_pixel_analysis</code></td><td>Return one pixel decay, fit, and estimated tau.</td></tr>
+            <tr><td><code>get_diagnostics_snapshot</code></td><td>Return time vector, gates, IRF, and PDF.</td></tr>
             <tr><td><code>get_gui_schema</code></td><td>Return the declarative GUI schema.</td></tr>
+            <tr><td><code>save_session</code></td><td>Save the current state under a session ID.</td></tr>
+            <tr><td><code>load_session</code></td><td>Restore a previously saved session.</td></tr>
         </table>
 
         <h3>Resources</h3>
@@ -264,52 +328,155 @@ precision_plot = api.get_precision_plot()</pre>
             <tr><th>URI</th><th>Description</th></tr>
             <tr><td><code>hilight://status</code></td><td>Backend status snapshot.</td></tr>
             <tr><td><code>hilight://config</code></td><td>Current configuration snapshot.</td></tr>
-            <tr><td><code>hilight://gui-schema</code></td><td>Declarative GUI schema snapshot.</td></tr>
+            <tr><td><code>hilight://gui-schema</code></td><td>Desktop schema snapshot.</td></tr>
+            <tr><td><code>hilight://data-summary</code></td><td>Current data summary.</td></tr>
+            <tr><td><code>hilight://results</code></td><td>Current map snapshot.</td></tr>
+            <tr><td><code>hilight://tau-map</code></td><td>Current tau map.</td></tr>
+            <tr><td><code>hilight://theory-locus</code></td><td>Theoretical phasor locus.</td></tr>
+            <tr><td><code>hilight://diagnostics</code></td><td>Current diagnostics snapshot.</td></tr>
         </table>
 
         <h3>Prompts</h3>
         <table>
             <tr><th>Name</th><th>Description</th></tr>
-            <tr><td><code>precision-audit</code></td><td>Audit theory vs Monte Carlo and focus on statistically incompatible regions.</td></tr>
-            <tr><td><code>instrument-design</code></td><td>Use sweeps to design a robust architecture for a lifetime regime.</td></tr>
-            <tr><td><code>data-inspection</code></td><td>Inspect current data products and explain estimator behavior.</td></tr>
+            <tr><td><code>precision-audit</code></td><td>Audit ideal, theory, Monte Carlo, and CI outputs for the active precision sweep.</td></tr>
+            <tr><td><code>instrument-design</code></td><td>Design or refine an excitation/detection/gating architecture.</td></tr>
+            <tr><td><code>data-inspection</code></td><td>Inspect simulated data products, maps, diagnostics, and representative pixels.</td></tr>
+            <tr><td><code>workspace-navigation</code></td><td>Guide users or agents using GUI-schema-aligned control names.</td></tr>
         </table>
+
+        <div class="note">
+            The current MCP server exposes backend state, data products, diagnostics, and GUI schema. It does not directly drive a live Qt window. Live widget and button execution remain the responsibility of the in-process desktop automation API.
+        </div>
     </div>
 
     <div class="card">
-        <h2>7. LLM Integration Strategy</h2>
-        <p>Recommended operating sequence for an LLM agent:</p>
+        <h2>9. GUI Schema and LLM-Friendly Control Surface</h2>
+        <p>The GUI schema describes the desktop as named regions and elements so an LLM can reference the workspace without screen scraping.</p>
+        <table>
+            <tr><th>Region</th><th>Representative Elements</th></tr>
+            <tr><td><code>controller_column</code></td><td><code>tab_decay_model</code>, <code>tab_excitation</code>, <code>tab_detection</code>, <code>tab_batch_sweep</code>, <code>action_run</code>, <code>action_export</code>, <code>action_test</code></td></tr>
+            <tr><td><code>analysis_stack</code></td><td><code>widget_precision</code>, <code>widget_accuracy</code>, <code>widget_diagnostics</code></td></tr>
+            <tr><td><code>bottom_row</code></td><td><code>widget_map</code>, <code>widget_decay</code>, <code>widget_phasor</code></td></tr>
+        </table>
+        <p>For LLM guidance, this schema is the authoritative vocabulary for naming tabs, buttons, and plots.</p>
+    </div>
+
+    <div class="card">
+        <h2>10. LLM Host Setup</h2>
+        <p>All hosts need the same core server command. The only thing that changes is how the client registers a stdio MCP server.</p>
+        <h3>Shared Server Command</h3>
+        <pre>python python/mcp_server.py</pre>
+        <p>Recommended working directory:</p>
+        <pre>C:\Users\ae275\OneDrive - Brunel University London\Documents\HILIGHT_DigitalTwin\DigitalTwin_Matlab</pre>
+
+        <h3>Codex CLI</h3>
+        <p>The local Codex CLI in this environment exposes an MCP manager directly.</p>
+        <pre>codex mcp add hilight-digital-twin -- python python/mcp_server.py</pre>
+        <p>Useful follow-up commands:</p>
+        <pre>codex mcp list
+codex mcp get hilight-digital-twin</pre>
+        <p>If you prefer a config-driven setup, mirror the same stdio command, args, working directory, and any required environment variables in the Codex MCP configuration.</p>
+
+        <h3>Claude Desktop</h3>
+        <p>A typical Windows setup uses the Claude Desktop MCP JSON config. Add a stdio server entry with the same command and working directory.</p>
+        <pre>{
+  "mcpServers": {
+    "hilight-digital-twin": {
+      "command": "python",
+      "args": ["python/mcp_server.py"],
+      "cwd": "C:/Users/ae275/OneDrive - Brunel University London/Documents/HILIGHT_DigitalTwin/DigitalTwin_Matlab"
+    }
+  }
+}</pre>
+
+        <h3>Claude CLI / Claude Code</h3>
+        <p>If you are using a CLI-capable Claude client rather than Desktop, register the same stdio server in that client's MCP configuration using the same fields: <code>command</code>, <code>args</code>, <code>cwd</code>, and optional <code>env</code>.</p>
+        <pre>{
+  "mcpServers": {
+    "hilight-digital-twin": {
+      "command": "python",
+      "args": ["python/mcp_server.py"],
+      "cwd": "C:/Users/ae275/OneDrive - Brunel University London/Documents/HILIGHT_DigitalTwin/DigitalTwin_Matlab"
+    }
+  }
+}</pre>
+
+        <h3>Gemini CLI</h3>
+        <p>Gemini CLI can use the same stdio server registration pattern. The exact file location may vary by Gemini CLI release, but the server block should carry the same values.</p>
+        <pre>{
+  "mcpServers": {
+    "hilight-digital-twin": {
+      "command": "python",
+      "args": ["python/mcp_server.py"],
+      "cwd": "C:/Users/ae275/OneDrive - Brunel University London/Documents/HILIGHT_DigitalTwin/DigitalTwin_Matlab"
+    }
+  }
+}</pre>
+
+        <h3>Gemini Desktop via Antigravity IDE</h3>
+        <p>For Antigravity IDE, add a new stdio MCP server in the MCP or Tools settings panel using:</p>
+        <table>
+            <tr><th>Field</th><th>Value</th></tr>
+            <tr><td>Name</td><td><code>hilight-digital-twin</code></td></tr>
+            <tr><td>Command</td><td><code>python</code></td></tr>
+            <tr><td>Arguments</td><td><code>python/mcp_server.py</code></td></tr>
+            <tr><td>Working directory</td><td><code>C:/Users/ae275/OneDrive - Brunel University London/Documents/HILIGHT_DigitalTwin/DigitalTwin_Matlab</code></td></tr>
+        </table>
+
+        <div class="note">
+            Host config schemas evolve. If a client uses slightly different field names, keep the same underlying values: a stdio command of <code>python</code>, args of <code>python/mcp_server.py</code>, and the repository root as the working directory.
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>11. Prompt Injection Strategy</h2>
+        <p>The prompt pack is defined in <code>python/mcp_prompts.py</code>, with complementary human-readable recipes in <code>docs/llm_integration_prompts.md</code>.</p>
+        <h3>Recommended Agent Sequence</h3>
         <ol>
-            <li>Query <code>get_status</code> and <code>get_config</code>.</li>
-            <li>Retrieve <code>get_gui_schema</code> to align assistant language with the desktop workflow.</li>
-            <li>Run or propose configuration changes using <code>update_config</code>.</li>
-            <li>Use <code>run_precision</code> for theory and MC validation.</li>
-            <li>Treat Monte Carlo points with <code>compatible == false</code> as biased or statistically unsupported at the configured estimator-accuracy p-value threshold.</li>
-            <li>Explain recommendations in terms of both theory and validation, never theory alone.</li>
+            <li>Call <code>get_status</code> and <code>get_config</code>.</li>
+            <li>Read <code>hilight://gui-schema</code> or call <code>get_gui_schema</code>.</li>
+            <li>Patch configuration with <code>update_config</code> only after establishing the baseline state.</li>
+            <li>Use <code>run_precision</code> for theory and MC precision work.</li>
+            <li>Use data tools such as <code>get_results_snapshot</code>, <code>get_tau_map</code>, <code>get_phasor_map</code>, and <code>get_pixel_analysis</code> for explanation and reporting.</li>
+            <li>When CI data exists, discuss the interval rather than a single MC trace.</li>
+            <li>When compatibility flags exist, treat theory-only gains without MC support as tentative.</li>
         </ol>
 
-        <h3>Core Context Injection</h3>
+        <h3>Core Context Block</h3>
         <pre>You are operating the HILIGHTer Digital Twin through its APIs or MCP server.
-Always inspect backend status and current config before making recommendations.
-Treat Monte Carlo compatibility at p >= the configured estimator-accuracy threshold as the validation gate for estimator trust.
-Use the GUI schema to reference the correct controller tabs and widgets when guiding users.</pre>
-
-        <h3>Prompt Pack Location</h3>
-        <p>See <code>docs/llm_integration_prompts.md</code> for reusable prompt recipes and context blocks.</p>
+Always inspect backend status, current config, and GUI schema before making recommendations.
+Treat the Digital Twin as the source of truth for instrument state, diagnostics, precision curves,
+Monte Carlo compatibility, bootstrap confidence intervals, and simulated data products.
+Distinguish clearly between theory, Monte Carlo validation, and GUI workflow guidance.</pre>
     </div>
 
     <div class="card">
-        <h2>8. Notes and Limits</h2>
+        <h2>12. MCP Smoke Test</h2>
+        <p>A local smoke-test script is included at <code>python/mcp_smoke_test.py</code>. It starts the stdio MCP server, performs initialization, lists tools/resources/prompts, calls representative operations, and checks that the returned surfaces are usable.</p>
+        <pre>python python/mcp_smoke_test.py</pre>
+        <p>The expected checks are:</p>
         <ul>
-            <li>The HTTP API and MCP server currently operate on the shared service layer, not the live Qt desktop instance.</li>
-            <li>The desktop automation API is in-process. It is intended for Python software embedding the GUI or controlling it in the same runtime.</li>
-            <li>The MCP server is functional over stdio and suitable for tool/resource/prompt integration with an LLM host.</li>
-            <li>For production multi-user orchestration, the shared service layer should eventually move from global in-memory state to explicit session-scoped instances.</li>
+            <li><code>initialize</code> succeeds and returns server info.</li>
+            <li><code>tools/list</code>, <code>resources/list</code>, and <code>prompts/list</code> all return non-empty surfaces.</li>
+            <li><code>get_status</code> returns a valid readiness payload.</li>
+            <li><code>run_precision</code> works with a small theory-only patch.</li>
+            <li><code>hilight://config</code> and prompt retrieval are readable.</li>
+        </ul>
+    </div>
+
+    <div class="card">
+        <h2>13. Current Limits</h2>
+        <ul>
+            <li>The MCP server operates on the shared backend service layer, not a live Qt GUI instance.</li>
+            <li>Desktop widget and button execution remain available through the in-process desktop automation API.</li>
+            <li>Experimental import endpoints remain compatibility paths and are not the product center of gravity.</li>
+            <li>For multi-user or remote orchestration, the current global in-memory service state would eventually need explicit session scoping.</li>
         </ul>
     </div>
 
     <footer style="margin-top: 42px; text-align: center; color: var(--muted); font-size: 0.85em;">
-        &copy; 2026 HILIGHT Project | Digital Twin API and MCP Reference
+        &copy; 2026 HILIGHT Project | Digital Twin Manual, API Reference, and MCP Guide
     </footer>
 </main>
 </body>

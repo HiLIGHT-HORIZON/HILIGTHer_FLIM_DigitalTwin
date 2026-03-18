@@ -123,7 +123,28 @@ class PhysicsConfig(BaseModel):
     precision_bootstrap_samples: int = 2000
     precision_ci_level: float = 95.0
     sweep_autoplay: bool = True
-    
+
+    # Optimization Controller
+    optimize_detection_gates: bool = False
+    optimize_excitation_profile: bool = False
+    optimization_mode: str = "sequential"  # sequential, iterative
+    optimization_first: str = "detection"  # detection, excitation
+    optimization_iterations: int = 3
+    optimization_objective: str = "fisher_information"  # fisher_information, fisher_throughput
+    optimization_max_fi_loss_pct: float = 5.0
+
+    detection_optimization_algorithm: str = "direct_slsqp"  # direct_slsqp, partition_bottom_up, partition_top_down, fisher_compression
+    detection_opt_start_anchor: str = "zero"  # zero, irf, custom
+    detection_opt_start_time: float = 0.0
+    detection_opt_end_anchor: str = "period"  # period, custom
+    detection_opt_end_time: float = 12.5
+
+    excitation_optimization_profile: str = "gaussian"  # gaussian, rectangular, free_form
+    excitation_optimization_constraint: str = "fixed_dose"  # fixed_dose, fixed_peak
+    excitation_optimization_width_min: float = 0.05
+    excitation_optimization_width_max: float = 10.0
+    excitation_optimization_control_points: int = 8
+
     sim_mode: str = "spatial gradient" # spatial gradient, uniform model
     b_interrupt: bool = False
 

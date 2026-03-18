@@ -103,13 +103,24 @@ class TwinEngine:
         f_max = float(cfg.f_x_max)
         n_steps = max(int(cfg.f_x_steps), 2)
         fine_factor = max(int(getattr(cfg, "grid_fine_factor", 100)), 1)
+        use_log_grid = (
+            str(cfg.f_x_scale).lower() == "log"
+            and cfg.f_x_param in {"tau1", "tau2", "beta"}
+            and f_min > 0
+            and f_max > 0
+        )
 
-        coarse_step = (f_max - f_min) / max(n_steps - 1, 1)
-        lower_pad = coarse_step if coarse_step > 0 else max(abs(f_min) * 0.1, 1e-6)
-        upper_pad = coarse_step if coarse_step > 0 else max(abs(f_max) * 0.1, 1e-6)
-
-        cfg.grid_tau_min = max(1e-6, f_min - lower_pad)
-        cfg.grid_tau_max = f_max + upper_pad
+        if use_log_grid:
+            step_ratio = (f_max / f_min) ** (1.0 / max(n_steps - 1, 1)) if f_max > f_min else 1.0
+            pad_factor = max(step_ratio, 1.25)
+            cfg.grid_tau_min = max(1e-6, f_min / pad_factor)
+            cfg.grid_tau_max = max(cfg.grid_tau_min * 1.0001, f_max * pad_factor)
+        else:
+            coarse_step = (f_max - f_min) / max(n_steps - 1, 1)
+            lower_pad = coarse_step if coarse_step > 0 else max(abs(f_min) * 0.1, 1e-6)
+            upper_pad = coarse_step if coarse_step > 0 else max(abs(f_max) * 0.1, 1e-6)
+            cfg.grid_tau_min = max(1e-6, f_min - lower_pad)
+            cfg.grid_tau_max = f_max + upper_pad
         cfg.grid_steps = max(3, ((n_steps - 1) + 2) * fine_factor + 1)
 
     def _grid_signature(self):
@@ -145,6 +156,7 @@ class TwinEngine:
             cfg.timing_jitter,
             cfg.dt_override,
             cfg.dt_input,
+            cfg.f_x_scale,
         )
 
     def ensure_grid_current(self):
@@ -288,7 +300,16 @@ class TwinEngine:
         """Generates a library of gate signatures for fast gridded MLE lookup."""
         cfg = self.config
         self._sync_grid_definition_from_precision_config()
-        self.grid_tau_axis = np.linspace(cfg.grid_tau_min, cfg.grid_tau_max, cfg.grid_steps)
+        use_log_grid = (
+            str(cfg.f_x_scale).lower() == "log"
+            and cfg.f_x_param in {"tau1", "tau2", "beta"}
+            and cfg.grid_tau_min > 0
+            and cfg.grid_tau_max > 0
+        )
+        if use_log_grid:
+            self.grid_tau_axis = np.geomspace(cfg.grid_tau_min, cfg.grid_tau_max, cfg.grid_steps)
+        else:
+            self.grid_tau_axis = np.linspace(cfg.grid_tau_min, cfg.grid_tau_max, cfg.grid_steps)
         
         n_gates = self.gate_shapes.shape[0]
         self.grid_templates = np.zeros((cfg.grid_steps, n_gates))
@@ -328,7 +349,34 @@ class TwinEngine:
         log_templates = np.log(np.maximum(self.grid_templates, 1e-300))
         log_likelihood = obs_norm @ log_templates.T
         best_idx = np.argmax(log_likelihood, axis=1)
-        estimates[valid] = self.grid_tau_axis[best_idx]
+        refined = np.array(self.grid_tau_axis[best_idx], copy=True)
+
+        if self.grid_tau_axis.size >= 3:
+            interior_rows = np.where((best_idx > 0) & (best_idx < (self.grid_tau_axis.size - 1)))[0]
+            if interior_rows.size > 0:
+                axis = np.array(self.grid_tau_axis, copy=False, dtype=float)
+                use_log_interp = np.all(axis > 0) and (
+                    str(self.config.f_x_scale).lower() == "log"
+                    and self.config.f_x_param in {"tau1", "tau2", "beta"}
+                )
+                interp_axis = np.log(axis) if use_log_interp else axis
+                axis_steps = np.diff(interp_axis)
+                if axis_steps.size > 0 and np.allclose(axis_steps, axis_steps[0], rtol=1e-4, atol=1e-10):
+                    h = float(axis_steps[0])
+                    row_idx = interior_rows
+                    center_idx = best_idx[row_idx]
+                    ll_minus = log_likelihood[row_idx, center_idx - 1]
+                    ll_center = log_likelihood[row_idx, center_idx]
+                    ll_plus = log_likelihood[row_idx, center_idx + 1]
+                    denom = ll_minus - (2.0 * ll_center) + ll_plus
+                    safe = np.abs(denom) > 1e-12
+                    offset = np.zeros(center_idx.shape[0], dtype=float)
+                    offset[safe] = 0.5 * (ll_minus[safe] - ll_plus[safe]) / denom[safe]
+                    offset = np.clip(offset, -1.0, 1.0)
+                    interp_peak = interp_axis[center_idx] + (offset * h)
+                    refined[row_idx] = np.exp(interp_peak) if use_log_interp else interp_peak
+
+        estimates[valid] = np.clip(refined, self.grid_tau_axis[0], self.grid_tau_axis[-1])
         return estimates
 
     def simulate_gate_histograms(self, tau: Optional[float], n_photons: int, n_repeats: int,
@@ -1127,71 +1175,329 @@ class TwinEngine:
         if self.tau_map is not None:
             self.tau_map = median_filter(self.tau_map, size=size)
 
-    def optimize_gates(self, n_gates: int, t_max: float, tau_range: Tuple[float, float], 
-                       n_tau: int = 50, n_restarts: int = 20, 
-                       callback: Optional[Callable] = None) -> Tuple[np.ndarray, float, dict]:
-        """
-        Finds optimal gate edges to minimize the average F-value over tau_range.
-        Uses SLSQP with monotonicity constraints and multiple restarts.
-        """
-        tau_grid = np.logspace(np.log10(tau_range[0]), np.log10(tau_range[1]), n_tau)
+    def _resolve_optimization_window(self, t_max: float,
+                                     start_anchor: Optional[str] = None,
+                                     start_time: Optional[float] = None,
+                                     end_anchor: Optional[str] = None,
+                                     end_time: Optional[float] = None) -> Tuple[float, float]:
+        cfg = self.config
+        start_anchor = start_anchor or getattr(cfg, "detection_opt_start_anchor", "zero")
+        end_anchor = end_anchor or getattr(cfg, "detection_opt_end_anchor", "period")
+        start_time = float(start_time if start_time is not None else getattr(cfg, "detection_opt_start_time", 0.0))
+        end_time = float(end_time if end_time is not None else getattr(cfg, "detection_opt_end_time", t_max))
+
+        if start_anchor == "irf":
+            dt = cfg.dt_override if (cfg.dt_override and cfg.dt_override > 0) else cfg.dt_input
+            t_irf = np.arange(0.0, max(cfg.period, t_max) + dt, dt)
+            irf = self.dt_excitation(t_irf)
+            if np.any(irf > 0):
+                threshold = np.max(irf) * 1e-3
+                nz = np.flatnonzero(irf >= threshold)
+                start = float(t_irf[nz[-1]]) if nz.size else 0.0
+            else:
+                start = 0.0
+        elif start_anchor == "custom":
+            start = start_time
+        else:
+            start = 0.0
+
+        if end_anchor == "custom":
+            end = end_time
+        else:
+            end = min(float(t_max), float(cfg.period))
+
+        start = max(0.0, float(start))
+        end = max(start + 1e-3, float(end))
+        return start, end
+
+    def _evaluate_gate_edges(self, edges: np.ndarray, tau_grid: np.ndarray,
+                             callback: Optional[Callable] = None) -> Tuple[float, np.ndarray, np.ndarray]:
+        orig_edges = list(self.config.gate_edges)
+        self.config.gate_edges = edges.tolist()
+        self.distill_gates()
+        fi, f_val = self.compute_fisher_info(tau_grid, n_photons=1e4)
+        j_val = float(np.nanmean(f_val)) if np.any(np.isfinite(f_val)) else np.inf
+        if callback is not None and np.isfinite(j_val):
+            callback(j_val)
+        self.config.gate_edges = orig_edges
+        self.distill_gates()
+        return j_val, fi, f_val
+
+    def _build_fine_bin_scores(self, fine_edges: np.ndarray, tau_grid: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        cfg = self.config
+        self.distill_gates()
+        t = self.time_vector
+        target_param = cfg.f_x_param
+        original_param_value = self._get_cfg_param(target_param)
+        n_bins = len(fine_edges) - 1
+        n_design = len(tau_grid)
+        probs = np.zeros((n_design, n_bins), dtype=float)
+        deriv = np.zeros((n_design, n_bins), dtype=float)
+
+        bin_masks = []
+        for i in range(n_bins):
+            left = fine_edges[i]
+            right = fine_edges[i + 1]
+            if i == n_bins - 1:
+                mask = (t >= left) & (t <= right)
+            else:
+                mask = (t >= left) & (t < right)
+            bin_masks.append(mask)
+
+        irf_cached = self.dt_excitation(t)
+        irf_sum = np.sum(irf_cached)
+        if irf_sum > 0:
+            irf_cached = irf_cached / irf_sum
+
+        for design_idx, param_val in enumerate(tau_grid):
+            lower_bound, upper_bound = self._get_cfg_param_bounds(target_param)
+            delta_param = self._get_cfg_param_step(target_param, float(param_val), cfg.dt_input, 0.01)
+            plus_val = float(param_val) + delta_param
+            minus_val = float(param_val) - delta_param
+
+            if lower_bound is not None:
+                plus_val = max(lower_bound, plus_val)
+                minus_val = max(lower_bound, minus_val)
+            if upper_bound is not None:
+                plus_val = min(upper_bound, plus_val)
+                minus_val = min(upper_bound, minus_val)
+            if np.isclose(plus_val, minus_val):
+                plus_val = float(param_val) + delta_param
+                minus_val = max(lower_bound or 1e-6, float(param_val) - delta_param)
+
+            self._set_cfg_param(target_param, float(param_val))
+            pdf_cen = self.dt_pdf(t, irf=irf_cached)
+            self._set_cfg_param(target_param, plus_val)
+            pdf_plus = self.dt_pdf(t, irf=irf_cached)
+            self._set_cfg_param(target_param, minus_val)
+            pdf_minus = self.dt_pdf(t, irf=irf_cached)
+
+            denom = max(plus_val - minus_val, 1e-12)
+            for bin_idx, mask in enumerate(bin_masks):
+                p_cen = float(np.sum(pdf_cen[mask]))
+                probs[design_idx, bin_idx] = max(p_cen, 0.0)
+                deriv[design_idx, bin_idx] = float(np.sum(pdf_plus[mask]) - np.sum(pdf_minus[mask])) / denom
+
+        self._set_cfg_param(target_param, original_param_value)
+
+        weights = np.ones(len(tau_grid), dtype=float) / max(len(tau_grid), 1)
+        segment_scores = np.full((n_bins, n_bins), -np.inf, dtype=float)
+        c_probs = np.concatenate([np.zeros((n_design, 1)), np.cumsum(probs, axis=1)], axis=1)
+        c_deriv = np.concatenate([np.zeros((n_design, 1)), np.cumsum(deriv, axis=1)], axis=1)
+
+        for i in range(n_bins):
+            for j in range(i, n_bins):
+                score = 0.0
+                for design_idx in range(n_design):
+                    p_seg = c_probs[design_idx, j + 1] - c_probs[design_idx, i]
+                    d_seg = c_deriv[design_idx, j + 1] - c_deriv[design_idx, i]
+                    if p_seg > 1e-15:
+                        score += weights[design_idx] * ((d_seg ** 2) / p_seg)
+                segment_scores[i, j] = score
+        return probs, segment_scores
+
+    def _boundaries_to_edges(self, boundaries: List[int], fine_edges: np.ndarray) -> np.ndarray:
+        idx = np.array(sorted(set(boundaries)), dtype=int)
+        idx[0] = 0
+        idx[-1] = len(fine_edges) - 1
+        return fine_edges[idx]
+
+    def _optimize_gates_direct_slsqp(self, start: float, end: float, tau_grid: np.ndarray,
+                                     n_gates: int, n_restarts: int,
+                                     callback: Optional[Callable]) -> Tuple[np.ndarray, float]:
         best_j = np.inf
         best_edges = None
-        
-        # Save original config
-        orig_edges = self.config.gate_edges
-        
+        epsilon = max((end - start) / 1000.0, 1e-4)
+
         def objective(internal_edges):
-            # Reconstruct full edges
-            edges = np.concatenate(([0.0], np.sort(internal_edges), [t_max]))
-            self.config.gate_edges = edges.tolist()
-            
-            fi, f_val = self.compute_fisher_info(tau_grid, n_photons=1e4)
-            # Minimize the mean F-value (ideal = 1.0)
-            j_val = np.mean(f_val)
-            
-            if callback:
-                callback(j_val)
+            edges = np.concatenate(([start], np.sort(internal_edges), [end]))
+            j_val, _, _ = self._evaluate_gate_edges(edges, tau_grid, callback=callback)
             return j_val
 
-        # Constraints: internal edges must be strictly increasing and within (0, t_max)
-        # 0 < e_1 < e_2 < ... < e_n-1 < t_max
-        bounds = [(0.01, t_max - 0.01)] * (n_gates - 1)
-        
+        bounds = [(start + epsilon, end - epsilon)] * max(n_gates - 1, 0)
         for r in range(n_restarts):
+            if n_gates <= 1:
+                best_edges = np.array([start, end], dtype=float)
+                best_j, _, _ = self._evaluate_gate_edges(best_edges, tau_grid, callback=callback)
+                break
             if r == 0:
-                # Start with equal spacing
-                x0 = np.linspace(0, t_max, n_gates + 1)[1:-1]
+                x0 = np.linspace(start, end, n_gates + 1)[1:-1]
             else:
-                # Random starting point
-                x0 = np.sort(np.random.rand(n_gates - 1) * t_max)
-            
-            res = minimize(objective, x0, bounds=bounds, method='SLSQP', 
-                           options={'ftol': 1e-4, 'maxiter': 50})
-            
+                x0 = np.sort(np.random.rand(n_gates - 1) * max(end - start, 1e-6) + start)
+            res = minimize(objective, x0, bounds=bounds, method='SLSQP', options={'ftol': 1e-4, 'maxiter': 50})
             if res.success and res.fun < best_j:
-                best_j = res.fun
-                best_edges = np.concatenate(([0.0], np.sort(res.x), [t_max]))
+                best_j = float(res.fun)
+                best_edges = np.concatenate(([start], np.sort(res.x), [end]))
 
-        # Restore engine state to best found
-        if best_edges is not None:
+        if best_edges is None:
+            best_edges = np.linspace(start, end, n_gates + 1)
+            best_j, _, _ = self._evaluate_gate_edges(best_edges, tau_grid, callback=None)
+        return best_edges, best_j
+
+    def _optimize_gates_bottom_up(self, fine_edges: np.ndarray, segment_scores: np.ndarray,
+                                  n_gates: int, callback: Optional[Callable]) -> np.ndarray:
+        n_bins = len(fine_edges) - 1
+        boundaries = [0, n_bins]
+        current_score = segment_scores[0, n_bins - 1]
+
+        while len(boundaries) - 1 < n_gates:
+            best_gain = -np.inf
+            best_split = None
+            for seg_idx in range(len(boundaries) - 1):
+                left = boundaries[seg_idx]
+                right = boundaries[seg_idx + 1]
+                if right - left <= 1:
+                    continue
+                base_score = segment_scores[left, right - 1]
+                for split in range(left + 1, right):
+                    new_score = segment_scores[left, split - 1] + segment_scores[split, right - 1]
+                    gain = new_score - base_score
+                    if gain > best_gain:
+                        best_gain = gain
+                        best_split = split
+            if best_split is None:
+                break
+            boundaries.append(best_split)
+            boundaries.sort()
+            current_score += best_gain
+            if callback is not None:
+                callback(float(current_score))
+
+        return self._boundaries_to_edges(boundaries, fine_edges)
+
+    def _optimize_gates_top_down(self, fine_edges: np.ndarray, segment_scores: np.ndarray,
+                                 n_gates: int, callback: Optional[Callable]) -> np.ndarray:
+        n_bins = len(fine_edges) - 1
+        boundaries = list(range(0, n_bins + 1))
+        total_score = float(np.sum(np.diag(segment_scores)))
+
+        while len(boundaries) - 1 > n_gates:
+            best_total = -np.inf
+            best_remove_idx = None
+            for remove_idx in range(1, len(boundaries) - 1):
+                left = boundaries[remove_idx - 1]
+                mid = boundaries[remove_idx]
+                right = boundaries[remove_idx + 1]
+                merged_total = (
+                    total_score
+                    - segment_scores[left, mid - 1]
+                    - segment_scores[mid, right - 1]
+                    + segment_scores[left, right - 1]
+                )
+                if merged_total > best_total:
+                    best_total = merged_total
+                    best_remove_idx = remove_idx
+            if best_remove_idx is None:
+                break
+            boundaries.pop(best_remove_idx)
+            total_score = float(best_total)
+            if callback is not None:
+                callback(total_score)
+
+        return self._boundaries_to_edges(boundaries, fine_edges)
+
+    def _optimize_gates_fisher_compression(self, fine_edges: np.ndarray, segment_scores: np.ndarray,
+                                           n_gates: int, callback: Optional[Callable]) -> np.ndarray:
+        n_bins = len(fine_edges) - 1
+        k_target = max(1, min(int(n_gates), n_bins))
+        dp = np.full((k_target + 1, n_bins + 1), -np.inf, dtype=float)
+        prev = np.full((k_target + 1, n_bins + 1), -1, dtype=int)
+        dp[0, 0] = 0.0
+
+        for k in range(1, k_target + 1):
+            for j in range(k, n_bins + 1):
+                best_val = -np.inf
+                best_t = -1
+                for t in range(k - 1, j):
+                    if not np.isfinite(dp[k - 1, t]):
+                        continue
+                    cand = dp[k - 1, t] + segment_scores[t, j - 1]
+                    if cand > best_val:
+                        best_val = cand
+                        best_t = t
+                dp[k, j] = best_val
+                prev[k, j] = best_t
+            if callback is not None and np.isfinite(dp[k, n_bins]):
+                callback(float(dp[k, n_bins]))
+
+        boundaries = [n_bins]
+        j = n_bins
+        for k in range(k_target, 0, -1):
+            t = prev[k, j]
+            if t < 0:
+                break
+            boundaries.append(t)
+            j = t
+        boundaries.append(0)
+        boundaries = sorted(set(boundaries))
+        return self._boundaries_to_edges(boundaries, fine_edges)
+
+    def optimize_gates(self, n_gates: int, t_max: float, tau_range: Tuple[float, float],
+                       n_tau: int = 50, n_restarts: int = 20,
+                       callback: Optional[Callable] = None,
+                       algorithm: Optional[str] = None,
+                       start_anchor: Optional[str] = None,
+                       start_time: Optional[float] = None,
+                       end_anchor: Optional[str] = None,
+                       end_time: Optional[float] = None) -> Tuple[np.ndarray, float, dict]:
+        """
+        Finds optimal gate edges using one of several algorithm families.
+        """
+        tau_grid = np.logspace(np.log10(tau_range[0]), np.log10(tau_range[1]), n_tau)
+        orig_edges = list(self.config.gate_edges)
+        algorithm = algorithm or getattr(self.config, "detection_optimization_algorithm", "direct_slsqp")
+        start, end = self._resolve_optimization_window(
+            t_max=t_max,
+            start_anchor=start_anchor,
+            start_time=start_time,
+            end_anchor=end_anchor,
+            end_time=end_time,
+        )
+
+        if end <= start:
+            end = start + 1e-3
+
+        try:
+            if algorithm == "direct_slsqp":
+                best_edges, best_j = self._optimize_gates_direct_slsqp(
+                    start=start,
+                    end=end,
+                    tau_grid=tau_grid,
+                    n_gates=n_gates,
+                    n_restarts=n_restarts,
+                    callback=callback,
+                )
+            else:
+                n_fine = min(max(n_gates * 12, 24), 80)
+                fine_edges = np.linspace(start, end, n_fine + 1)
+                _, segment_scores = self._build_fine_bin_scores(fine_edges, tau_grid)
+                if algorithm == "partition_bottom_up":
+                    best_edges = self._optimize_gates_bottom_up(fine_edges, segment_scores, n_gates, callback)
+                elif algorithm == "partition_top_down":
+                    best_edges = self._optimize_gates_top_down(fine_edges, segment_scores, n_gates, callback)
+                elif algorithm in {"fisher_compression", "fisher_compression_dp"}:
+                    best_edges = self._optimize_gates_fisher_compression(fine_edges, segment_scores, n_gates, callback)
+                else:
+                    raise ValueError(f"Unknown gate-optimization algorithm: {algorithm}")
+                best_j, _, _ = self._evaluate_gate_edges(best_edges, tau_grid, callback=None)
+
             self.config.gate_edges = best_edges.tolist()
+            self.distill_gates()
             fi, f_val = self.compute_fisher_info(tau_grid, n_photons=1e4)
-        else:
+            info = {
+                "algorithm": algorithm,
+                "tau_grid": tau_grid,
+                "fisher_info": fi,
+                "f_val": f_val,
+                "gate_profiles": self.get_gate_profiles_vis(max(float(t_max), float(self.config.period))),
+                "t": np.arange(0, max(float(t_max), float(self.config.period)) + 0.05, 0.05),
+                "window_start": start,
+                "window_end": end,
+            }
+            return best_edges, best_j, info
+        finally:
             self.config.gate_edges = orig_edges
-            best_edges = np.array(orig_edges)
-            fi, f_val = self.compute_fisher_info(tau_grid, n_photons=1e4)
-            best_j = np.mean(f_val)
-
-        info = {
-            "tau_grid": tau_grid,
-            "fisher_info": fi,
-            "f_val": f_val,
-            "gate_profiles": self.get_gate_profiles_vis(t_max),
-            "t": np.arange(0, t_max + 0.05, 0.05)
-        }
-        
-        return best_edges, best_j, info
+            self.distill_gates()
 
     def get_gate_profiles_vis(self, t_max: float) -> np.ndarray:
         """Helper for visualization: returns sigmoid gate profiles for a standard time vector."""
