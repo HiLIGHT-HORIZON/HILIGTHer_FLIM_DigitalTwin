@@ -116,9 +116,12 @@ class PhysicsConfig(BaseModel):
     n_repeats: int = 1 
     dt_override: Optional[float] = None # Manual dt setting
     precision_validate_mc: bool = True
+    precision_compute_ci: bool = False
     precision_mc_repeats: int = 400
-    precision_photons: int = 200
-    precision_accuracy_pvalue: float = 0.01
+    precision_photons: int = 2000
+    precision_accuracy_pvalue: float = 0.001
+    precision_bootstrap_samples: int = 2000
+    precision_ci_level: float = 95.0
     sweep_autoplay: bool = True
     
     sim_mode: str = "spatial gradient" # spatial gradient, uniform model

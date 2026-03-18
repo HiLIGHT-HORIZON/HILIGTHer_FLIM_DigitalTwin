@@ -1,9 +1,9 @@
 import numpy as np
 import copy
+from math import erfc, sqrt
 from scipy.interpolate import interp1d
 from scipy.optimize import minimize, fmin
 from scipy.signal import convolve
-from scipy.stats import ttest_1samp
 from typing import Optional, Tuple, List, Callable
 from .models import PhysicsConfig
 
@@ -153,6 +153,39 @@ class TwinEngine:
         if self.grid_templates is None or self.grid_tau_axis is None or self.grid_signature != signature:
             self.precalculate_grid()
 
+    def _gaussian_kernel(self, sigma_ns: float, dt: float) -> Optional[np.ndarray]:
+        """Returns a normalized Gaussian kernel sampled on the current time grid."""
+        sigma_ns = float(max(sigma_ns, 0.0))
+        dt = float(max(dt, 1e-9))
+        if sigma_ns <= 0.0:
+            return None
+
+        half_width = max(int(np.ceil((4.0 * sigma_ns) / dt)), 1)
+        t_kernel = np.arange(-half_width, half_width + 1, dtype=float) * dt
+        kernel = np.exp(-(t_kernel ** 2) / (2.0 * sigma_ns ** 2))
+        kernel_sum = np.sum(kernel)
+        if kernel_sum <= 0:
+            return None
+        return kernel / kernel_sum
+
+    def _apply_temporal_blur(self, values: np.ndarray, sigma_ns: float, dt: float) -> np.ndarray:
+        """Applies Gaussian temporal blurring without changing array length."""
+        kernel = self._gaussian_kernel(sigma_ns, dt)
+        if kernel is None:
+            return np.array(values, copy=True)
+        return convolve(values, kernel, mode='same')
+
+    def _gate_jitter_sigma_ns(self) -> float:
+        """
+        Effective gate-timing uncertainty.
+        `timing_jitter` is the primary detector timing term; `skewness` is kept
+        for MATLAB/reference compatibility and contributes as an additional RMS term.
+        """
+        cfg = self.config
+        timing_sigma = max(float(getattr(cfg, "timing_jitter", 0.0)), 0.0) / 1000.0
+        skew_sigma = max(float(getattr(cfg, "skewness", 0.0)), 0.0) / 1000.0
+        return float(np.sqrt(timing_sigma ** 2 + skew_sigma ** 2))
+
     def distill_gates(self):
         """Standardizes gate generation within the measurement window defined by cfg.period."""
         cfg = self.config
@@ -192,6 +225,13 @@ class TwinEngine:
                 shape += edge_gate_profile(t, a + trep, b + trep)
 
             self.gate_shapes[i, :] = np.clip(shape, 0, 1.0)
+
+        gate_jitter_sigma = self._gate_jitter_sigma_ns()
+        if gate_jitter_sigma > 0.0 and n_time > 1:
+            dt = float(t[1] - t[0])
+            for i in range(n_gates):
+                blurred = self._apply_temporal_blur(self.gate_shapes[i, :], gate_jitter_sigma, dt)
+                self.gate_shapes[i, :] = np.clip(blurred, 0.0, 1.0)
 
     def obj_func(self, tau: float, obs: np.ndarray, fixed_bg: float) -> Tuple[float, float, float]:
         """
@@ -414,16 +454,16 @@ class TwinEngine:
         """Calculates the excitation IRF (envelope) and optional Burst sub-pulses."""
         cfg = self.config
         profile = cfg.irf_profile.lower()
+        dt = float(t[1] - t[0]) if len(t) > 1 else max(float(cfg.dt_input), 1e-3)
         
         # 1. Base IRF Shape (The Envelope)
-        # Gaussian profile with sigma including timing jitter
         mu = cfg.irf_position
         sigma_instr = cfg.irf_fwhm / 2.35482
         jitter_ns = cfg.timing_jitter / 1000.0
-        sigma = np.sqrt(sigma_instr**2 + jitter_ns**2)
-        sigma = max(sigma, 1e-6)
         
         if profile == "gaussian":
+            sigma = np.sqrt(sigma_instr**2 + jitter_ns**2)
+            sigma = max(sigma, 1e-6)
             excitation = np.exp(-((t - mu)**2) / (2.0 * sigma**2))
         elif profile == "ideal (dirac)":
             # Even for Dirac, jitter adds a Gaussian spread
@@ -434,9 +474,6 @@ class TwinEngine:
                 idx = np.abs(t - mu).argmin()
                 excitation[idx] = 1.0
         else: # rectangular
-            # Rectangular + Jitter = Convolved Rect and Gaussian
-            # Simplified: Use a very high-m order super-gaussian or just convolve
-            # For simplicity here, we'll keep the rect logic but we really should convolve.
             tr = max(cfg.irf_rise_time, 1e-6)
             tf = max(cfg.irf_fall_time, 1e-6)
             t_rel = t - mu
@@ -446,6 +483,8 @@ class TwinEngine:
             peak_val = 1.0 - np.exp(-cfg.irf_fwhm / tr)
             mask_fall = t_rel >= cfg.irf_fwhm
             excitation[mask_fall] = peak_val * np.exp(-(t_rel[mask_fall] - cfg.irf_fwhm) / tf)
+            if jitter_ns > 1e-5:
+                excitation = self._apply_temporal_blur(excitation, jitter_ns, dt)
             
         # 2. Burst Sub-structure Modulation
         if cfg.burst_enabled:
@@ -738,6 +777,67 @@ class TwinEngine:
             
         return fi, f_val
 
+    def _bootstrap_accuracy_pvalue(self, samples: np.ndarray, truth: float,
+                                   n_bootstrap: int, rng: np.random.Generator) -> float:
+        samples = np.asarray(samples, dtype=float)
+        samples = samples[np.isfinite(samples)]
+        if samples.size == 0:
+            return np.nan
+        if samples.size == 1:
+            return 1.0 if np.isclose(samples[0], truth) else 0.0
+
+        observed_delta = float(np.mean(samples) - truth)
+        centered = samples - np.mean(samples) + truth
+        boot_idx = rng.integers(0, samples.size, size=(int(n_bootstrap), samples.size))
+        null_means = centered[boot_idx].mean(axis=1)
+        abs_delta = abs(observed_delta)
+        empirical_p = (np.count_nonzero(np.abs(null_means - truth) >= abs_delta) + 1.0) / (len(null_means) + 1.0)
+
+        null_std = float(np.std(null_means, ddof=1)) if len(null_means) > 1 else 0.0
+        if null_std <= 0:
+            return 1.0 if np.isclose(observed_delta, 0.0) else 0.0
+
+        approx_p = erfc(abs_delta / (sqrt(2.0) * null_std))
+        resolution_floor = 10.0 / max(len(null_means), 1)
+        return float(empirical_p if empirical_p >= resolution_floor else approx_p)
+
+    def _bootstrap_precision_intervals(self, estimates: np.ndarray, detections: np.ndarray, truth: float,
+                                       n_bootstrap: int, rng: np.random.Generator) -> dict:
+        estimates = np.asarray(estimates, dtype=float)
+        detections = np.asarray(detections, dtype=float)
+        finite_mask = np.isfinite(estimates) & np.isfinite(detections)
+        estimates = estimates[finite_mask]
+        detections = detections[finite_mask]
+        empty = {
+            "f_ci_lower": np.nan,
+            "f_ci_upper": np.nan,
+            "efficiency_ci_lower": np.nan,
+            "efficiency_ci_upper": np.nan,
+        }
+        if estimates.size < 2:
+            return empty
+
+        boot_idx = rng.integers(0, estimates.size, size=(int(n_bootstrap), estimates.size))
+        boot_estimates = estimates[boot_idx]
+        boot_detections = detections[boot_idx]
+        std_boot = np.std(boot_estimates, axis=1, ddof=1)
+        mean_detected_boot = np.mean(boot_detections, axis=1)
+        denom = max(abs(truth), 1e-12)
+        f_boot = (std_boot / denom) * np.sqrt(np.maximum(mean_detected_boot, 0.0))
+        eff_boot = np.where(f_boot > 0, 1.0 / (f_boot ** 2), np.nan)
+        ci_level = float(getattr(self.config, "precision_ci_level", 95.0))
+        ci_level = min(max(ci_level, 1.0), 99.999)
+        alpha = (100.0 - ci_level) / 100.0
+        lower_pct = 100.0 * (alpha / 2.0)
+        upper_pct = 100.0 * (1.0 - alpha / 2.0)
+
+        return {
+            "f_ci_lower": float(np.nanpercentile(f_boot, lower_pct)),
+            "f_ci_upper": float(np.nanpercentile(f_boot, upper_pct)),
+            "efficiency_ci_lower": float(np.nanpercentile(eff_boot, lower_pct)),
+            "efficiency_ci_upper": float(np.nanpercentile(eff_boot, upper_pct)),
+        }
+
     def monte_carlo_precision_curve(self, x_grid: np.ndarray, n_photons: int, n_repeats: int,
                                     point_callback: Optional[Callable] = None) -> dict:
         """
@@ -765,6 +865,13 @@ class TwinEngine:
         compatible = np.full(len(x_grid), False, dtype=bool)
         n_valid = np.zeros(len(x_grid), dtype=int)
         alpha_threshold = float(getattr(self.config, "precision_accuracy_pvalue", 0.01))
+        compute_ci = bool(getattr(self.config, "precision_compute_ci", False))
+        bootstrap_samples = max(200, int(getattr(self.config, "precision_bootstrap_samples", 2000)))
+        f_ci_lower = np.full(len(x_grid), np.nan)
+        f_ci_upper = np.full(len(x_grid), np.nan)
+        eff_ci_lower = np.full(len(x_grid), np.nan)
+        eff_ci_upper = np.full(len(x_grid), np.nan)
+        rng = np.random.default_rng()
 
         for idx, param_val in enumerate(x_grid):
             self._set_cfg_param(target_param, param_val)
@@ -798,14 +905,42 @@ class TwinEngine:
                 if f_values[idx] > 0:
                     p_eff[idx] = 1.0 / (f_values[idx] ** 2)
             if n_valid[idx] >= 2:
-                test_result = ttest_1samp(finite_est, popmean=param_val, alternative='two-sided')
-                p_values[idx] = float(test_result.pvalue) if np.isfinite(test_result.pvalue) else np.nan
+                p_values[idx] = self._bootstrap_accuracy_pvalue(
+                    finite_est,
+                    float(param_val),
+                    bootstrap_samples,
+                    rng,
+                )
                 compatible[idx] = bool(np.isfinite(p_values[idx]) and p_values[idx] >= alpha_threshold)
             elif n_valid[idx] == 1:
                 p_values[idx] = 1.0 if np.isclose(finite_est[0], param_val) else 0.0
                 compatible[idx] = bool(p_values[idx] >= alpha_threshold)
+            if compute_ci:
+                ci_payload = self._bootstrap_precision_intervals(
+                    param_est,
+                    n_detections,
+                    float(param_val),
+                    bootstrap_samples,
+                    rng,
+                )
+                f_ci_lower[idx] = ci_payload["f_ci_lower"]
+                f_ci_upper[idx] = ci_payload["f_ci_upper"]
+                eff_ci_lower[idx] = ci_payload["efficiency_ci_lower"]
+                eff_ci_upper[idx] = ci_payload["efficiency_ci_upper"]
             if point_callback is not None:
-                point_callback(idx, mean_tau[idx], std_tau[idx], f_values[idx], p_eff[idx], p_values[idx], compatible[idx])
+                point_callback(
+                    idx,
+                    mean_tau[idx],
+                    std_tau[idx],
+                    f_values[idx],
+                    p_eff[idx],
+                    p_values[idx],
+                    compatible[idx],
+                    f_ci_lower[idx],
+                    f_ci_upper[idx],
+                    eff_ci_lower[idx],
+                    eff_ci_upper[idx],
+                )
 
         self._set_cfg_param(target_param, original_param_value)
         return {
@@ -819,6 +954,10 @@ class TwinEngine:
             "p_value": p_values,
             "compatible": compatible,
             "n_valid": n_valid,
+            "f_ci_lower": f_ci_lower,
+            "f_ci_upper": f_ci_upper,
+            "efficiency_ci_lower": eff_ci_lower,
+            "efficiency_ci_upper": eff_ci_upper,
         }
 
     def simulate_photons_with_deadtime(self, tau: Optional[float], n_total: int, b_rate: float = 0.0) -> np.ndarray:
@@ -867,15 +1006,7 @@ class TwinEngine:
         n_gates = len(cfg.gate_edges) - 1
         self.raw_data = np.zeros((ny, nx, n_gates))
         
-        # Pre-distill gates with jitter if needed
-        jitter_ns = cfg.timing_jitter / 1000.0
         distilled_shapes = self.gate_shapes.copy()
-        if jitter_ns > 0:
-            t_k = np.arange(-4*jitter_ns, 4*jitter_ns + cfg.dt_input, cfg.dt_input)
-            kernel = np.exp(-t_k**2 / (2 * jitter_ns**2))
-            kernel /= np.sum(kernel)
-            for i in range(n_gates):
-                distilled_shapes[i, :] = convolve(distilled_shapes[i, :], kernel, mode='same')
 
         # DNL Scaling
         dnl = 1.0 + (np.random.rand(n_gates) - 0.5) * (cfg.dnl_level / 100.0)

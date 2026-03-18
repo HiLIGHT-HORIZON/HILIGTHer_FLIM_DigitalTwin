@@ -149,6 +149,23 @@ result = service.run_precision()</pre>
     </div>
 
     <div class="card">
+        <h2>2.1 Precision Execution Pane</h2>
+        <p>The desktop precision workspace exposes both theory and Monte Carlo validation controls directly in the controller. The current defaults are tuned for engineering sweeps rather than quick demos.</p>
+        <table>
+            <tr><th>Control</th><th>Purpose</th><th>Default</th></tr>
+            <tr><td><code>Validate with Monte Carlo</code></td><td>Run repeated MC validation at each sweep point.</td><td>On</td></tr>
+            <tr><td><code>Compute 95% CI</code></td><td>Bootstrap the MC repeats and return an interval for <code>F</code> or <code>F^-2</code>.</td><td>Off</td></tr>
+            <tr><td><code>Precision Photons</code></td><td>Photon budget used for theory and MC precision analysis.</td><td>2000</td></tr>
+            <tr><td><code>MC Repeats</code></td><td>Number of MC repeats per target-parameter point.</td><td>400</td></tr>
+            <tr><td><code>Estimator Accuracy p-value</code></td><td>Bootstrap-based estimator-accuracy threshold.</td><td>0.001</td></tr>
+            <tr><td><code>Bootstrap Resamples</code></td><td>Number of bootstrap draws used for p-values and confidence intervals.</td><td>2000</td></tr>
+            <tr><td><code>CI Level (%)</code></td><td>Confidence level for the MC interval display.</td><td>95.0</td></tr>
+            <tr><td><code>Smooth MC</code></td><td>Visualization-only smoothing over the tau sweep; does not alter numeric outputs.</td><td>Off</td></tr>
+        </table>
+        <p>When confidence intervals are enabled, the desktop Fisher widget displays the interval only, without overlaying the Monte Carlo mean curve.</p>
+    </div>
+
+    <div class="card">
         <h2>3. HTTP API</h2>
         <p><span class="badge">Server</span><code>python/backend/main.py</code></p>
         <p>Run with a standard ASGI server, for example:</p>
@@ -178,7 +195,7 @@ result = service.run_precision()</pre>
         <h3>Example Precision Call</h3>
         <pre>curl -X POST http://127.0.0.1:8000/api/v1/workflows/precision ^
   -H "Content-Type: application/json" ^
-  -d "{\"config_patch\": {\"f_x_param\": \"tau1\", \"precision_validate_mc\": true}}"</pre>
+  -d "{\"config_patch\": {\"f_x_param\": \"tau1\", \"precision_validate_mc\": true, \"precision_compute_ci\": true, \"precision_accuracy_pvalue\": 0.00001, \"precision_bootstrap_samples\": 5000, \"precision_ci_level\": 95.0}}"</pre>
     </div>
 
     <div class="card">
@@ -188,7 +205,7 @@ result = service.run_precision()</pre>
             <li><span class="good">Tau maps</span>: fitted lifetime images for downstream visualization or QC.</li>
             <li><span class="good">Diagnostics snapshots</span>: time vector, gates, IRF, and reference PDF for architecture introspection.</li>
             <li><span class="good">Pixel analyses</span>: one-pixel decay, gate centers, analytic fit, and estimated lifetime.</li>
-            <li><span class="good">Precision payloads</span>: ideal reference, theory curve, and Monte Carlo statistics including compatibility tests.</li>
+            <li><span class="good">Precision payloads</span>: ideal reference, theory curve, Monte Carlo statistics, bootstrap compatibility tests, and optional configurable confidence intervals.</li>
             <li><span class="good">GUI schema</span>: software-readable description of workspace regions and actionable GUI elements.</li>
         </ul>
     </div>
@@ -214,7 +231,7 @@ precision_plot = api.get_precision_plot()</pre>
             <tr><td><code>trigger_run()</code></td><td>Execute the precision workflow.</td></tr>
             <tr><td><code>trigger_test()</code></td><td>Execute the synthetic image workflow.</td></tr>
             <tr><td><code>trigger_export_preview()</code></td><td>Open the precision-report HTML preview.</td></tr>
-            <tr><td><code>get_precision_plot()</code></td><td>Get the live precision plot payload, including MC compatibility masks.</td></tr>
+            <tr><td><code>get_precision_plot()</code></td><td>Get the live precision plot payload, including MC compatibility masks and optional bootstrap confidence bands.</td></tr>
             <tr><td><code>get_accuracy_plot()</code></td><td>Get the live gridded MLE accuracy payload.</td></tr>
             <tr><td><code>get_diagnostics_frames()</code></td><td>Read currently cached diagnostics sweep frames.</td></tr>
         </table>

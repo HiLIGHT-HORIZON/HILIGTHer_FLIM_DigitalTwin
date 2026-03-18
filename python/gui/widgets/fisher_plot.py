@@ -1,96 +1,186 @@
-import pyqtgraph as pg
 import numpy as np
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
-                             QCheckBox, QComboBox, QLabel)
+import pyqtgraph as pg
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QGuiApplication
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
+
 
 class FisherWidget(QWidget):
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout(self)
-        
-        # Colors for batch sweeps
-        self.colors = ['#8b5cf6', '#3b82f6', '#ec4899', '#f59e0b', '#ef4444', '#06b6d4', '#84cc16']
-        self.sweep_curves = [] # List of (curves, label_widget)
-        
-        # Controls Header
+
+        self.colors = ["#8b5cf6", "#3b82f6", "#ec4899", "#f59e0b", "#ef4444", "#06b6d4", "#84cc16"]
+        self.rendered_items = []
+        self.series_visibility = {}
+        self.series_checkboxes = {}
+        self.series_groups = {}
+        self.dynamic_legend_widgets = []
+        self.batch_data = {}
+        self.ideal_tau = None
+        self.ideal_f = None
+
         ctrl_layout = QHBoxLayout()
         self.chk_log_x = QCheckBox("Log X")
         self.chk_log_x.setChecked(True)
         self.chk_log_x.stateChanged.connect(self.refresh_plot)
-        
+        self.chk_log_x.setToolTip("Display the target-parameter axis on a logarithmic scale.")
+
         self.chk_log_y = QCheckBox("Log Y")
         self.chk_log_y.stateChanged.connect(self.refresh_plot)
-        
+        self.chk_log_y.setToolTip("Display the precision metric axis on a logarithmic scale.")
+
         self.combo_mode = QComboBox()
         self.combo_mode.addItems(["F-Value (F)", "Photon Efficiency (F^-2)"])
         self.combo_mode.currentIndexChanged.connect(self.refresh_plot)
-        
+        self.combo_mode.setToolTip("Choose whether to display F or photon efficiency.")
+
+        self.chk_smooth_mc = QCheckBox("Smooth MC")
+        self.chk_smooth_mc.toggled.connect(self._set_mc_smoothing_enabled)
+        self.chk_smooth_mc.toggled.connect(self.refresh_plot)
+        self.chk_smooth_mc.setToolTip("Smooth Monte Carlo curves over the tau sweep for visualization only.")
+
+        self.spin_smooth_window = QSpinBox()
+        self.spin_smooth_window.setRange(3, 21)
+        self.spin_smooth_window.setSingleStep(2)
+        self.spin_smooth_window.setValue(5)
+        self.spin_smooth_window.setEnabled(False)
+        self.spin_smooth_window.valueChanged.connect(self.refresh_plot)
+        self.spin_smooth_window.setToolTip("Odd moving-average window used for Monte Carlo smoothing.")
+
+        self.btn_reset = QPushButton("Reset")
+        self.btn_reset.setToolTip("Reset the view to show all data points.")
+        self.btn_reset.clicked.connect(self.reset_axes)
+        self.btn_reset.setMaximumWidth(60)
+        self.btn_reset.setStyleSheet("padding: 2px 5px; font-size: 11px;")
+
+        self.btn_copy = QPushButton("📋")
+        self.btn_copy.setToolTip("Copy screenshot to clipboard")
+        self.btn_copy.clicked.connect(self._copy_to_clipboard)
+        self.btn_copy.setMaximumWidth(30)
+        self.btn_copy.setStyleSheet("padding: 2px; font-size: 14px;")
+
         ctrl_layout.addWidget(QLabel("Axes:"))
         ctrl_layout.addWidget(self.chk_log_x)
         ctrl_layout.addWidget(self.chk_log_y)
-
+        ctrl_layout.addWidget(self.btn_reset)
+        ctrl_layout.addWidget(self.btn_copy)
         ctrl_layout.addStretch()
+        ctrl_layout.addWidget(self.chk_smooth_mc)
+        ctrl_layout.addWidget(QLabel("Window:"))
+        ctrl_layout.addWidget(self.spin_smooth_window)
         ctrl_layout.addWidget(QLabel("Metric:"))
         ctrl_layout.addWidget(self.combo_mode)
         layout.addLayout(ctrl_layout)
-        
-        # Main Display Layout
+
         display_layout = QHBoxLayout()
         self.plot_widget = pg.PlotWidget()
-        self.plot_widget.setBackground('#0a0a0a')
+        self.plot_widget.setBackground("#0a0a0a")
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
-        self.plot_widget.setLabel('bottom', 'Target Parameter Range')
+        self.plot_widget.setLabel("bottom", "Target Parameter Range")
         display_layout.addWidget(self.plot_widget, stretch=4)
-        
-        # Legend Panel
-        from PyQt6.QtWidgets import QFrame, QScrollArea
-        from PyQt6.QtCore import Qt
+
         self.legend_panel = QFrame()
         self.legend_panel.setFrameShape(QFrame.Shape.StyledPanel)
         self.legend_panel.setMinimumWidth(220)
         self.legend_layout = QVBoxLayout(self.legend_panel)
         self.legend_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(self.legend_panel)
         display_layout.addWidget(scroll, stretch=1)
-        
+
         self.legend_layout.addWidget(QLabel("<b style='font-size: 14px; color: #fff;'>Acquisition Benchmarks</b>"))
-        self.legend_layout.addSpacing(10)
-        
-        # Ideal Reference Curve
-        self.ideal_curve = self.plot_widget.plot(
-            pen=pg.mkPen(color='#10b981', width=1.5, style=pg.QtCore.Qt.PenStyle.DashLine),
-            name="Ideal Case"
+        self.legend_layout.addSpacing(8)
+
+        self.ideal_curve = pg.PlotDataItem(
+            pen=pg.mkPen(color="#10b981", width=1.5, style=Qt.PenStyle.DashLine)
         )
-        self._add_manual_legend("Ideal Case", self.ideal_curve, "#10b981")
+        self.plot_widget.addItem(self.ideal_curve)
+
+        self.chk_show_ideal = QCheckBox("Ideal Case")
+        self.chk_show_ideal.setChecked(True)
+        self.chk_show_ideal.setStyleSheet("color: #10b981; font-weight: bold;")
+        self.chk_show_ideal.stateChanged.connect(self._apply_visibility)
+        self.legend_layout.addWidget(self.chk_show_ideal)
+
         self.legend_layout.addSpacing(10)
-        self.legend_layout.addWidget(QLabel("<i style='color: #888;'>Batch Curves:</i>"))
-        
+        self.legend_layout.addWidget(QLabel("<i style='color: #888;'>Collections:</i>"))
+
+        self.chk_show_theory = QCheckBox("Theory")
+        self.chk_show_theory.setChecked(True)
+        self.chk_show_theory.stateChanged.connect(self._apply_visibility)
+        self.legend_layout.addWidget(self.chk_show_theory)
+
+        self.chk_show_mc = QCheckBox("Monte Carlo")
+        self.chk_show_mc.setChecked(True)
+        self.chk_show_mc.stateChanged.connect(self._apply_visibility)
+        self.legend_layout.addWidget(self.chk_show_mc)
+
+        self.legend_layout.addSpacing(10)
+        self.legend_layout.addWidget(QLabel("<i style='color: #888;'>Sweep Series:</i>"))
+        self.series_legend_holder = QVBoxLayout()
+        self.legend_layout.addLayout(self.series_legend_holder)
+        self.legend_layout.addStretch()
+
         layout.addLayout(display_layout)
-        
-        # Internal Data Store
-        self.raw_tau = None
-        self.batch_data = {} # label -> payload dict
-        self.ideal_tau = None
-        self.ideal_f = None
+
+    @staticmethod
+    def _segment_indices(mask):
+        idx = np.flatnonzero(mask)
+        if idx.size == 0:
+            return []
+        splits = np.where(np.diff(idx) > 1)[0] + 1
+        return [segment for segment in np.split(idx, splits) if segment.size > 0]
+
+    def _copy_to_clipboard(self):
+        pixmap = self.grab()
+        QGuiApplication.clipboard().setPixmap(pixmap)
+
+    def _set_mc_smoothing_enabled(self, enabled):
+        self.spin_smooth_window.setEnabled(enabled)
+
+    def _smooth_masked_series(self, values, mask, window):
+        arr = np.array(values, copy=True, dtype=float)
+        if window <= 1:
+            return arr
+
+        effective_window = int(window)
+        if effective_window % 2 == 0:
+            effective_window += 1
+
+        for segment in self._segment_indices(mask):
+            if segment.size < 3:
+                continue
+            seg_window = min(effective_window, segment.size if segment.size % 2 == 1 else segment.size - 1)
+            if seg_window < 3:
+                continue
+            pad = seg_window // 2
+            kernel = np.ones(seg_window, dtype=float) / float(seg_window)
+            padded = np.pad(arr[segment], (pad, pad), mode="edge")
+            arr[segment] = np.convolve(padded, kernel, mode="valid")
+        return arr
 
     def set_xaxis_label(self, text):
-        self.plot_widget.setLabel('bottom', text)
+        self.plot_widget.setLabel("bottom", text)
 
     def plot_batch(self, x, results_dict, ideal_x=None, ideal_f=None):
-        """
-        Single atomic plot update. 
-        results_dict: {label: f_values_array or {y, compatible}}
-        All curves are cleared and redrawn from provided data.
-        """
-        # Store ideal reference
         if ideal_x is not None:
             self.ideal_tau = np.array(ideal_x, copy=True)
             self.ideal_f = np.array(ideal_f, copy=True)
 
-        # Rebuild batch_data from provided results (all copies)
         self.batch_data = {}
         x_copy = np.array(x, copy=True)
         for label, entry in results_dict.items():
@@ -99,138 +189,346 @@ class FisherWidget(QWidget):
                     "x": x_copy,
                     "y": np.array(entry.get("y", []), copy=True),
                     "compatible": None if entry.get("compatible") is None else np.array(entry.get("compatible"), copy=True, dtype=bool),
+                    "f_ci_lower": None if entry.get("f_ci_lower") is None else np.array(entry.get("f_ci_lower"), copy=True),
+                    "f_ci_upper": None if entry.get("f_ci_upper") is None else np.array(entry.get("f_ci_upper"), copy=True),
+                    "efficiency_ci_lower": None if entry.get("efficiency_ci_lower") is None else np.array(entry.get("efficiency_ci_lower"), copy=True),
+                    "efficiency_ci_upper": None if entry.get("efficiency_ci_upper") is None else np.array(entry.get("efficiency_ci_upper"), copy=True),
                 }
             else:
                 self.batch_data[label] = {
                     "x": x_copy,
                     "y": np.array(entry, copy=True),
                     "compatible": None,
+                    "f_ci_lower": None,
+                    "f_ci_upper": None,
+                    "efficiency_ci_lower": None,
+                    "efficiency_ci_upper": None,
                 }
 
         self.refresh_plot()
 
     def update_data(self, x, f, label="Simulated", ideal_x=None, ideal_f=None, is_batch=False):
-        """Legacy helper — delegates to plot_batch."""
         if not is_batch:
             self.batch_data = {}
-        self.batch_data[label] = (np.array(x, copy=True), np.array(f, copy=True))
+        self.batch_data[label] = {
+            "x": np.array(x, copy=True),
+            "y": np.array(f, copy=True),
+            "compatible": None,
+            "f_ci_lower": None,
+            "f_ci_upper": None,
+            "efficiency_ci_lower": None,
+            "efficiency_ci_upper": None,
+        }
         if ideal_x is not None:
             self.ideal_tau = np.array(ideal_x, copy=True)
             self.ideal_f = np.array(ideal_f, copy=True)
         self.refresh_plot()
 
     def clear_curves(self):
-        for curves, widget in self.sweep_curves:
-            for curve in curves:
-                self.plot_widget.removeItem(curve)
+        self._clear_rendered_items()
+        self._clear_dynamic_legend()
+        self.batch_data = {}
+        self.series_groups = {}
+        self.ideal_curve.setData([], [])
+
+    def _clear_rendered_items(self):
+        for item in self.rendered_items:
+            self.plot_widget.removeItem(item)
+        self.rendered_items = []
+
+    def _clear_dynamic_legend(self):
+        for widget in self.dynamic_legend_widgets:
+            self.series_legend_holder.removeWidget(widget)
             widget.setParent(None)
             widget.deleteLater()
-        self.sweep_curves = []
-        self.batch_data = {}
+        self.dynamic_legend_widgets = []
+        self.series_checkboxes = {}
 
-    def _add_manual_legend(self, label, curves, color=None):
-        from PyQt6.QtWidgets import QCheckBox
-        from PyQt6.QtCore import Qt
-        if not isinstance(curves, (list, tuple)):
-            curves = [curves]
-        chk = QCheckBox(label)
-        chk.setChecked(True)
-        if color: chk.setStyleSheet(f"color: {color}; font-weight: bold;")
-        chk.stateChanged.connect(
-            lambda state: [curve.setVisible(state == Qt.CheckState.Checked.value) for curve in curves]
+    def _series_identity(self, label):
+        category = "theory"
+        if label.startswith("Monte Carlo"):
+            category = "mc"
+        elif label.startswith("Theory"):
+            category = "theory"
+
+        if " | " in label:
+            base_label = label.split(" | ", 1)[1]
+        elif label in {"Theory", "Monte Carlo", "Simulated"}:
+            base_label = "Current Configuration"
+        else:
+            base_label = label
+        return category, base_label
+
+    def _ensure_series_group(self, base_label, color):
+        group = self.series_groups.get(base_label)
+        if group is not None:
+            return group
+
+        checked = self.series_visibility.get(base_label, True)
+        checkbox = QCheckBox(base_label)
+        checkbox.setChecked(checked)
+        checkbox.setStyleSheet(f"color: {color}; font-weight: bold;")
+        checkbox.stateChanged.connect(lambda _state, key=base_label: self._on_series_toggle(key))
+        self.series_legend_holder.addWidget(checkbox)
+        self.dynamic_legend_widgets.append(checkbox)
+        self.series_checkboxes[base_label] = checkbox
+        group = {"color": color, "checkbox": checkbox, "theory": [], "mc": []}
+        self.series_groups[base_label] = group
+        return group
+
+    def _on_series_toggle(self, base_label):
+        checkbox = self.series_checkboxes.get(base_label)
+        if checkbox is not None:
+            self.series_visibility[base_label] = checkbox.isChecked()
+        self._apply_visibility()
+
+    def _register_item(self, base_label, category, item):
+        self.series_groups[base_label][category].append(item)
+        self.rendered_items.append(item)
+        self.plot_widget.addItem(item)
+
+    def _set_items_visible(self, items, visible):
+        for item in items:
+            item.setVisible(visible)
+
+    def _apply_visibility(self):
+        self.ideal_curve.setVisible(self.chk_show_ideal.isChecked())
+        show_theory = self.chk_show_theory.isChecked()
+        show_mc = self.chk_show_mc.isChecked()
+        for base_label, group in self.series_groups.items():
+            series_enabled = self.series_checkboxes.get(base_label).isChecked()
+            self._set_items_visible(group["theory"], series_enabled and show_theory)
+            self._set_items_visible(group["mc"], series_enabled and show_mc)
+
+    def _create_ci_band_items(self, x, lower, upper, color):
+        lower_curve = pg.PlotDataItem(x=x, y=lower, pen=None)
+        upper_curve = pg.PlotDataItem(x=x, y=upper, pen=None)
+        color_obj = pg.mkColor(color)
+        fill = pg.FillBetweenItem(
+            upper_curve,
+            lower_curve,
+            brush=QColor(color_obj.red(), color_obj.green(), color_obj.blue(), 70),
         )
-        self.legend_layout.addWidget(chk)
-        return chk
+        fill.setZValue(1)
+        return [lower_curve, upper_curve, fill]
 
-    def refresh_plot(self):
-        if not self.batch_data and self.ideal_tau is None:
+    def _valid_mask(self, x_values, y_values):
+        x_arr = np.asarray(x_values, dtype=float)
+        y_arr = np.asarray(y_values, dtype=float)
+        mask = np.isfinite(x_arr) & np.isfinite(y_arr)
+        if self.chk_log_x.isChecked():
+            mask &= x_arr > 0
+        if self.chk_log_y.isChecked():
+            mask &= y_arr > 0
+        return mask
+
+    def _apply_tight_ranges(self, x_values, y_values):
+        x_arr = np.asarray(x_values, dtype=float)
+        y_arr = np.asarray(y_values, dtype=float)
+        mask = self._valid_mask(x_arr, y_arr)
+        if not np.any(mask):
             return
 
-        self.plot_widget.setLogMode(x=self.chk_log_x.isChecked(), y=self.chk_log_y.isChecked())
+        x_valid = x_arr[mask]
+        y_valid = y_arr[mask]
+        x_min = float(np.min(x_valid))
+        x_max = float(np.max(x_valid))
+        y_min = float(np.min(y_valid))
+        y_max = float(np.max(y_valid))
+
+        if self.chk_log_x.isChecked():
+            if np.isclose(x_min, x_max):
+                x_min *= 0.9
+                x_max *= 1.1
+            log_min = np.log10(max(x_min, 1e-300))
+            log_max = np.log10(max(x_max, 1e-300))
+            if np.isclose(log_min, log_max):
+                pad = max(abs(log_min) * 0.05, 0.05)
+                x_range_min = log_min - pad
+                x_range_max = log_max + pad
+            else:
+                log_pad = 0.04 * max(log_max - log_min, 0.1)
+                x_range_min = log_min - log_pad
+                x_range_max = log_max + log_pad
+        else:
+            if np.isclose(x_min, x_max):
+                span = max(abs(x_min) * 0.05, 1e-6)
+                x_min -= span
+                x_max += span
+            else:
+                x_pad = 0.02 * (x_max - x_min)
+                x_min -= x_pad
+                x_max += x_pad
+            x_range_min = x_min
+            x_range_max = x_max
+
+        if self.chk_log_y.isChecked():
+            if np.isclose(y_min, y_max):
+                y_min *= 0.9
+                y_max *= 1.1
+            log_min = np.log10(max(y_min, 1e-300))
+            log_max = np.log10(max(y_max, 1e-300))
+            if np.isclose(log_min, log_max):
+                pad = max(abs(log_min) * 0.05, 0.05)
+                y_range_min = log_min - pad
+                y_range_max = log_max + pad
+            else:
+                log_pad = 0.05 * max(log_max - log_min, 0.1)
+                y_range_min = log_min - log_pad
+                y_range_max = log_max + log_pad
+        else:
+            if np.isclose(y_min, y_max):
+                span = max(abs(y_min) * 0.05, 1e-6)
+                y_min -= span
+                y_max += span
+            else:
+                y_pad = 0.05 * (y_max - y_min)
+                y_min -= y_pad
+                y_max += y_pad
+            y_range_min = y_min
+            y_range_max = y_max
+
+        self.plot_widget.disableAutoRange()
+        self.plot_widget.setXRange(x_range_min, x_range_max, padding=0.0)
+        self.plot_widget.setYRange(y_range_min, y_range_max, padding=0.0)
+
+    def reset_axes(self):
+        self.plot_widget.enableAutoRange()
+        self.refresh_plot()
+
+    def refresh_plot(self):
+        self._clear_rendered_items()
+        self._clear_dynamic_legend()
+        self.series_groups = {}
+
         mode = self.combo_mode.currentIndex()
         metric = "F-Value" if mode == 0 else "Efficiency (F^-2)"
-        self.plot_widget.setLabel('left', metric)
+        self.plot_widget.setLabel("left", metric)
+        self.plot_widget.setLogMode(x=self.chk_log_x.isChecked(), y=self.chk_log_y.isChecked())
 
-        # Remove all existing batch curves and rebuild from scratch
-        for curves, widget in self.sweep_curves:
-            for curve in curves:
-                self.plot_widget.removeItem(curve)
-            widget.setParent(None)
-            widget.deleteLater()
-        self.sweep_curves = []
-
+        smooth_mc = self.chk_smooth_mc.isChecked()
+        smooth_window = self.spin_smooth_window.value()
+        all_x = []
+        all_y = []
         color_map = {}
         color_index = 0
 
-        for i, (label, payload) in enumerate(self.batch_data.items()):
-            x = payload["x"]
-            f = payload["y"]
-            compatible = payload.get("compatible")
-            if " | " in label:
-                base_label = label.split(" | ", 1)[1]
-            elif label.startswith("Theory") or label.startswith("Monte Carlo"):
-                base_label = "Current Configuration"
-            else:
-                base_label = label
+        for label, payload in self.batch_data.items():
+            category, base_label = self._series_identity(label)
             if base_label not in color_map:
                 color_map[base_label] = self.colors[color_index % len(self.colors)]
                 color_index += 1
             color = color_map[base_label]
-            y_data = f if mode == 0 else 1.0 / (np.maximum(f, 1e-6) ** 2)
-            finite_mask = np.isfinite(x) & np.isfinite(y_data)
-            if not np.any(finite_mask):
-                continue
-            is_monte_carlo = label.startswith("Monte Carlo")
-            curves = []
-            if is_monte_carlo:
-                compatible_mask = finite_mask.copy()
-                incompatible_mask = np.zeros_like(finite_mask, dtype=bool)
-                if compatible is not None and compatible.shape == x.shape:
-                    compatible_mask = finite_mask & compatible
-                    incompatible_mask = finite_mask & (~compatible)
-                if np.any(compatible_mask):
-                    curve_ok = pg.PlotDataItem(
-                        x[compatible_mask], y_data[compatible_mask],
-                        pen=None,
-                        symbol='o', symbolSize=7, symbolBrush=pg.mkBrush(color),
-                        symbolPen=pg.mkPen(color=color),
-                        name=label
-                    )
-                    self.plot_widget.addItem(curve_ok)
-                    curves.append(curve_ok)
-                if np.any(incompatible_mask):
-                    curve_bad = pg.PlotDataItem(
-                        x[incompatible_mask], y_data[incompatible_mask],
-                        pen=None,
-                        symbol='o', symbolSize=7, symbolBrush=pg.mkBrush('#6b7280'),
-                        symbolPen=pg.mkPen(color='#9ca3af'),
-                        name=label
-                    )
-                    self.plot_widget.addItem(curve_bad)
-                    curves.append(curve_bad)
-            else:
-                curve = pg.PlotDataItem(
-                    x[finite_mask], y_data[finite_mask],
-                    pen=pg.mkPen(color=color, width=2),
-                    symbol=None, symbolSize=6, symbolBrush=None,
-                    symbolPen=pg.mkPen(color=color),
-                    name=label
-                )
-                self.plot_widget.addItem(curve)
-                curves.append(curve)
-            if not curves:
-                continue
-            chk = self._add_manual_legend(label, curves, color)
-            self.sweep_curves.append((curves, chk))
+            group = self._ensure_series_group(base_label, color)
 
-        # 2. Update Ideal Curve
-        if self.ideal_tau is not None and self.ideal_f is not None:
-            y_i = self.ideal_f if mode == 0 else 1.0/(np.maximum(self.ideal_f,1e-6)**2)
-            finite_mask = np.isfinite(self.ideal_tau) & np.isfinite(y_i)
-            if np.any(finite_mask):
-                self.ideal_curve.setData(self.ideal_tau[finite_mask], y_i[finite_mask])
-                self.ideal_curve.show()
+            x = np.array(payload["x"], copy=False)
+            f = np.array(payload["y"], copy=False)
+            y_data = f if mode == 0 else 1.0 / (np.maximum(f, 1e-12) ** 2)
+            mask = self._valid_mask(x, y_data)
+            if not np.any(mask):
+                continue
+
+            all_x.append(np.array(x[mask], copy=True))
+            all_y.append(np.array(y_data[mask], copy=True))
+
+            if category == "mc":
+                ci_lower = payload.get("f_ci_lower") if mode == 0 else payload.get("efficiency_ci_lower")
+                ci_upper = payload.get("f_ci_upper") if mode == 0 else payload.get("efficiency_ci_upper")
+                has_ci = (
+                    ci_lower is not None
+                    and ci_upper is not None
+                    and np.any(np.isfinite(ci_lower))
+                    and np.any(np.isfinite(ci_upper))
+                )
+                if has_ci:
+                    ci_lower = np.array(ci_lower, copy=True)
+                    ci_upper = np.array(ci_upper, copy=True)
+                    ci_mask = mask & self._valid_mask(x, ci_lower) & self._valid_mask(x, ci_upper)
+                    if not np.any(ci_mask):
+                        continue
+                    if smooth_mc:
+                        ci_lower = self._smooth_masked_series(ci_lower, ci_mask, smooth_window)
+                        ci_upper = self._smooth_masked_series(ci_upper, ci_mask, smooth_window)
+                    all_x.append(np.array(x[ci_mask], copy=True))
+                    all_y.append(np.array(ci_lower[ci_mask], copy=True))
+                    all_x.append(np.array(x[ci_mask], copy=True))
+                    all_y.append(np.array(ci_upper[ci_mask], copy=True))
+                    for segment in self._segment_indices(ci_mask):
+                        for item in self._create_ci_band_items(x[segment], ci_lower[segment], ci_upper[segment], color):
+                            self._register_item(base_label, "mc", item)
+                    continue
+
+            compatible = payload.get("compatible")
+            compatible_mask = mask.copy()
+            incompatible_mask = np.zeros_like(mask, dtype=bool)
+            if category == "mc" and compatible is not None and compatible.shape == x.shape:
+                compatible_mask = mask & compatible
+                incompatible_mask = mask & (~compatible)
+
+            if category == "mc" and smooth_mc:
+                y_display = self._smooth_masked_series(y_data, mask, smooth_window)
+                if np.any(compatible_mask):
+                    for segment in self._segment_indices(compatible_mask):
+                        item = pg.PlotDataItem(
+                            x=x[segment],
+                            y=y_display[segment],
+                            pen=pg.mkPen(color=color, width=2),
+                        )
+                        self._register_item(base_label, "mc", item)
+                if np.any(incompatible_mask):
+                    for segment in self._segment_indices(incompatible_mask):
+                        item = pg.PlotDataItem(
+                            x=x[segment],
+                            y=y_display[segment],
+                            pen=pg.mkPen(color="#9ca3af", width=2, style=Qt.PenStyle.DashLine),
+                        )
+                        self._register_item(base_label, "mc", item)
+                continue
+
+            if category == "mc":
+                if np.any(compatible_mask):
+                    item = pg.PlotDataItem(
+                        x=x[compatible_mask],
+                        y=y_data[compatible_mask],
+                        pen=None,
+                        symbol="o",
+                        symbolSize=7,
+                        symbolBrush=pg.mkBrush(color),
+                        symbolPen=pg.mkPen(color=color),
+                    )
+                    self._register_item(base_label, "mc", item)
+                if np.any(incompatible_mask):
+                    item = pg.PlotDataItem(
+                        x=x[incompatible_mask],
+                        y=y_data[incompatible_mask],
+                        pen=None,
+                        symbol="o",
+                        symbolSize=7,
+                        symbolBrush=pg.mkBrush("#6b7280"),
+                        symbolPen=pg.mkPen(color="#9ca3af"),
+                    )
+                    self._register_item(base_label, "mc", item)
             else:
-                self.ideal_curve.hide()
+                item = pg.PlotDataItem(
+                    x=x[mask],
+                    y=y_data[mask],
+                    pen=pg.mkPen(color=color, width=2),
+                )
+                self._register_item(base_label, "theory", item)
+
+        if self.ideal_tau is not None and self.ideal_f is not None:
+            ideal_y = self.ideal_f if mode == 0 else 1.0 / (np.maximum(self.ideal_f, 1e-12) ** 2)
+            ideal_mask = self._valid_mask(self.ideal_tau, ideal_y)
+            if np.any(ideal_mask):
+                self.ideal_curve.setData(self.ideal_tau[ideal_mask], ideal_y[ideal_mask])
+                all_x.append(np.array(self.ideal_tau[ideal_mask], copy=True))
+                all_y.append(np.array(ideal_y[ideal_mask], copy=True))
+            else:
+                self.ideal_curve.setData([], [])
         else:
-            self.ideal_curve.hide()
+            self.ideal_curve.setData([], [])
+
+        if all_x and all_y:
+            self._apply_tight_ranges(np.concatenate(all_x), np.concatenate(all_y))
+
+        self._apply_visibility()

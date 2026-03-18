@@ -303,9 +303,12 @@ class HILIGHTMainWindow(QMainWindow):
         scale_map = {"log": "log", "linear": "linear", "exponential": "exp"}
         cfg.f_x_scale = scale_map.get(cw.combo_fx_scale.currentText().lower(), "log")
         cfg.precision_validate_mc = cw.chk_validate_mc.isChecked()
+        cfg.precision_compute_ci = cw.chk_compute_ci.isChecked()
         cfg.precision_photons = cw.spin_precision_photons.value()
         cfg.precision_mc_repeats = cw.spin_mc_repeats.value()
         cfg.precision_accuracy_pvalue = cw.spin_accuracy_pvalue.value()
+        cfg.precision_bootstrap_samples = cw.spin_bootstrap_samples.value()
+        cfg.precision_ci_level = cw.spin_ci_level.value()
         cfg.sweep_autoplay = self.diagnostics_widget.chk_autoplay.isChecked()
 
         # Laser & IRF
@@ -727,17 +730,30 @@ class HILIGHTMainWindow(QMainWindow):
                     mc_mean = np.full(len(x_range), np.nan)
                     mc_std = np.full(len(x_range), np.nan)
                     mc_compatible = np.full(len(x_range), True, dtype=bool)
+                    mc_f_ci_lower = np.full(len(x_range), np.nan)
+                    mc_f_ci_upper = np.full(len(x_range), np.nan)
+                    mc_eff_ci_lower = np.full(len(x_range), np.nan)
+                    mc_eff_ci_upper = np.full(len(x_range), np.nan)
                     mc_label = "Monte Carlo" if raw_value is None else f"Monte Carlo | {label}"
 
-                    def mc_callback(point_idx, mean_tau, std_tau, f_val, p_eff, p_value, compatible):
+                    def mc_callback(point_idx, mean_tau, std_tau, f_val, p_eff, p_value, compatible,
+                                    f_ci_low, f_ci_high, eff_ci_low, eff_ci_high):
                         nonlocal completed_steps
                         mc_mean[point_idx] = mean_tau
                         mc_std[point_idx] = std_tau
                         mc_f[point_idx] = f_val
                         mc_compatible[point_idx] = bool(compatible)
+                        mc_f_ci_lower[point_idx] = f_ci_low
+                        mc_f_ci_upper[point_idx] = f_ci_high
+                        mc_eff_ci_lower[point_idx] = eff_ci_low
+                        mc_eff_ci_upper[point_idx] = eff_ci_high
                         plot_results[mc_label] = {
                             "y": np.array(mc_f, copy=True),
                             "compatible": np.array(mc_compatible, copy=True),
+                            "f_ci_lower": np.array(mc_f_ci_lower, copy=True),
+                            "f_ci_upper": np.array(mc_f_ci_upper, copy=True),
+                            "efficiency_ci_lower": np.array(mc_eff_ci_lower, copy=True),
+                            "efficiency_ci_upper": np.array(mc_eff_ci_upper, copy=True),
                         }
                         accuracy_results[label] = {
                             "mean": np.array(mc_mean, copy=True),
@@ -760,6 +776,10 @@ class HILIGHTMainWindow(QMainWindow):
                     plot_results[mc_label] = {
                         "y": np.array(mc_payload["f_value"], copy=True),
                         "compatible": np.array(mc_payload["compatible"], copy=True),
+                        "f_ci_lower": np.array(mc_payload["f_ci_lower"], copy=True),
+                        "f_ci_upper": np.array(mc_payload["f_ci_upper"], copy=True),
+                        "efficiency_ci_lower": np.array(mc_payload["efficiency_ci_lower"], copy=True),
+                        "efficiency_ci_upper": np.array(mc_payload["efficiency_ci_upper"], copy=True),
                     }
                     accuracy_results[label] = {
                         "mean": np.array(mc_payload["mean_tau"], copy=True),
@@ -924,6 +944,10 @@ class HILIGHTMainWindow(QMainWindow):
                 entry["mc_eff"] = item["mc"]["efficiency"].tolist()
                 entry["mc_mean"] = item["mc"]["mean_tau"].tolist()
                 entry["mc_std"] = item["mc"]["std_tau"].tolist()
+                entry["mc_f_ci_lower"] = item["mc"]["f_ci_lower"].tolist()
+                entry["mc_f_ci_upper"] = item["mc"]["f_ci_upper"].tolist()
+                entry["mc_eff_ci_lower"] = item["mc"]["efficiency_ci_lower"].tolist()
+                entry["mc_eff_ci_upper"] = item["mc"]["efficiency_ci_upper"].tolist()
             series_payload.append(entry)
 
             frame = item["diagnostics_frame"]
@@ -1018,6 +1042,17 @@ class HILIGHTMainWindow(QMainWindow):
     let frameIndex = 0;
     let timer = null;
 
+    function hexToRgba(hex, alpha) {{
+      const normalized = hex.replace("#", "");
+      const value = normalized.length === 3
+        ? normalized.split("").map((ch) => ch + ch).join("")
+        : normalized;
+      const r = parseInt(value.slice(0, 2), 16);
+      const g = parseInt(value.slice(2, 4), 16);
+      const b = parseInt(value.slice(4, 6), 16);
+      return `rgba(${{r}}, ${{g}}, ${{b}}, ${{alpha}})`;
+    }}
+
     function precisionTraces(showEfficiency) {{
       const metricKey = showEfficiency ? "theory_eff" : "theory_f";
       const idealKey = showEfficiency ? "ideal_eff" : "ideal_f";
@@ -1039,13 +1074,45 @@ class HILIGHTMainWindow(QMainWindow):
           line: {{ width: 2, color }}
         }});
         if (series.mc_f) {{
-          traces.push({{
-            x: report.x_range,
-            y: showEfficiency ? series.mc_eff : series.mc_f,
-            mode: "markers",
-            name: `Monte Carlo | ${{series.label}}`,
-            marker: {{ size: 8, color, symbol: "circle" }}
-          }});
+          const ciLower = showEfficiency ? series.mc_eff_ci_lower : series.mc_f_ci_lower;
+          const ciUpper = showEfficiency ? series.mc_eff_ci_upper : series.mc_f_ci_upper;
+          const hasCi = Array.isArray(ciLower) && Array.isArray(ciUpper)
+            && ciLower.some((v) => Number.isFinite(v))
+            && ciUpper.some((v) => Number.isFinite(v));
+          if (hasCi) {{
+            traces.push({{
+              x: report.x_range,
+              y: ciLower,
+              mode: "lines",
+              line: {{ width: 0, color }},
+              hoverinfo: "skip",
+              showlegend: false
+            }});
+            traces.push({{
+              x: report.x_range,
+              y: ciUpper,
+              mode: "lines",
+              line: {{ width: 0, color }},
+              fill: "tonexty",
+              fillcolor: hexToRgba(color, 0.18),
+              name: `Monte Carlo 95% CI | ${{series.label}}`
+            }});
+            traces.push({{
+              x: report.x_range,
+              y: showEfficiency ? series.mc_eff : series.mc_f,
+              mode: "lines",
+              name: `Monte Carlo | ${{series.label}}`,
+              line: {{ width: 2, color }}
+            }});
+          }} else {{
+            traces.push({{
+              x: report.x_range,
+              y: showEfficiency ? series.mc_eff : series.mc_f,
+              mode: "markers",
+              name: `Monte Carlo | ${{series.label}}`,
+              marker: {{ size: 8, color, symbol: "circle" }}
+            }});
+          }}
         }}
       }});
       return traces;

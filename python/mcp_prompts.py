@@ -6,7 +6,7 @@ PROMPTS = {
             "You are controlling the HILIGHTer Digital Twin. "
             "First inspect backend status and current config. "
             "Then run the precision workflow, compare theory and Monte Carlo, "
-            "and explicitly report any Monte Carlo points marked incompatible at p < 0.01. "
+            "and explicitly report any Monte Carlo points marked incompatible at the configured estimator-accuracy p-value threshold. "
             "Recommend instrument changes that improve compatibility and F-value together."
         ),
     },

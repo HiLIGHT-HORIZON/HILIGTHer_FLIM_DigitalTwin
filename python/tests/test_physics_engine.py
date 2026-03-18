@@ -58,3 +58,90 @@ def test_fisher_information():
     
     assert np.all(fi2 > fi1)
     assert np.allclose(fi2 / fi1, 10.0, rtol=1e-2)
+
+def test_rectangular_irf_jitter_broadens_excitation():
+    """Rectangular excitation should respond to timing jitter, not stay unchanged."""
+    base_cfg = PhysicsConfig(
+        irf_profile="rectangular",
+        irf_fwhm=7.5,
+        irf_position=0.0,
+        irf_rise_time=0.05,
+        irf_fall_time=0.05,
+        timing_jitter=0.0,
+    )
+    jitter_cfg = base_cfg.model_copy(update={"timing_jitter": 1000.0})
+
+    t = np.arange(0.0, 15.0, 0.01)
+    base_exc = TwinEngine(base_cfg).dt_excitation(t)
+    jitter_exc = TwinEngine(jitter_cfg).dt_excitation(t)
+
+    assert not np.allclose(base_exc, jitter_exc)
+    late_tail = t > (base_cfg.irf_fwhm + 0.5)
+    assert np.sum(jitter_exc[late_tail]) > np.sum(base_exc[late_tail])
+
+def test_fisher_jitter_sweep_is_not_flat_for_rectangular_irf():
+    """The Figure 3 jitter sweep should show measurable deterioration by 1000 ps."""
+    cfg = PhysicsConfig(
+        period=50.0,
+        gate_edges=[0.0, 2.8, 7.5, 12.5, 32.0],
+        irf_profile="rectangular",
+        irf_fwhm=7.5,
+        irf_position=0.0,
+    )
+
+    efficiencies = []
+    for jitter in [0.0, 500.0, 1000.0]:
+        cfg.timing_jitter = jitter
+        _, f_val = TwinEngine(cfg).compute_fisher_info(np.array([3.5]))
+        efficiencies.append(1.0 / (f_val[0] ** 2))
+
+    eff_0, eff_500, eff_1000 = efficiencies
+    assert eff_500 > 0.60
+    assert eff_1000 < eff_0 - 0.03
+
+def test_bootstrap_accuracy_pvalue_detects_bias():
+    """Bootstrap p-values should shrink when the estimator mean is biased."""
+    engine = TwinEngine()
+    rng = np.random.default_rng(123)
+
+    unbiased = rng.normal(loc=2.0, scale=0.05, size=80)
+    biased = rng.normal(loc=2.2, scale=0.05, size=80)
+
+    p_unbiased = engine._bootstrap_accuracy_pvalue(unbiased, 2.0, 1000, rng)
+    p_biased = engine._bootstrap_accuracy_pvalue(biased, 2.0, 1000, rng)
+
+    assert p_unbiased > 0.05
+    assert p_biased < 1e-5
+
+def test_monte_carlo_precision_returns_bootstrap_confidence_intervals(monkeypatch):
+    """MC precision payload should expose bootstrap CIs when requested."""
+    cfg = PhysicsConfig(
+        precision_compute_ci=True,
+        precision_bootstrap_samples=400,
+        precision_mc_repeats=24,
+        f_x_param="tau1",
+    )
+    engine = TwinEngine(cfg)
+
+    monkeypatch.setattr(engine, "ensure_grid_current", lambda: None)
+    monkeypatch.setattr(
+        engine,
+        "simulate_gate_histograms",
+        lambda tau, n_photons, n_repeats, irf_cached=None: (
+            np.zeros((n_repeats, len(engine.config.gate_edges) - 1), dtype=float),
+            np.linspace(n_photons - 10, n_photons + 10, n_repeats),
+        ),
+    )
+    monkeypatch.setattr(
+        engine,
+        "estimate_tau_batch",
+        lambda counts_batch: np.linspace(1.85, 2.15, counts_batch.shape[0]),
+    )
+
+    payload = engine.monte_carlo_precision_curve(np.array([2.0]), n_photons=200, n_repeats=24)
+
+    assert np.isfinite(payload["p_value"][0])
+    assert np.isfinite(payload["f_ci_lower"][0])
+    assert np.isfinite(payload["f_ci_upper"][0])
+    assert payload["f_ci_lower"][0] < payload["f_value"][0] < payload["f_ci_upper"][0]
+    assert payload["efficiency_ci_lower"][0] < payload["efficiency"][0] < payload["efficiency_ci_upper"][0]

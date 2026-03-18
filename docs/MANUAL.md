@@ -54,6 +54,7 @@ The simulator allows benchmarking algorithms under two primary biological scenar
 *   The desktop **RUN PRECISION** workflow supports two complementary outputs:
     *   **Theory**: CRLB / Fisher-derived F-value and photon-efficiency curves.
     *   **Monte Carlo Validation**: repeated gated-photon simulations with lifetime recovery to verify whether the estimator reaches the theoretical limit.
+    *   **Bootstrap Statistics**: estimator-accuracy p-values are evaluated from a bootstrap test, and optional 95% confidence intervals for Monte Carlo F / F^-2 curves are obtained by bootstrapping the MC repeats.
 *   During parameter sweeps, the precision plot updates incrementally as each point is computed.
 *   The diagnostics panel is sweep-aware: every swept configuration is captured as an instrument snapshot that can be browsed or auto-played.
 *   The last completed precision run can be exported as an interactive HTML report containing the plotted curves, Monte Carlo summaries, and instrument-diagnostics frames.

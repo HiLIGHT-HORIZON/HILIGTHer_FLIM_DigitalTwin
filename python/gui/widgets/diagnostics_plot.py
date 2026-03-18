@@ -3,6 +3,7 @@ import numpy as np
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
                              QScrollArea, QCheckBox, QFrame, QLabel, QPushButton)
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QGuiApplication
 
 class DiagnosticsWidget(QWidget):
     """
@@ -80,7 +81,13 @@ class DiagnosticsWidget(QWidget):
         self.chk_gates.setStyleSheet("font-weight: bold; color: #3b82f6;")
         self.chk_gates.stateChanged.connect(self._on_gates_toggle)
         self.controls_layout.addWidget(self.chk_gates)
-        
+
+        self.btn_copy = QPushButton("📋 Copy Widget")
+        self.btn_copy.setToolTip("Copy this widget to clipboard")
+        self.btn_copy.clicked.connect(self._copy_to_clipboard)
+        self.btn_copy.setStyleSheet("margin-top: 10px;")
+        self.controls_layout.addWidget(self.btn_copy)
+
         # Registry for dynamic gate curves
         self.gate_curves = []
         self.frames = []
@@ -89,6 +96,10 @@ class DiagnosticsWidget(QWidget):
         self._playback_timer.setInterval(1000)
         self._playback_timer.timeout.connect(lambda: self.step_frame(1))
         self._update_nav_enabled()
+
+    def _copy_to_clipboard(self):
+        pixmap = self.grab()
+        QGuiApplication.clipboard().setPixmap(pixmap)
 
     def _add_master_toggle(self, label, curve, color=None):
         chk = QCheckBox(label)

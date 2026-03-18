@@ -1,7 +1,8 @@
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtWidgets import QWidget, QVBoxLayout
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton
 from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtGui import QGuiApplication
 
 class PhasorWidget(QWidget):
     roi_changed = pyqtSignal(float, float, float, float) # g_min, g_max, s_min, s_max
@@ -10,6 +11,16 @@ class PhasorWidget(QWidget):
         super().__init__()
         layout = QVBoxLayout(self)
         
+        # Clipboard Support
+        header = QHBoxLayout()
+        header.addStretch()
+        self.btn_copy = QPushButton("📋")
+        self.btn_copy.setToolTip("Copy screenshot to clipboard")
+        self.btn_copy.clicked.connect(self._copy_to_clipboard)
+        self.btn_copy.setMaximumWidth(30)
+        header.addWidget(self.btn_copy)
+        layout.addLayout(header)
+
         # Plot Configuration
         self.plot_item = pg.PlotWidget()
         self.plot_item.setBackground('k')
@@ -37,6 +48,10 @@ class PhasorWidget(QWidget):
         self.roi.sigRegionChanged.connect(self._on_roi_change)
 
         layout.addWidget(self.plot_item)
+
+    def _copy_to_clipboard(self):
+        pixmap = self.grab()
+        QGuiApplication.clipboard().setPixmap(pixmap)
 
     def update_data(self, g, s):
         """Update the scatter plot with new G and S maps."""

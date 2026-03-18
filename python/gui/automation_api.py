@@ -60,6 +60,10 @@ class DesktopAutomationAPI:
                     "x": payload["x"].tolist(),
                     "y": payload["y"].tolist(),
                     "compatible": None if payload.get("compatible") is None else payload["compatible"].tolist(),
+                    "f_ci_lower": None if payload.get("f_ci_lower") is None else payload["f_ci_lower"].tolist(),
+                    "f_ci_upper": None if payload.get("f_ci_upper") is None else payload["f_ci_upper"].tolist(),
+                    "efficiency_ci_lower": None if payload.get("efficiency_ci_lower") is None else payload["efficiency_ci_lower"].tolist(),
+                    "efficiency_ci_upper": None if payload.get("efficiency_ci_upper") is None else payload["efficiency_ci_upper"].tolist(),
                 }
                 for label, payload in widget.batch_data.items()
             },

@@ -149,11 +149,19 @@ class ControlWidget(QWidget):
         exec_form = QFormLayout(exec_group)
         self.chk_validate_mc = QCheckBox("Validate with Monte Carlo")
         self.chk_validate_mc.setChecked(True)
-        exec_form.addRow(self.chk_validate_mc)
+        self.chk_compute_ci = QCheckBox("Compute 95% CI")
+        self.chk_compute_ci.setChecked(False)
+        mc_toggle_row = QWidget()
+        mc_toggle_layout = QHBoxLayout(mc_toggle_row)
+        mc_toggle_layout.setContentsMargins(0, 0, 0, 0)
+        mc_toggle_layout.addWidget(self.chk_validate_mc)
+        mc_toggle_layout.addWidget(self.chk_compute_ci)
+        mc_toggle_layout.addStretch()
+        exec_form.addRow(mc_toggle_row)
 
         self.spin_precision_photons = QSpinBox()
         self.spin_precision_photons.setRange(1, 10_000_000)
-        self.spin_precision_photons.setValue(200)
+        self.spin_precision_photons.setValue(2000)
 
         self.spin_mc_repeats = QSpinBox()
         self.spin_mc_repeats.setRange(10, 5000)
@@ -161,11 +169,26 @@ class ControlWidget(QWidget):
         exec_form.addRow(two_column_row("Precision Photons:", self.spin_precision_photons, "MC Repeats:", self.spin_mc_repeats))
 
         self.spin_accuracy_pvalue = QDoubleSpinBox()
-        self.spin_accuracy_pvalue.setRange(0.0001, 0.5)
-        self.spin_accuracy_pvalue.setDecimals(4)
-        self.spin_accuracy_pvalue.setSingleStep(0.001)
-        self.spin_accuracy_pvalue.setValue(0.01)
+        self.spin_accuracy_pvalue.setRange(0.000001, 0.5)
+        self.spin_accuracy_pvalue.setDecimals(6)
+        self.spin_accuracy_pvalue.setSingleStep(0.00001)
+        self.spin_accuracy_pvalue.setValue(0.001)
         exec_form.addRow("Estimator Accuracy p-value:", self.spin_accuracy_pvalue)
+
+        self.spin_bootstrap_samples = QSpinBox()
+        self.spin_bootstrap_samples.setRange(200, 100000)
+        self.spin_bootstrap_samples.setSingleStep(100)
+        self.spin_bootstrap_samples.setValue(2000)
+
+        self.spin_ci_level = QDoubleSpinBox()
+        self.spin_ci_level.setRange(50.0, 99.999)
+        self.spin_ci_level.setDecimals(3)
+        self.spin_ci_level.setSingleStep(0.5)
+        self.spin_ci_level.setValue(95.0)
+        exec_form.addRow(two_column_row("Bootstrap Resamples:", self.spin_bootstrap_samples, "CI Level (%):", self.spin_ci_level))
+        self.chk_validate_mc.toggled.connect(self._sync_precision_execution_ui)
+        self.chk_compute_ci.toggled.connect(lambda _: self._sync_precision_execution_ui(self.chk_validate_mc.isChecked()))
+        self._sync_precision_execution_ui(self.chk_validate_mc.isChecked())
         decay_layout.addWidget(exec_group)
 
         self.spin_fx_min.valueChanged.connect(self.update_gridded_mle_summary)
@@ -451,6 +474,7 @@ class ControlWidget(QWidget):
         action_layout.addWidget(self.btn_simulate, 1)
         
         layout.addLayout(action_layout)
+        self._apply_tooltips()
 
     def _handle_x_selection(self):
         """Ensures exclusive selection (Radio button behavior)."""
@@ -481,6 +505,75 @@ class ControlWidget(QWidget):
         if param_name not in self.default_x_scales:
             return
         self.combo_fx_scale.setCurrentText(self.default_x_scales[param_name])
+
+    def _apply_tooltips(self):
+        self.tabs.setTabToolTip(0, "Decay model, precision target, Monte Carlo validation, and bootstrap settings.")
+        self.tabs.setTabToolTip(1, "Synthetic image generation settings.")
+        self.tabs.setTabToolTip(2, "Excitation and IRF definition.")
+        self.tabs.setTabToolTip(3, "Detector and gating settings.")
+        self.tabs.setTabToolTip(4, "Instrument batch sweeps for comparative precision runs.")
+
+        tooltips = {
+            self.spin_n_comp: "Number of decay components used in the forward and inverse model.",
+            self.spin_fx_min: "Minimum value of the swept target parameter.",
+            self.spin_fx_max: "Maximum value of the swept target parameter.",
+            self.spin_fx_steps: "Number of points in the precision sweep.",
+            self.spin_grid_fine_factor: "Refinement factor used to build the gridded MLE lookup axis.",
+            self.combo_fx_scale: "Spacing of the target-parameter sweep values.",
+            self.chk_validate_mc: "Run Monte Carlo validation alongside the theoretical Fisher calculation.",
+            self.chk_compute_ci: "Bootstrap the Monte Carlo repeats to estimate a confidence interval for F or F^-2.",
+            self.spin_precision_photons: "Photon count used in Fisher and Monte Carlo precision analysis.",
+            self.spin_mc_repeats: "Number of Monte Carlo repeats per point on the precision sweep.",
+            self.spin_accuracy_pvalue: "Bootstrap-based p-value threshold used to judge estimator accuracy.",
+            self.spin_bootstrap_samples: "Number of bootstrap resamples used for p-values and confidence intervals.",
+            self.spin_ci_level: "Confidence level used for the Monte Carlo interval display.",
+            self.spin_photons: "Average photon budget for synthetic image generation.",
+            self.spin_repeats: "Number of repeated synthetic images to generate for testing.",
+            self.combo_sim_mode: "Choose between a spatial lifetime gradient and a uniform image model.",
+            self.spin_res: "Synthetic image width and height in pixels.",
+            self.spin_period: "Measurement repetition period in nanoseconds.",
+            self.chk_decay_wrap: "Include decay wrapping from previous periods in the model.",
+            self.combo_profile: "Excitation or IRF profile used in the forward model.",
+            self.spin_fwhm: "IRF width for Gaussian mode or pulse duration for rectangular mode.",
+            self.spin_irf_pos: "IRF temporal position within the period.",
+            self.spin_rise: "Rising edge time for rectangular excitation profiles.",
+            self.spin_fall: "Falling edge time for rectangular excitation profiles.",
+            self.group_burst: "Enable and configure burst excitation sub-pulses.",
+            self.spin_burst_period: "Period of burst sub-pulses within the main IRF envelope.",
+            self.spin_burst_fwhm: "Width of each burst sub-pulse.",
+            self.spin_jitter: "Detector timing jitter in picoseconds.",
+            self.spin_deadtime: "Detector deadtime in nanoseconds.",
+            self.chk_multihit: "Allow more than one detected photon per excitation cycle.",
+            self.spin_num_gates: "Number of detector gates across the measurement period.",
+            self.combo_gate_type: "Gate construction mode.",
+            self.edit_gate_widths: "Comma-separated custom gate widths in nanoseconds.",
+            self.spin_gate_rise: "Gate opening edge rise time.",
+            self.spin_gate_fall: "Gate closing edge fall time.",
+            self.chk_gate_stick: "Force the final gate edge to coincide with the measurement period.",
+            self.radio_gate_irf: "Start the first gate after the IRF tail.",
+            self.radio_gate_start: "Start the first gate at time zero.",
+            self.radio_gate_free: "Use a user-defined first gate start time.",
+            self.spin_gate_first: "Manual start time for the first gate when Free is selected.",
+            self.btn_optimize: "Open the gate optimizer dialog for the current instrument settings.",
+            self.radio_sweep_off: "Disable instrument batch sweeping.",
+            self.btn_manage_inst: "Open the instrument-profile manager.",
+            self.btn_precision: "Run the theory and optional Monte Carlo precision workflow.",
+            self.btn_interrupt: "Request interruption of the current run.",
+            self.btn_export: "Preview or export the latest precision report.",
+            self.btn_simulate: "Run the synthetic image workflow.",
+        }
+        for widget, text in tooltips.items():
+            widget.setToolTip(text)
+
+        for name, row in self.param_rows.items():
+            row["val"].setToolTip(f"Nominal value for {name} in the current model.")
+            row["fix"].setToolTip(f"Keep {name} fixed during inverse estimation.")
+
+        for spec in self.sweep_options.values():
+            spec["radio"].setToolTip(f"Activate the batch sweep mode: {spec['title']}.")
+            spec["values"].setToolTip("Comma-separated sweep values for this instrument parameter.")
+            if spec["extra"] is not None:
+                spec["extra"].setToolTip(f"Additional option for {spec['title']}.")
 
     def enforce_single_x_selection(self):
         """Ensures that at least one visible checkbox is selected."""
@@ -593,6 +686,13 @@ class ControlWidget(QWidget):
         spec = self.sweep_options.get(self.get_selected_sweep_param())
         return spec["values"].text() if spec else ""
 
+    def _sync_precision_execution_ui(self, mc_enabled):
+        self.chk_compute_ci.setEnabled(mc_enabled)
+        self.spin_mc_repeats.setEnabled(mc_enabled)
+        self.spin_accuracy_pvalue.setEnabled(mc_enabled)
+        self.spin_bootstrap_samples.setEnabled(mc_enabled)
+        self.spin_ci_level.setEnabled(mc_enabled and self.chk_compute_ci.isChecked())
+
     def update_from_config(self, cfg):
         self.blockSignals(True)
         try:
@@ -612,9 +712,12 @@ class ControlWidget(QWidget):
             scale_map = {"log": "Log", "linear": "Linear", "exp": "Exponential"}
             self.combo_fx_scale.setCurrentText(scale_map.get(cfg.f_x_scale, "Log"))
             self.chk_validate_mc.setChecked(cfg.precision_validate_mc)
+            self.chk_compute_ci.setChecked(getattr(cfg, "precision_compute_ci", False))
             self.spin_precision_photons.setValue(cfg.precision_photons)
             self.spin_mc_repeats.setValue(cfg.precision_mc_repeats)
-            self.spin_accuracy_pvalue.setValue(getattr(cfg, "precision_accuracy_pvalue", 0.01))
+            self.spin_accuracy_pvalue.setValue(getattr(cfg, "precision_accuracy_pvalue", 0.001))
+            self.spin_bootstrap_samples.setValue(getattr(cfg, "precision_bootstrap_samples", 2000))
+            self.spin_ci_level.setValue(getattr(cfg, "precision_ci_level", 95.0))
 
             # Laser / Physics
             self.spin_period.setValue(cfg.period)
@@ -696,5 +799,6 @@ class ControlWidget(QWidget):
             self._update_irf_ui()
             self.update_param_visibility()
             self.update_gridded_mle_summary()
+            self._sync_precision_execution_ui(cfg.precision_validate_mc)
             self._update_sweep_inputs_enabled()
             self.blockSignals(False)
