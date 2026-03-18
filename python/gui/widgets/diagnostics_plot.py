@@ -16,6 +16,7 @@ class DiagnosticsWidget(QWidget):
     """
     def __init__(self):
         super().__init__()
+        self.current_theme = "dark"
         root_layout = QVBoxLayout(self)
 
         nav_layout = QHBoxLayout()
@@ -97,10 +98,30 @@ class DiagnosticsWidget(QWidget):
         self._playback_timer.setInterval(1000)
         self._playback_timer.timeout.connect(lambda: self.step_frame(1))
         self._update_nav_enabled()
+        self.set_theme("dark")
 
     def _copy_to_clipboard(self):
         pixmap = self.grab()
         QGuiApplication.clipboard().setPixmap(pixmap)
+
+    def set_theme(self, theme_name):
+        self.current_theme = str(theme_name).lower()
+        dark = self.current_theme == "dark"
+        bg = 'k' if dark else '#ffffff'
+        text = '#e5eefb' if dark else '#0f172a'
+        border = '#334155' if dark else '#cbd5e1'
+        irf_color = '#22d3ee' if dark else '#0f766e'
+        pdf_color = 'w' if dark else '#111827'
+        self.plot_widget.setBackground(bg)
+        for axis_name in ('bottom', 'left'):
+            axis = self.plot_widget.getAxis(axis_name)
+            axis.setTextPen(pg.mkPen(text))
+            axis.setPen(pg.mkPen(text))
+        self.controls_panel.setStyleSheet(
+            f"QFrame {{ background: {bg}; border: 1px solid {border}; border-radius: 8px; }}"
+        )
+        self.irf_curve.setPen(pg.mkPen(color=irf_color, width=2))
+        self.pdf_curve.setPen(pg.mkPen(color=pdf_color, width=3, style=Qt.PenStyle.DashLine))
 
     def _add_master_toggle(self, label, curve, color=None):
         chk = QCheckBox(label)
@@ -130,11 +151,12 @@ class DiagnosticsWidget(QWidget):
 
         # Plot Background Curves (Thin grey lines)
         if background_curves:
+            bg_color = '#555555' if self.current_theme == "dark" else '#cbd5e1'
             for bg_data in background_curves:
                 bg_norm = bg_data / np.max(bg_data) if np.max(bg_data) > 0 else bg_data
                 c = self.plot_widget.plot(
                     time_vec, bg_norm,
-                    pen=pg.mkPen(color='#555555', width=0.5)
+                    pen=pg.mkPen(color=bg_color, width=0.5)
                 )
                 self.bg_curves.append(c)
         

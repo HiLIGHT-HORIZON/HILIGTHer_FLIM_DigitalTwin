@@ -8,6 +8,7 @@ class MapWidget(QWidget):
 
     def __init__(self, title="Gradient Map"):
         super().__init__()
+        self.current_theme = "dark"
         layout = QVBoxLayout(self)
         
         self.view = pg.ImageView()
@@ -36,10 +37,20 @@ class MapWidget(QWidget):
         self.view.scene.sigMouseClicked.connect(self._on_click)
         
         layout.addWidget(self.view)
+        self.set_theme("dark")
 
     def set_image(self, data):
         """Expects 2D numpy array."""
         self.view.setImage(data.T) # Transpose for pyqtgraph (x,y)
+
+    def set_theme(self, theme_name):
+        self.current_theme = str(theme_name).lower()
+        dark = self.current_theme == "dark"
+        crosshair_color = 'w' if dark else '#111827'
+        bg = '#111827' if dark else '#ffffff'
+        self.view.getView().setBackgroundColor(bg)
+        self.v_line.setPen(pg.mkPen(crosshair_color))
+        self.h_line.setPen(pg.mkPen(crosshair_color))
 
     def _on_click(self, ev):
         if ev.button() == pg.QtCore.Qt.MouseButton.LeftButton:

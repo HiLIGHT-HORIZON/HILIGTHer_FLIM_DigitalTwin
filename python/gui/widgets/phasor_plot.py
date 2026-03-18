@@ -9,6 +9,7 @@ class PhasorWidget(QWidget):
 
     def __init__(self):
         super().__init__()
+        self.current_theme = "dark"
         layout = QVBoxLayout(self)
         
         # Clipboard Support
@@ -48,10 +49,26 @@ class PhasorWidget(QWidget):
         self.roi.sigRegionChanged.connect(self._on_roi_change)
 
         layout.addWidget(self.plot_item)
+        self.set_theme("dark")
 
     def _copy_to_clipboard(self):
         pixmap = self.grab()
         QGuiApplication.clipboard().setPixmap(pixmap)
+
+    def set_theme(self, theme_name):
+        self.current_theme = str(theme_name).lower()
+        dark = self.current_theme == "dark"
+        bg = 'k' if dark else '#ffffff'
+        text = '#e5eefb' if dark else '#0f172a'
+        locus = 'w' if dark else '#475569'
+        scatter = (100, 150, 255, 150) if dark else (31, 119, 180, 160)
+        self.plot_item.setBackground(bg)
+        for axis_name in ('bottom', 'left'):
+            axis = self.plot_item.getAxis(axis_name)
+            axis.setTextPen(pg.mkPen(text))
+            axis.setPen(pg.mkPen(text))
+        self.locus_curve.setPen(pg.mkPen(locus, width=1, style=Qt.PenStyle.DashLine))
+        self.scatter.setBrush(pg.mkBrush(*scatter))
 
     def update_data(self, g, s):
         """Update the scatter plot with new G and S maps."""

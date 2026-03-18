@@ -23,6 +23,46 @@ from gui.widgets.instrument_manager import InstrumentManager
 from gui.widgets.optimizer_widget import OptimizerWidget
 from gui.widgets.manual_viewer import ManualWidget
 from gui.automation_api import DesktopAutomationAPI
+from gui.report_export import write_precision_report_package
+
+
+LIGHT_APP_STYLESHEET = """
+QMainWindow, QWidget {
+    background: #f3f6fb;
+    color: #0f172a;
+}
+QDockWidget::title {
+    background: #e5edf6;
+    color: #0f172a;
+    padding: 6px 10px;
+    border: 1px solid #cbd5e1;
+}
+QMenuBar, QMenu, QStatusBar {
+    background: #ffffff;
+    color: #0f172a;
+}
+QPushButton, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QLineEdit {
+    background: #ffffff;
+    color: #0f172a;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 4px 8px;
+}
+QCheckBox, QLabel, QGroupBox, QRadioButton {
+    color: #0f172a;
+}
+QGroupBox {
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    margin-top: 10px;
+    padding-top: 10px;
+    background: #ffffff;
+}
+QScrollArea, QTabWidget::pane {
+    background: #f8fafc;
+    border: 1px solid #dbe4ef;
+}
+"""
 
 class HILIGHTMainWindow(QMainWindow):
     LAYOUT_VERSION = 3
@@ -102,22 +142,22 @@ class HILIGHTMainWindow(QMainWindow):
         menubar = self.menuBar()
         
         file_menu = menubar.addMenu("&File")
-        self.export_precision_act = QAction("Export Precision Report...", self)
+        self.export_precision_act = QAction("Save Precision Report As...", self)
         self.export_precision_act.setEnabled(False)
         self.export_precision_act.triggered.connect(self.export_last_precision_report)
         file_menu.addAction(self.export_precision_act)
 
-        exit_act = QAction("❌ Exit", self)
+        exit_act = QAction("Exit", self)
         exit_act.triggered.connect(self.close)
         file_menu.addAction(exit_act)
         
         help_menu = menubar.addMenu("&Help")
-        about_act = QAction("ℹ️ About", self)
+        about_act = QAction("About", self)
         about_act.triggered.connect(self.show_about)
         help_menu.addAction(about_act)
 
         view_menu = menubar.addMenu("&View")
-        self.theme_act = QAction("🌞 Light Mode", self)
+        self.theme_act = QAction("Light Mode", self)
         self.theme_act.triggered.connect(self.toggle_theme)
         view_menu.addAction(self.theme_act)
 
@@ -127,10 +167,21 @@ class HILIGHTMainWindow(QMainWindow):
         app = QApplication.instance()
         if theme == "dark":
             app.setStyleSheet(qdarkstyle.load_stylesheet())
-            self.theme_act.setText("🌞 Light Mode")
+            self.theme_act.setText("Light Mode")
         else:
-            app.setStyleSheet("") # Default bright theme
-            self.theme_act.setText("🌙 Dark Mode")
+            app.setStyleSheet(LIGHT_APP_STYLESHEET)
+            self.theme_act.setText("Dark Mode")
+
+        for widget in (
+            self.map_widget,
+            self.phasor_widget,
+            self.decay_widget,
+            self.fisher_widget,
+            self.mle_accuracy_widget,
+            self.diagnostics_widget,
+        ):
+            if hasattr(widget, "set_theme"):
+                widget.set_theme(theme)
 
     def toggle_theme(self):
         """Switches between dark and light themes."""
@@ -444,8 +495,8 @@ class HILIGHTMainWindow(QMainWindow):
         
         # Burst Excitation
         cfg.burst_enabled = cw.group_burst.isChecked()
-        cfg.burst_sub_period = cw.spin_burst_period.value()
-        cfg.burst_sub_fwhm = cw.spin_burst_fwhm.value()
+        cfg.burst_sub_period = cw.spin_burst_period.value() / 1000.0 # From ps to ns
+        cfg.burst_sub_fwhm = cw.spin_burst_fwhm.value() / 1000.0 # From ps to ns
         
         # Instrument & Noise
         cfg.a_photons = cw.spin_photons.value()
@@ -1037,7 +1088,7 @@ class HILIGHTMainWindow(QMainWindow):
 
         button_row = QHBoxLayout()
         button_row.addStretch()
-        save_btn = QPushButton("Save HTML...", dlg)
+        save_btn = QPushButton("Save As...", dlg)
         close_btn = QPushButton("Close", dlg)
         button_row.addWidget(save_btn)
         button_row.addWidget(close_btn)
@@ -1046,25 +1097,25 @@ class HILIGHTMainWindow(QMainWindow):
         def save_report():
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
-                "Export Precision Report",
+                "Save Precision Report As",
                 "hilighter_precision_report.html",
                 "HTML Files (*.html)",
             )
             if not file_path:
                 return
-            with open(file_path, "w", encoding="utf-8") as handle:
-                handle.write(html)
-            self.statusBar().showMessage(f"Precision report exported to {file_path}")
+            html_path, asset_dir = self._save_precision_report_package(file_path)
+            self.statusBar().showMessage(f"Precision report saved to {html_path} with assets in {asset_dir}")
 
         save_btn.clicked.connect(save_report)
         close_btn.clicked.connect(dlg.accept)
         dlg.exec()
 
-    def _build_precision_report_html(self):
+    def _build_precision_report_payload(self):
         report = self.last_precision_run
+        config_dump = report["config"].model_dump() if hasattr(report["config"], "model_dump") else {}
         x_range = report["x_range"].tolist()
         ideal_f = report["ideal_f"].tolist()
-        config_dump = report["config"].model_dump() if hasattr(report["config"], "model_dump") else {}
+        ideal_eff = (1.0 / np.maximum(report["ideal_f"], 1e-12) ** 2).tolist()
 
         series_payload = []
         frame_payload = []
@@ -1083,27 +1134,70 @@ class HILIGHTMainWindow(QMainWindow):
                 entry["mc_f_ci_upper"] = item["mc"]["f_ci_upper"].tolist()
                 entry["mc_eff_ci_lower"] = item["mc"]["efficiency_ci_lower"].tolist()
                 entry["mc_eff_ci_upper"] = item["mc"]["efficiency_ci_upper"].tolist()
-            series_payload.append(entry)
-
             frame = item["diagnostics_frame"]
-            frame_payload.append({
+            frame_entry = {
                 "label": frame["label"],
                 "time": frame["time_vec"].tolist(),
                 "gates": frame["gate_shapes"].tolist(),
                 "irf": frame["irf"].tolist(),
                 "pdf": frame["pdf"].tolist(),
+            }
+            series_payload.append(entry)
+            frame_payload.append(frame_entry)
+
+        accuracy_payload = []
+        for label, values in self.mle_accuracy_widget.series_data.items():
+            accuracy_payload.append({
+                "label": label,
+                "mean": np.array(values["mean"], copy=True).tolist(),
+                "std": np.array(values["std"], copy=True).tolist(),
             })
 
-        payload = {
+        if self.diagnostics_widget.frames:
+            frame_payload = []
+            for frame in self.diagnostics_widget.frames:
+                frame_payload.append({
+                    "label": frame.get("label", "Instrument snapshot"),
+                    "time": np.array(frame["time_vec"], copy=True).tolist(),
+                    "gates": np.array(frame["gate_shapes"], copy=True).tolist(),
+                    "irf": np.array(frame.get("irf"), copy=True).tolist() if frame.get("irf") is not None else [],
+                    "pdf": np.array(frame.get("pdf"), copy=True).tolist() if frame.get("pdf") is not None else [],
+                })
+
+        metric_label = "Photon Efficiency (F^-2)" if self.fisher_widget.combo_mode.currentIndex() == 1 else "F-Value (F)"
+        metric_key = "efficiency" if self.fisher_widget.combo_mode.currentIndex() == 1 else "f"
+
+        return {
             "timestamp": report["timestamp"],
             "x_label": report["x_label"],
             "x_range": x_range,
             "ideal_f": ideal_f,
-            "ideal_eff": (1.0 / np.maximum(report["ideal_f"], 1e-12) ** 2).tolist(),
+            "ideal_eff": ideal_eff,
             "series": series_payload,
             "frames": frame_payload,
             "config": config_dump,
+            "precision_display": {
+                "log_x": self.fisher_widget.chk_log_x.isChecked(),
+                "log_y": self.fisher_widget.chk_log_y.isChecked(),
+                "metric": metric_key,
+                "metric_label": metric_label,
+            },
+            "accuracy": {
+                "stacked": self.mle_accuracy_widget.chk_stacked.isChecked(),
+                "series": accuracy_payload,
+            },
         }
+
+    def _save_precision_report_package(self, file_path):
+        payload = self._build_precision_report_payload()
+        return write_precision_report_package(file_path, payload)
+
+    def _build_precision_report_html(self):
+        payload = self._build_precision_report_payload()
+        x_range = payload["x_range"]
+        ideal_f = payload["ideal_f"]
+        config_dump = payload["config"]
+
         payload_json = json.dumps(payload)
 
         return f"""<!DOCTYPE html>
@@ -1116,19 +1210,34 @@ class HILIGHTMainWindow(QMainWindow):
   <style>
     :root {{
       --bg: #07111f;
+      --bg2: #0b1728;
       --panel: #10233d;
       --text: #e5eefb;
       --muted: #9fb3ca;
       --accent: #38bdf8;
       --line: #1f3a5a;
+      --btn-bg: #173559;
+      --btn-line: #29507d;
     }}
-    body {{ margin: 0; font-family: "Segoe UI", sans-serif; background: linear-gradient(180deg, #07111f 0%, #0b1728 100%); color: var(--text); }}
+    body[data-theme="light"] {{
+      --bg: #f5f7fb;
+      --bg2: #eef4fb;
+      --panel: #ffffff;
+      --text: #0f172a;
+      --muted: #475569;
+      --accent: #2563eb;
+      --line: #d7dee8;
+      --btn-bg: #ffffff;
+      --btn-line: #cbd5e1;
+    }}
+    body {{ margin: 0; font-family: "Segoe UI", sans-serif; background: linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%); color: var(--text); }}
     main {{ max-width: 1400px; margin: 0 auto; padding: 24px; }}
     h1, h2 {{ margin: 0 0 12px; }}
-    .panel {{ background: rgba(16, 35, 61, 0.92); border: 1px solid var(--line); border-radius: 16px; padding: 18px; margin-bottom: 18px; }}
+    .panel {{ background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px; margin-bottom: 18px; }}
     .grid {{ display: grid; grid-template-columns: 2fr 1fr; gap: 18px; }}
     .controls {{ display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }}
-    button, select {{ background: #173559; color: var(--text); border: 1px solid #29507d; border-radius: 8px; padding: 8px 12px; }}
+    .topbar {{ display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }}
+    button, select {{ background: var(--btn-bg); color: var(--text); border: 1px solid var(--btn-line); border-radius: 8px; padding: 8px 12px; }}
     input[type="checkbox"] {{ transform: scale(1.1); }}
     pre {{ white-space: pre-wrap; color: var(--muted); }}
     #diagPlot {{ height: 420px; }}
@@ -1138,9 +1247,14 @@ class HILIGHTMainWindow(QMainWindow):
 <body>
   <main>
     <div class="panel">
-      <h1>HILIGHTer Precision Report</h1>
-      <div>Generated: {report["timestamp"]}</div>
-      <div>X-Axis: {report["x_label"]}</div>
+      <div class="topbar">
+        <div>
+          <h1>HILIGHTer Precision Report</h1>
+          <div>Generated: {payload["timestamp"]}</div>
+          <div>X-Axis: {payload["x_label"]}</div>
+        </div>
+        <button id="themeToggle" type="button">Switch to Light Theme</button>
+      </div>
     </div>
     <div class="grid">
       <div>
@@ -1176,6 +1290,11 @@ class HILIGHTMainWindow(QMainWindow):
     document.getElementById("configBlock").textContent = JSON.stringify(report.config, null, 2);
     let frameIndex = 0;
     let timer = null;
+    let currentTheme = "dark";
+    const themeConfig = {{
+      dark: {{ paperBg: "#10233d", plotBg: "#10233d", font: "#e5eefb", grid: "#1f3a5a" }},
+      light: {{ paperBg: "#ffffff", plotBg: "#ffffff", font: "#0f172a", grid: "#d7dee8" }},
+    }};
 
     function hexToRgba(hex, alpha) {{
       const normalized = hex.replace("#", "");
@@ -1255,18 +1374,20 @@ class HILIGHTMainWindow(QMainWindow):
 
     function renderPrecision() {{
       const showEfficiency = document.getElementById("showEfficiency").checked;
+      const theme = themeConfig[currentTheme];
       Plotly.newPlot("precisionPlot", precisionTraces(showEfficiency), {{
-        paper_bgcolor: "#10233d",
-        plot_bgcolor: "#10233d",
-        font: {{ color: "#e5eefb" }},
-        xaxis: {{ title: report.x_label, type: "log", gridcolor: "#1f3a5a" }},
-        yaxis: {{ title: showEfficiency ? "Photon Efficiency (1/F²)" : "F-Value", gridcolor: "#1f3a5a" }},
+        paper_bgcolor: theme.paperBg,
+        plot_bgcolor: theme.plotBg,
+        font: {{ color: theme.font }},
+        xaxis: {{ title: report.x_label, type: "log", gridcolor: theme.grid }},
+        yaxis: {{ title: showEfficiency ? "Photon Efficiency (1/F²)" : "F-Value", gridcolor: theme.grid }},
         legend: {{ orientation: "h" }},
         margin: {{ t: 30, r: 20, b: 60, l: 70 }}
       }}, {{ responsive: true }});
     }}
 
     function renderMonteCarloSummary() {{
+      const theme = themeConfig[currentTheme];
       const traces = [];
       report.series.forEach((series) => {{
         if (series.mc_mean) {{
@@ -1280,17 +1401,18 @@ class HILIGHTMainWindow(QMainWindow):
         }}
       }});
       Plotly.newPlot("mcPlot", traces, {{
-        paper_bgcolor: "#10233d",
-        plot_bgcolor: "#10233d",
-        font: {{ color: "#e5eefb" }},
-        xaxis: {{ title: report.x_label, type: "log", gridcolor: "#1f3a5a" }},
-        yaxis: {{ title: "Monte Carlo mean τ ± std", gridcolor: "#1f3a5a" }},
+        paper_bgcolor: theme.paperBg,
+        plot_bgcolor: theme.plotBg,
+        font: {{ color: theme.font }},
+        xaxis: {{ title: report.x_label, type: "log", gridcolor: theme.grid }},
+        yaxis: {{ title: "Monte Carlo mean τ ± std", gridcolor: theme.grid }},
         margin: {{ t: 30, r: 20, b: 60, l: 70 }}
       }}, {{ responsive: true }});
     }}
 
     function renderFrame() {{
       if (!report.frames.length) return;
+      const theme = themeConfig[currentTheme];
       const frame = report.frames[frameIndex];
       document.getElementById("frameLabel").textContent = frame.label;
       const traces = frame.gates.map((gate, idx) => ({{
@@ -1300,15 +1422,26 @@ class HILIGHTMainWindow(QMainWindow):
         name: `Gate ${{idx + 1}}`
       }}));
       traces.push({{ x: frame.time, y: frame.irf, mode: "lines", name: "IRF", line: {{ color: "#22d3ee", width: 3 }} }});
-      traces.push({{ x: frame.time, y: frame.pdf, mode: "lines", name: "PDF", line: {{ color: "#ffffff", width: 3, dash: "dash" }} }});
+      traces.push({{ x: frame.time, y: frame.pdf, mode: "lines", name: "PDF", line: {{ color: currentTheme === "dark" ? "#ffffff" : "#111827", width: 3, dash: "dash" }} }});
       Plotly.newPlot("diagPlot", traces, {{
-        paper_bgcolor: "#10233d",
-        plot_bgcolor: "#10233d",
-        font: {{ color: "#e5eefb" }},
-        xaxis: {{ title: "Time (ns)", gridcolor: "#1f3a5a" }},
-        yaxis: {{ title: "Relative amplitude", gridcolor: "#1f3a5a" }},
+        paper_bgcolor: theme.paperBg,
+        plot_bgcolor: theme.plotBg,
+        font: {{ color: theme.font }},
+        xaxis: {{ title: "Time (ns)", gridcolor: theme.grid }},
+        yaxis: {{ title: "Relative amplitude", gridcolor: theme.grid }},
         margin: {{ t: 30, r: 20, b: 60, l: 70 }}
       }}, {{ responsive: true }});
+    }}
+
+    function applyTheme(themeName) {{
+      currentTheme = themeName;
+      document.body.dataset.theme = themeName;
+      document.getElementById("themeToggle").textContent = themeName === "dark"
+        ? "Switch to Light Theme"
+        : "Switch to Dark Theme";
+      renderPrecision();
+      renderMonteCarloSummary();
+      renderFrame();
     }}
 
     function stepFrame(step) {{
@@ -1325,13 +1458,14 @@ class HILIGHTMainWindow(QMainWindow):
     }}
 
     document.getElementById("showEfficiency").addEventListener("change", renderPrecision);
+    document.getElementById("themeToggle").addEventListener("click", () => {{
+      applyTheme(currentTheme === "dark" ? "light" : "dark");
+    }});
     document.getElementById("prevFrame").addEventListener("click", () => stepFrame(-1));
     document.getElementById("nextFrame").addEventListener("click", () => stepFrame(1));
     document.getElementById("autoplay").addEventListener("change", updateAutoplay);
 
-    renderPrecision();
-    renderMonteCarloSummary();
-    renderFrame();
+    applyTheme("dark");
     updateAutoplay();
   </script>
 </body>

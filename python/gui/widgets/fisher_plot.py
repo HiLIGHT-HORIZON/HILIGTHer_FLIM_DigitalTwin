@@ -21,6 +21,7 @@ class FisherWidget(QWidget):
         super().__init__()
         layout = QVBoxLayout(self)
 
+        self.current_theme = "dark"
         self.colors = ["#8b5cf6", "#3b82f6", "#ec4899", "#f59e0b", "#ef4444", "#06b6d4", "#84cc16"]
         self.rendered_items = []
         self.series_visibility = {}
@@ -102,7 +103,8 @@ class FisherWidget(QWidget):
         scroll.setWidget(self.legend_panel)
         display_layout.addWidget(scroll, stretch=1)
 
-        self.legend_layout.addWidget(QLabel("<b style='font-size: 14px; color: #fff;'>Acquisition Benchmarks</b>"))
+        self.legend_header = QLabel()
+        self.legend_layout.addWidget(self.legend_header)
         self.legend_layout.addSpacing(8)
 
         self.ideal_curve = pg.PlotDataItem(
@@ -117,7 +119,8 @@ class FisherWidget(QWidget):
         self.legend_layout.addWidget(self.chk_show_ideal)
 
         self.legend_layout.addSpacing(10)
-        self.legend_layout.addWidget(QLabel("<i style='color: #888;'>Collections:</i>"))
+        self.collections_label = QLabel()
+        self.legend_layout.addWidget(self.collections_label)
 
         self.chk_show_theory = QCheckBox("Theory")
         self.chk_show_theory.setChecked(True)
@@ -130,12 +133,14 @@ class FisherWidget(QWidget):
         self.legend_layout.addWidget(self.chk_show_mc)
 
         self.legend_layout.addSpacing(10)
-        self.legend_layout.addWidget(QLabel("<i style='color: #888;'>Sweep Series:</i>"))
+        self.sweep_label = QLabel()
+        self.legend_layout.addWidget(self.sweep_label)
         self.series_legend_holder = QVBoxLayout()
         self.legend_layout.addLayout(self.series_legend_holder)
         self.legend_layout.addStretch()
 
         layout.addLayout(display_layout)
+        self.set_theme("dark")
 
     @staticmethod
     def _segment_indices(mask):
@@ -148,6 +153,30 @@ class FisherWidget(QWidget):
     def _copy_to_clipboard(self):
         pixmap = self.grab()
         QGuiApplication.clipboard().setPixmap(pixmap)
+
+    def set_theme(self, theme_name):
+        self.current_theme = str(theme_name).lower()
+        dark = self.current_theme == "dark"
+        bg = "#0a0a0a" if dark else "#ffffff"
+        text = "#e5eefb" if dark else "#0f172a"
+        muted = "#94a3b8" if dark else "#64748b"
+        border = "#334155" if dark else "#cbd5e1"
+        accent = "#10b981" if dark else "#15803d"
+
+        self.plot_widget.setBackground(bg)
+        for axis_name in ("bottom", "left"):
+            axis = self.plot_widget.getAxis(axis_name)
+            axis.setTextPen(pg.mkPen(text))
+            axis.setPen(pg.mkPen(text))
+        self.legend_panel.setStyleSheet(
+            f"QFrame {{ background: {bg}; border: 1px solid {border}; border-radius: 8px; }}"
+        )
+        self.legend_header.setText(f"<b style='font-size: 14px; color: {text};'>Acquisition Benchmarks</b>")
+        self.collections_label.setText(f"<i style='color: {muted};'>Collections:</i>")
+        self.sweep_label.setText(f"<i style='color: {muted};'>Sweep Series:</i>")
+        self.chk_show_ideal.setStyleSheet(f"color: {accent}; font-weight: bold;")
+        self.chk_show_theory.setStyleSheet(f"color: {text};")
+        self.chk_show_mc.setStyleSheet(f"color: {text};")
 
     def _set_mc_smoothing_enabled(self, enabled):
         self.spin_smooth_window.setEnabled(enabled)

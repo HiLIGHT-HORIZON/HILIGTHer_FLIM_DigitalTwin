@@ -11,6 +11,7 @@ class MLEAccuracyWidget(QWidget):
         super().__init__()
         layout = QVBoxLayout(self)
 
+        self.current_theme = "dark"
         self.colors = ['#8b5cf6', '#3b82f6', '#ec4899', '#f59e0b', '#ef4444', '#06b6d4', '#84cc16']
         self.series_items = [] # List of (items, legend_checkbox)
         self.series_data = {}
@@ -61,6 +62,7 @@ class MLEAccuracyWidget(QWidget):
         self.legend_layout.addSpacing(10)
         
         layout.addLayout(display_layout)
+        self.set_theme("dark")
 
         self.expected_line = self.plot_widget.plot(
             pen=pg.mkPen(color='#d1d5db', width=1.5, style=Qt.PenStyle.DashLine),
@@ -70,6 +72,23 @@ class MLEAccuracyWidget(QWidget):
     def _copy_to_clipboard(self):
         pixmap = self.grab()
         QGuiApplication.clipboard().setPixmap(pixmap)
+
+    def set_theme(self, theme_name):
+        self.current_theme = str(theme_name).lower()
+        dark = self.current_theme == "dark"
+        bg = '#0a0a0a' if dark else '#ffffff'
+        text = '#e5eefb' if dark else '#0f172a'
+        border = '#334155' if dark else '#cbd5e1'
+        self.plot_widget.setBackground(bg)
+        for axis_name in ('bottom', 'left'):
+            axis = self.plot_widget.getAxis(axis_name)
+            axis.setTextPen(pg.mkPen(text))
+            axis.setPen(pg.mkPen(text))
+        self.legend_panel.setStyleSheet(
+            f"QFrame {{ background: {bg}; border: 1px solid {border}; border-radius: 8px; }}"
+        )
+        if hasattr(self, "expected_line"):
+            self.refresh_plot()
 
     def set_xaxis_label(self, text):
         self.x_label = text
@@ -118,10 +137,11 @@ class MLEAccuracyWidget(QWidget):
         all_x = []
         all_y = []
         stacked = self.chk_stacked.isChecked()
+        title_color = "#e5eefb" if self.current_theme == "dark" else "#0f172a"
         self.legend_title.setText(
-            "<b style='font-size: 14px; color: #fff;'>MLE Tracking (stacked)</b>"
+            f"<b style='font-size: 14px; color: {title_color};'>MLE Tracking (stacked)</b>"
             if stacked else
-            "<b style='font-size: 14px; color: #fff;'>MLE Tracking</b>"
+            f"<b style='font-size: 14px; color: {title_color};'>MLE Tracking</b>"
         )
         
         # Calculate offset based on range if stacked

@@ -265,11 +265,17 @@ class ControlWidget(QWidget):
         self.group_burst.setChecked(False)
         burst_l = QFormLayout(self.group_burst)
         
-        self.spin_burst_period = QDoubleSpinBox(); self.spin_burst_period.setValue(1.0)
-        burst_l.addRow("Burst Period (ns):", self.spin_burst_period)
+        self.spin_burst_period = QDoubleSpinBox()
+        self.spin_burst_period.setRange(1.0, 100000.0)
+        self.spin_burst_period.setValue(1000.0)
+        self.spin_burst_period.setToolTip("Peak-to-peak distance between sub-pulses in the burst (ps).")
+        burst_l.addRow("Pulse distance (ps):", self.spin_burst_period)
         
-        self.spin_burst_fwhm = QDoubleSpinBox(); self.spin_burst_fwhm.setValue(0.1)
-        burst_l.addRow("Burst FWHM (ns):", self.spin_burst_fwhm)
+        self.spin_burst_fwhm = QDoubleSpinBox()
+        self.spin_burst_fwhm.setRange(1.0, 100000.0)
+        self.spin_burst_fwhm.setValue(100.0)
+        self.spin_burst_fwhm.setToolTip("Pulse-width (FWHM) of each sub-pulse in the burst (ps).")
+        burst_l.addRow("Burst FWHM (ps):", self.spin_burst_fwhm)
         
         laser_layout.addRow(self.group_burst)
         
@@ -510,7 +516,6 @@ class ControlWidget(QWidget):
             radio.toggled.connect(self._update_sweep_inputs_enabled)
 
         add_sweep_option("laser_pulse_fwhm_ns", "Laser Pulse (FWHM, ns)", "0.1, 0.2, 0.5")
-        add_sweep_option("detector_jitter_ps", "Detector Jitter (ps)", "50, 100, 150")
         add_sweep_option("gate_edge_symmetric_ps", "Gate Rise/Fall Time (ps) - Symmetric Values", "25, 50, 100")
         gate_sharp_mode = QComboBox()
         gate_sharp_mode.addItems(["Sharp Rise, Sweep Fall", "Sharp Fall, Sweep Rise"])
@@ -522,23 +527,6 @@ class ControlWidget(QWidget):
             extra_label="Mode:",
         )
         add_sweep_option("number_of_gates", "Number of Gates", "2, 4, 8, 16")
-        deadtime_fixed_rate = QLineEdit("100")
-        add_sweep_option(
-            "deadtime_fixed_countrate_ns",
-            "Detector Deadtime (ns) with Fixed Countrate (Kphotons/s)",
-            "5, 10, 20, 45",
-            extra_widget=deadtime_fixed_rate,
-            extra_label="Fixed Countrate (Kphotons/s):",
-        )
-        countrate_fixed_deadtime = QLineEdit("45")
-        add_sweep_option(
-            "countrate_fixed_deadtime_kcps",
-            "Countrate (Kphotons/s) with Fixed Detector Deadtime (ns)",
-            "50, 100, 200, 500",
-            extra_widget=countrate_fixed_deadtime,
-            extra_label="Fixed Deadtime (ns):",
-        )
-        add_sweep_option("multihit_capabilities", "Multihit Capabilities", "off, on", values_label="States:")
         add_sweep_option("burst_edge_symmetric_ns", "Burst Rise/Fall Time (ns) - Symmetric Values", "0.05, 0.1, 0.2")
         burst_sharp_mode = QComboBox()
         burst_sharp_mode.addItems(["Sharp Rise, Sweep Fall", "Sharp Fall, Sweep Rise"])
@@ -569,7 +557,7 @@ class ControlWidget(QWidget):
         self.btn_precision.setStyleSheet("background-color: #1e3a8a; color: white; font-weight: bold;")
         self.btn_precision.setMinimumHeight(btn_height)
         
-        self.btn_export = QPushButton("EXPORT")
+        self.btn_export = QPushButton("SAVE AS")
         self.btn_export.setStyleSheet("background-color: #334155; color: white; font-weight: bold;")
         self.btn_export.setMinimumHeight(btn_height)
 
@@ -656,8 +644,8 @@ class ControlWidget(QWidget):
             self.spin_rise: "Rising edge time for rectangular excitation profiles.",
             self.spin_fall: "Falling edge time for rectangular excitation profiles.",
             self.group_burst: "Enable and configure burst excitation sub-pulses.",
-            self.spin_burst_period: "Period of burst sub-pulses within the main IRF envelope.",
-            self.spin_burst_fwhm: "Width of each burst sub-pulse.",
+            self.spin_burst_period: "Peak-to-peak distance between sub-pulses in the burst (ps).",
+            self.spin_burst_fwhm: "Pulse-width (FWHM) of each sub-pulse in the burst (ps).",
             self.spin_jitter: "Detector timing jitter in picoseconds.",
             self.spin_deadtime: "Detector deadtime in nanoseconds.",
             self.chk_multihit: "Allow more than one detected photon per excitation cycle.",
@@ -694,7 +682,7 @@ class ControlWidget(QWidget):
             self.btn_manage_inst: "Open the instrument-profile manager.",
             self.btn_precision: "Run the theory and optional Monte Carlo precision workflow.",
             self.btn_interrupt: "Request interruption of the current run.",
-            self.btn_export: "Preview or export the latest precision report.",
+            self.btn_export: "Preview the latest precision report and save it as an HTML package with SVG and CSV assets.",
             self.btn_simulate: "Run the synthetic image workflow.",
         }
         for widget, text in tooltips.items():
@@ -921,8 +909,8 @@ class ControlWidget(QWidget):
             
             # Burst Excitation
             self.group_burst.setChecked(cfg.burst_enabled)
-            self.spin_burst_period.setValue(cfg.burst_sub_period)
-            self.spin_burst_fwhm.setValue(cfg.burst_sub_fwhm)
+            self.spin_burst_period.setValue(cfg.burst_sub_period * 1000.0) # ns to ps
+            self.spin_burst_fwhm.setValue(cfg.burst_sub_fwhm * 1000.0) # ns to ps
 
             # Model params (dynamic rows)
             p_map = {"tau1": cfg.taus[0], "tau2": cfg.taus[1] if len(cfg.taus)>1 else 1.0,
@@ -1034,12 +1022,16 @@ class ControlWidget(QWidget):
                 self.radio_sweep_off.setChecked(True)
             if cfg.instr_sweep_vals:
                 self.sweep_options[selected_key]["values"].setText(", ".join(f"{val:g}" for val in cfg.instr_sweep_vals))
-            self.sweep_options["deadtime_fixed_countrate_ns"]["extra"].setText(f"{cfg.instr_sweep_fixed_countrate_kcps:g}")
-            self.sweep_options["countrate_fixed_deadtime_kcps"]["extra"].setText(f"{cfg.instr_sweep_fixed_deadtime_ns:g}")
+            if "deadtime_fixed_countrate_ns" in self.sweep_options and self.sweep_options["deadtime_fixed_countrate_ns"]["extra"] is not None:
+                self.sweep_options["deadtime_fixed_countrate_ns"]["extra"].setText(f"{cfg.instr_sweep_fixed_countrate_kcps:g}")
+            if "countrate_fixed_deadtime_kcps" in self.sweep_options and self.sweep_options["countrate_fixed_deadtime_kcps"]["extra"] is not None:
+                self.sweep_options["countrate_fixed_deadtime_kcps"]["extra"].setText(f"{cfg.instr_sweep_fixed_deadtime_ns:g}")
             gate_mode = "Sharp Rise, Sweep Fall" if cfg.instr_sweep_gate_sharp_edge == "sharp_rise" else "Sharp Fall, Sweep Rise"
             burst_mode = "Sharp Rise, Sweep Fall" if cfg.instr_sweep_burst_sharp_edge == "sharp_rise" else "Sharp Fall, Sweep Rise"
-            self.sweep_options["gate_edge_one_sharp_ps"]["extra"].setCurrentText(gate_mode)
-            self.sweep_options["burst_edge_one_sharp_ns"]["extra"].setCurrentText(burst_mode)
+            if "gate_edge_one_sharp_ps" in self.sweep_options and self.sweep_options["gate_edge_one_sharp_ps"]["extra"] is not None:
+                self.sweep_options["gate_edge_one_sharp_ps"]["extra"].setCurrentText(gate_mode)
+            if "burst_edge_one_sharp_ns" in self.sweep_options and self.sweep_options["burst_edge_one_sharp_ns"]["extra"] is not None:
+                self.sweep_options["burst_edge_one_sharp_ns"]["extra"].setCurrentText(burst_mode)
             
         finally:
             self._update_irf_ui()
