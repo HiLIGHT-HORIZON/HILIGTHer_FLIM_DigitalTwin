@@ -1,5 +1,6 @@
 import sys
 import os
+import subprocess
 import qdarkstyle
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon, QPixmap
@@ -10,6 +11,44 @@ try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
 except ImportError:
     pass # Handle in dependency check if missing
+
+def _stream_dependency_update(repo_root, splash):
+    req_path = os.path.join(repo_root, "python", "desktop_requirements.txt")
+    if not os.path.exists(req_path):
+        message = "Dependency file not found: desktop_requirements.txt"
+        print(message, flush=True)
+        splash.log(message)
+        return
+
+    commands = [
+        ("Checking pip version...", [sys.executable, "-m", "pip", "--version"]),
+        ("Updating pip...", [sys.executable, "-m", "pip", "install", "--upgrade", "pip"]),
+        ("Updating desktop dependencies...", [sys.executable, "-m", "pip", "install", "--upgrade", "-r", req_path]),
+    ]
+
+    for title, command in commands:
+        print(title, flush=True)
+        splash.log(title)
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        try:
+            for raw_line in process.stdout:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                print(line, flush=True)
+                splash.log(line)
+            process.wait()
+        finally:
+            if process.stdout is not None:
+                process.stdout.close()
+        if process.returncode != 0:
+            raise RuntimeError(f"Dependency command failed: {' '.join(command)}")
 
 # --- NEW: Splash Screen Integration ---
 def main():
@@ -38,26 +77,16 @@ def main():
     splash.log("Loading Firefly Theme...")
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt6())
     
-    # 2. Project Dependency Check (Optional but nice for splash)
-    splash.log("Checking project dependencies...")
+    # 2. Project Dependency Check and Update
     try:
-        req_path = os.path.join(repo_root, "python", "desktop_requirements.txt")
-        if os.path.exists(req_path):
-            # Run a quiet pip install to ensure everything is there, but capture output to log
-            process = subprocess.Popen([sys.executable, "-m", "pip", "install", "-r", req_path, "--quiet"], 
-                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            splash.log("Verifying libraries (PyQt6, NumPy, etc.)...")
-            # We don't want to block too long if it's already installed
-            try:
-                process.wait(timeout=5)
-                if process.returncode == 0:
-                    splash.log("All dependencies verified.")
-                else:
-                    splash.log("Warning: Dependency check returned non-zero code.")
-            except subprocess.TimeoutExpired:
-                splash.log("Dependency check taking time, continuing in background...")
+        splash.log("Checking and updating desktop dependencies...")
+        _stream_dependency_update(repo_root, splash)
+        splash.log("All dependencies are up to date.")
     except Exception as e:
-        splash.log(f"Dependency check skipped: {str(e)}")
+        message = f"Dependency update failed: {str(e)}"
+        print(message, flush=True)
+        splash.log(message)
+        raise
 
     # 3. Importing Main Window (Heavier operation)
     splash.log("Initializing HILIGHTer GUI modules...")

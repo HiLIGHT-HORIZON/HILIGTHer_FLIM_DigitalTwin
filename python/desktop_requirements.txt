@@ -10,3 +10,6 @@ numpy
 scipy
 pydantic
 numba
+h5py
+phasorpy
+flimlib

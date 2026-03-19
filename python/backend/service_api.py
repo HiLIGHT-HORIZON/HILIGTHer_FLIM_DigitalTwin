@@ -63,6 +63,8 @@ class DigitalTwinService:
             "tau_mean": None if tau_map is None else float(np.nanmean(tau_map)),
             "tau_min": None if tau_map is None else float(np.nanmin(tau_map)),
             "tau_max": None if tau_map is None else float(np.nanmax(tau_map)),
+            "validation_geometry": copy.deepcopy(self.engine.validation_metadata.get("geometry", {})),
+            "analysis_warnings": list(getattr(self.engine, "last_analysis_warnings", [])),
         }
 
     def get_results_snapshot(self) -> Dict[str, Any]:
@@ -121,6 +123,33 @@ class DigitalTwinService:
         return {
             "status": "advanced_simulation_complete",
             "results": self.get_results_snapshot(),
+        }
+
+    def run_validation_image(self, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        params = params or {}
+        photon_budget = int(params.get("a_photons", self.engine.config.a_photons))
+        target_repeats = int(params.get("image_mc_repeats", self.engine.config.image_mc_repeats))
+        result = self.engine.generate_validation_image(n_photons=photon_budget, target_repeats=target_repeats)
+        return {
+            "status": "validation_image_ready",
+            "geometry": copy.deepcopy(result["geometry"]),
+            "x_values": np.asarray(result["x_values"], dtype=float).tolist(),
+            "data_summary": self.get_data_summary(),
+        }
+
+    def fit_validation_image(self, method: Optional[str] = None) -> Dict[str, Any]:
+        method = str(method or getattr(self.engine.config, "image_fit_method", "gridded_mle")).lower()
+        self.engine.run_fit(method=method)
+        g_map, s_map = self.engine.calculate_phasor()
+        return {
+            "status": "validation_fit_complete",
+            "fit_method": method,
+            "data_summary": self.get_data_summary(),
+            "tau_map": None if self.engine.tau_map is None else self.engine.tau_map.tolist(),
+            "phasor": {
+                "g": None if g_map is None else np.asarray(g_map, dtype=float).tolist(),
+                "s": None if s_map is None else np.asarray(s_map, dtype=float).tolist(),
+            },
         }
 
     def run_precision(self, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -279,22 +308,11 @@ class DigitalTwinService:
         return {"g": g.tolist(), "s": s.tolist()}
 
     def get_pixel_analysis(self, y: int, x: int) -> Dict[str, Any]:
-        if self.engine.raw_data is None:
-            return {"status": "no_data"}
+        return self.engine.get_pixel_fit_payload(y, x)
 
-        decay = self.engine.raw_data[y, x, :].tolist()
-        edges = np.array(self.engine.config.gate_edges)
-        centers = (0.5 * (edges[:-1] + edges[1:])).tolist()
-        tau = None
-        fit = None
-        if self.engine.tau_map is not None:
-            tau = float(self.engine.tau_map[y, x])
-            if np.isfinite(tau):
-                self.engine.distill_gates()
-                sig = np.exp(-self.engine.time_vector / tau)
-                pj = self.engine.gate_shapes @ sig
-                fit = (pj / max(np.sum(pj), 1e-12) * np.sum(self.engine.raw_data[y, x, :])).tolist()
-        return {"decay": decay, "centers": centers, "fit": fit, "tau": tau}
+    def clear_workspace(self) -> Dict[str, Any]:
+        self.engine.clear_workspace_data()
+        return {"status": "workspace_cleared", "data_summary": self.get_data_summary()}
 
     def import_sdt_path(self, file_path: str) -> Dict[str, Any]:
         data, meta = import_sdt(file_path)

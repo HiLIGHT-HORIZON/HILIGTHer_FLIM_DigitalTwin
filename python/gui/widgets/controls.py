@@ -3,6 +3,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                              QComboBox, QLabel, QGroupBox, QTabWidget,
                              QCheckBox, QLineEdit, QRadioButton, QButtonGroup,
                              QStackedWidget, QTextEdit, QToolButton, QDialog,
+                             QScrollArea,
                              QDialogButtonBox)
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QGuiApplication
@@ -206,33 +207,57 @@ class ControlWidget(QWidget):
         decay_layout.addStretch()
         self.tabs.addTab(decay_tab, "Decay Model")
 
-        # --- TAB 1: IMAGES / RESOLUTION ---
+        # --- TAB 1: IMAGES / VALIDATION ---
         acq_tab = QWidget()
         acq_layout = QVBoxLayout(acq_tab)
         
         stat_group = QGroupBox("Image Synthesis")
         stat_layout = QFormLayout(stat_group)
-        self.spin_photons = QDoubleSpinBox(); self.spin_photons.setRange(1, 1e7); self.spin_photons.setValue(2000)
+        self.spin_photons = QSpinBox()
+        self.spin_photons.setRange(1, 10_000_000)
+        self.spin_photons.setSingleStep(100)
+        self.spin_photons.setValue(2000)
         stat_layout.addRow("Avg Photons:", self.spin_photons)
-        
-        self.spin_repeats = QSpinBox()
-        self.spin_repeats.setRange(1, 1000)
-        self.spin_repeats.setValue(1)
-        stat_layout.addRow("M Repeats:", self.spin_repeats)
-        
-        self.combo_sim_mode = QComboBox()
-        self.combo_sim_mode.addItems(["Spatial Gradient", "Uniform Model"])
-        stat_layout.addRow("Sim Mode:", self.combo_sim_mode)
+
+        self.spin_image_repeats = QSpinBox()
+        self.spin_image_repeats.setRange(1, 100000)
+        self.spin_image_repeats.setValue(200)
+        stat_layout.addRow("Target repeats:", self.spin_image_repeats)
+
+        self.lbl_image_param = QLabel("tau1")
+        self.lbl_image_x_summary = QLabel("Min 0.500 | Max 7.500 | Steps 30")
+        stat_layout.addRow("Swept parameter:", self.lbl_image_param)
+        stat_layout.addRow("X-axis source:", self.lbl_image_x_summary)
         acq_layout.addWidget(stat_group)
-        
-        res_group = QGroupBox("Spatial Resolution")
+
+        res_group = QGroupBox("Derived Validation Geometry")
         res_layout = QFormLayout(res_group)
-        self.spin_res = QSpinBox()
-        self.spin_res.setRange(16, 512)
-        self.spin_res.setValue(64)
-        res_layout.addRow("Image Size:", self.spin_res)
+        self.lbl_image_x_pixels = QLabel("90")
+        self.lbl_image_y_pixels = QLabel("70")
+        self.lbl_image_band_width = QLabel("3")
+        self.lbl_image_effective_repeats = QLabel("210")
+        res_layout.addRow(two_column_row("X pixels:", self.lbl_image_x_pixels, "Y pixels:", self.lbl_image_y_pixels))
+        res_layout.addRow(two_column_row("Band width:", self.lbl_image_band_width, "Replicates/value:", self.lbl_image_effective_repeats))
         acq_layout.addWidget(res_group)
+
+        analysis_group = QGroupBox("Image Analysis")
+        analysis_form = QFormLayout(analysis_group)
+        self.combo_image_fit_method = QComboBox()
+        self.combo_image_fit_method.addItems(["Gridded MLE", "MLE", "Tail Fitting"])
+        analysis_form.addRow("Lifetime fitting:", self.combo_image_fit_method)
+        self.lbl_image_backends = QLabel("Phasors: PhasorPy | Lifetime fitting: FLIMfit")
+        self.lbl_image_backends.setWordWrap(True)
+        analysis_form.addRow("Backends:", self.lbl_image_backends)
+        self.btn_fit_image = QPushButton("FIT IMAGE")
+        analysis_form.addRow(self.btn_fit_image)
+        acq_layout.addWidget(analysis_group)
+
+        self.spin_fx_min.valueChanged.connect(self.update_image_validation_summary)
+        self.spin_fx_max.valueChanged.connect(self.update_image_validation_summary)
+        self.spin_fx_steps.valueChanged.connect(self.update_image_validation_summary)
+        self.spin_image_repeats.valueChanged.connect(self.update_image_validation_summary)
         acq_layout.addStretch()
+        self.update_image_validation_summary()
         self.tabs.addTab(acq_tab, "Images")
 
         # --- TAB 2: LASER / IRF (REFACTORED) ---
@@ -762,7 +787,15 @@ class ControlWidget(QWidget):
         instr_layout.addStretch()
         self.tabs.addTab(instr_tab, "Batch Sweep")
 
-        layout.addWidget(self.tabs)
+        tabs_container = QWidget()
+        tabs_container_layout = QVBoxLayout(tabs_container)
+        tabs_container_layout.setContentsMargins(0, 0, 0, 0)
+        tabs_container_layout.addWidget(self.tabs)
+
+        tabs_scroll = QScrollArea()
+        tabs_scroll.setWidgetResizable(True)
+        tabs_scroll.setWidget(tabs_container)
+        layout.addWidget(tabs_scroll, 1)
         
         # --- UNIFIED ACTION AREA ---
         action_layout = QHBoxLayout()
@@ -982,9 +1015,9 @@ class ControlWidget(QWidget):
             self.spin_bootstrap_samples: "Number of bootstrap resamples used for p-values and confidence intervals.",
             self.spin_ci_level: "Confidence level used for the Monte Carlo interval display.",
             self.spin_photons: "Average photon budget for synthetic image generation.",
-            self.spin_repeats: "Number of repeated synthetic images to generate for testing.",
-            self.combo_sim_mode: "Choose between a spatial lifetime gradient and a uniform image model.",
-            self.spin_res: "Synthetic image width and height in pixels.",
+            self.spin_image_repeats: "Requested number of Monte Carlo-style repeats represented for each swept x-axis value.",
+            self.combo_image_fit_method: "Lifetime-fitting backend for the validation image.",
+            self.btn_fit_image: "Fit the generated validation image using the selected algorithm.",
             self.spin_period: "Measurement repetition period in nanoseconds.",
             self.chk_decay_wrap: "Include decay wrapping from previous periods in the model.",
             self.combo_profile: "Excitation or IRF profile used in the forward model.",
@@ -1050,7 +1083,7 @@ class ControlWidget(QWidget):
             self.btn_precision: "Run the theory and optional Monte Carlo precision workflow.",
             self.btn_interrupt: "Request interruption of the current run.",
             self.btn_export: "Preview the latest precision report and save it as an HTML package with SVG and CSV assets.",
-            self.btn_simulate: "Run the synthetic image workflow.",
+            self.btn_simulate: "Generate a synthetic validation image using the swept x-axis parameter.",
         }
         for widget, text in tooltips.items():
             widget.setToolTip(text)
@@ -1343,6 +1376,26 @@ class ControlWidget(QWidget):
         self.lbl_grid_steps.setText(f"{grid_steps}")
         self.lbl_grid_scale.setText(grid_scale)
 
+    def update_image_validation_summary(self):
+        param_name = self.get_selected_x_param()
+        self.lbl_image_param.setText(param_name)
+        self.lbl_image_x_summary.setText(
+            f"Min {self.spin_fx_min.value():.3f} | Max {self.spin_fx_max.value():.3f} | Steps {self.spin_fx_steps.value()}"
+        )
+        n_values = max(int(self.spin_fx_steps.value()), 1)
+        target_repeats = max(int(self.spin_image_repeats.value()), 1)
+        total_pixels = n_values * target_repeats
+        side = max(int(np.ceil(np.sqrt(total_pixels))), 1)
+        band_width = max(int(np.ceil(side / n_values)), 1)
+        x_pixels = max(n_values * band_width, n_values)
+        y_pixels = max(int(np.ceil(total_pixels / x_pixels)), 1)
+        if y_pixels > 10:
+            y_pixels = int(np.ceil(y_pixels / 10.0) * 10)
+        self.lbl_image_x_pixels.setText(str(x_pixels))
+        self.lbl_image_y_pixels.setText(str(y_pixels))
+        self.lbl_image_band_width.setText(str(band_width))
+        self.lbl_image_effective_repeats.setText(str(band_width * y_pixels))
+
     def get_selected_x_param(self):
         for name, chk in self.x_group.items():
             if chk.isChecked():
@@ -1550,13 +1603,20 @@ class ControlWidget(QWidget):
             self.spin_excitation_control_points.setValue(getattr(cfg, "excitation_optimization_control_points", 8))
 
             # Instrument params
-            self.spin_photons.setValue(cfg.a_photons)
+            self.spin_photons.setValue(int(round(cfg.a_photons)))
+            self.spin_image_repeats.setValue(int(getattr(cfg, "image_mc_repeats", getattr(cfg, "n_repeats", 200))))
+            image_fit_map = {
+                "gridded_mle": "Gridded MLE",
+                "mle": "MLE",
+                "tail": "Tail Fitting",
+            }
+            self.combo_image_fit_method.setCurrentText(
+                image_fit_map.get(getattr(cfg, "image_fit_method", "gridded_mle"), "Gridded MLE")
+            )
             self.spin_jitter.setValue(int(round(cfg.timing_jitter)))
             self.spin_deadtime.setValue(int(round(cfg.detector_deadtime)))
             self.chk_multihit.setChecked(cfg.b_multihit_mode)
-            self.combo_sim_mode.setCurrentText("Spatial Gradient" if cfg.sim_mode == "spatial gradient" else "Uniform Model")
-            self.spin_repeats.setValue(cfg.n_repeats)
-            self.spin_res.setValue(64) # Default or from metadata
+            self.update_image_validation_summary()
 
             # Batch sweep
             legacy_sweep_map = {
@@ -1589,6 +1649,7 @@ class ControlWidget(QWidget):
             self._update_irf_ui()
             self.update_param_visibility()
             self.update_gridded_mle_summary()
+            self.update_image_validation_summary()
             self._sync_precision_execution_ui(cfg.precision_validate_mc)
             self._sync_gate_controls()
             self._sync_optimization_ui()

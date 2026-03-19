@@ -7,7 +7,7 @@ from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QApplication, QDockWidget, 
                              QVBoxLayout, QWidget, QStatusBar, QFileDialog,
                              QMenuBar, QDialog, QHBoxLayout, QPushButton, QMessageBox, QCheckBox)
-from PyQt6.QtGui import QAction, QDesktopServices
+from PyQt6.QtGui import QAction, QActionGroup, QDesktopServices, QGuiApplication
 from PyQt6.QtCore import Qt, QUrl
 import qdarkstyle
 
@@ -25,6 +25,7 @@ from gui.automation_api import DesktopAutomationAPI
 from gui.optimisation_worker import DetectionOptimisationWorker
 from gui.report_export import write_precision_report_package
 from backend.models import PhysicsConfig
+from backend.storage import storage
 
 
 LIGHT_APP_STYLESHEET = """
@@ -66,12 +67,12 @@ QScrollArea, QTabWidget::pane {
 """
 
 class HILIGHTMainWindow(QMainWindow):
-    LAYOUT_VERSION = 3
+    LAYOUT_VERSION = 5
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("HILIGHTer Digital Twin | Desktop Workspace")
-        self.resize(1800, 1000) # Slightly wider for manual
+        self._apply_startup_geometry()
         
         # Initialize Core Engine
         from backend.twin_engine import TwinEngine
@@ -99,6 +100,8 @@ class HILIGHTMainWindow(QMainWindow):
         self.optimization_x_range = None
         self.optimization_ideal_f = None
         self.optimization_autoplay_previous = None
+        self.last_validation_run = None
+        self.workspace_mode = None
         self.desktop_api = DesktopAutomationAPI(self)
         
         # Setup Manual (Persistent Sidepanel)
@@ -137,29 +140,124 @@ class HILIGHTMainWindow(QMainWindow):
         self.settings.setValue("layoutVersion", self.LAYOUT_VERSION)
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("windowState", self.saveState())
+        screen = self._available_screen_geometry()
+        if screen is not None:
+            self.settings.setValue("screenWidth", screen.width())
+            self.settings.setValue("screenHeight", screen.height())
 
     def restore_layout(self):
         saved_version = self.settings.value("layoutVersion", 0, int)
         if saved_version != self.LAYOUT_VERSION:
+            self._apply_default_dock_sizes()
+            self._fit_window_to_screen()
             return
+        current_screen = self._available_screen_geometry()
+        saved_width = self.settings.value("screenWidth", 0, int)
+        saved_height = self.settings.value("screenHeight", 0, int)
+        if current_screen is not None and saved_width and saved_height:
+            if saved_width > current_screen.width() or saved_height > current_screen.height():
+                self._clear_saved_layout()
+                self._apply_default_dock_sizes()
+                self._fit_window_to_screen()
+                return
         geo = self.settings.value("geometry")
-        if geo: self.restoreGeometry(geo)
+        if geo:
+            self.restoreGeometry(geo)
         state = self.settings.value("windowState")
-        if state: self.restoreState(state)
+        if state:
+            self.restoreState(state)
+        self._fit_window_to_screen()
+        if current_screen is not None:
+            min_hint = self.minimumSizeHint()
+            if min_hint.width() > current_screen.width() or min_hint.height() > current_screen.height():
+                self._clear_saved_layout()
+                self._apply_default_dock_sizes()
+                self._fit_window_to_screen()
 
     def closeEvent(self, event):
         self.save_layout()
         super().closeEvent(event)
 
+    def _available_screen_geometry(self):
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return None
+        return screen.availableGeometry()
+
+    def _apply_startup_geometry(self):
+        available = self._available_screen_geometry()
+        if available is None:
+            self.resize(1600, 900)
+            return
+        width = min(1800, max(1100, int(available.width() * 0.92)))
+        height = min(1000, max(780, int(available.height() * 0.90)))
+        width = min(width, available.width())
+        height = min(height, available.height())
+        self.resize(width, height)
+        self.move(
+            available.x() + max((available.width() - width) // 2, 0),
+            available.y() + max((available.height() - height) // 2, 0),
+        )
+
+    def _fit_window_to_screen(self):
+        available = self._available_screen_geometry()
+        if available is None:
+            return
+        width = min(self.width(), available.width())
+        height = min(self.height(), available.height())
+        self.resize(width, height)
+        frame = self.frameGeometry()
+        x = min(max(frame.x(), available.x()), available.right() - frame.width() + 1)
+        y = min(max(frame.y(), available.y()), available.bottom() - frame.height() + 1)
+        self.move(x, y)
+
+    def _apply_default_dock_sizes(self):
+        available = self._available_screen_geometry()
+        if available is None:
+            width = 1600
+            height = 900
+        else:
+            width = available.width()
+            height = available.height()
+        left_width = max(360, int(width * 0.28))
+        right_width = max(640, width - left_width)
+        top_height = max(420, int(height * 0.62))
+        bottom_height = max(220, height - top_height)
+        right_stack = max(180, int(top_height / 3))
+        self.resizeDocks([self.dock_params, self.dock_fisher], [left_width, right_width], Qt.Orientation.Horizontal)
+        self.resizeDocks([self.dock_params, self.dock_map], [top_height, bottom_height], Qt.Orientation.Vertical)
+        self.resizeDocks([self.dock_fisher, self.dock_mle_accuracy, self.dock_diagnostics], [right_stack, right_stack, right_stack], Qt.Orientation.Vertical)
+        self.resizeDocks([self.dock_map, self.dock_decay, self.dock_phasor], [max(280, int(right_width * 0.36)), max(280, int(right_width * 0.34)), max(220, int(right_width * 0.30))], Qt.Orientation.Horizontal)
+
+    def _clear_saved_layout(self):
+        self.settings.remove("geometry")
+        self.settings.remove("windowState")
+        self.settings.remove("screenWidth")
+        self.settings.remove("screenHeight")
+
     def init_menu(self):
         menubar = self.menuBar()
         
         file_menu = menubar.addMenu("&File")
+        self.load_workspace_act = QAction("Load Workspace...", self)
+        self.load_workspace_act.triggered.connect(self.load_workspace)
+        file_menu.addAction(self.load_workspace_act)
+
+        self.save_workspace_act = QAction("Save Workspace...", self)
+        self.save_workspace_act.triggered.connect(self.save_workspace)
+        file_menu.addAction(self.save_workspace_act)
+
+        self.clear_workspace_act = QAction("Clear Workspace", self)
+        self.clear_workspace_act.triggered.connect(lambda: self.clear_workspace(confirm=True))
+        file_menu.addAction(self.clear_workspace_act)
+
+        file_menu.addSeparator()
         self.export_precision_act = QAction("Save Report As...", self)
         self.export_precision_act.setEnabled(False)
         self.export_precision_act.triggered.connect(self.export_last_precision_report)
         file_menu.addAction(self.export_precision_act)
 
+        file_menu.addSeparator()
         exit_act = QAction("Exit", self)
         exit_act.triggered.connect(self.close)
         file_menu.addAction(exit_act)
@@ -178,9 +276,25 @@ class HILIGHTMainWindow(QMainWindow):
         help_menu.addAction(about_act)
 
         view_menu = menubar.addMenu("&View")
-        self.theme_act = QAction("Light Mode", self)
-        self.theme_act.triggered.connect(self.toggle_theme)
-        view_menu.addAction(self.theme_act)
+        theme_menu = view_menu.addMenu("Theme")
+        self.theme_group = QActionGroup(self)
+        self.theme_group.setExclusive(True)
+        self.theme_dark_act = QAction("Dark", self, checkable=True)
+        self.theme_light_act = QAction("Light", self, checkable=True)
+        self.theme_group.addAction(self.theme_dark_act)
+        self.theme_group.addAction(self.theme_light_act)
+        self.theme_dark_act.triggered.connect(lambda: self.set_theme_mode("dark"))
+        self.theme_light_act.triggered.connect(lambda: self.set_theme_mode("light"))
+        theme_menu.addAction(self.theme_dark_act)
+        theme_menu.addAction(self.theme_light_act)
+
+        view_menu.addSeparator()
+        self.view_simulations_act = QAction("Simulation Workspace", self)
+        self.view_simulations_act.triggered.connect(self.apply_simulation_view)
+        view_menu.addAction(self.view_simulations_act)
+        self.view_testing_act = QAction("Image Validation Workspace", self)
+        self.view_testing_act.triggered.connect(self.apply_testing_view)
+        view_menu.addAction(self.view_testing_act)
 
     def apply_theme(self):
         """Applies the current theme from settings."""
@@ -188,10 +302,10 @@ class HILIGHTMainWindow(QMainWindow):
         app = QApplication.instance()
         if theme == "dark":
             app.setStyleSheet(qdarkstyle.load_stylesheet())
-            self.theme_act.setText("Light Mode")
+            self.theme_dark_act.setChecked(True)
         else:
             app.setStyleSheet(LIGHT_APP_STYLESHEET)
-            self.theme_act.setText("Dark Mode")
+            self.theme_light_act.setChecked(True)
 
         for widget in (
             self.control_widget,
@@ -206,11 +320,8 @@ class HILIGHTMainWindow(QMainWindow):
                 widget.set_theme(theme)
         self._apply_optimization_dock_highlight()
 
-    def toggle_theme(self):
-        """Switches between dark and light themes."""
-        current = self.settings.value("theme", "dark")
-        new_theme = "light" if current == "dark" else "dark"
-        self.settings.setValue("theme", new_theme)
+    def set_theme_mode(self, theme_name):
+        self.settings.setValue("theme", str(theme_name).lower())
         self.apply_theme()
 
     def setup_docks(self):
@@ -257,14 +368,14 @@ class HILIGHTMainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dia_dock)
 
         # Bottom: Decay
-        d_dock = QDockWidget("Single Pixel Decay / Fit", self)
+        d_dock = QDockWidget("Pixel Inspector", self)
         d_dock.setObjectName("dock_decay")
         d_dock.setWidget(self.decay_widget)
         self.dock_decay = d_dock
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, d_dock)
 
         # Bottom Left: Image / Map
-        map_dock = QDockWidget("Lifetime Gradient Map", self)
+        map_dock = QDockWidget("Image Validation", self)
         map_dock.setObjectName("dock_map")
         map_dock.setWidget(self.map_widget)
         self.dock_map = map_dock
@@ -282,6 +393,30 @@ class HILIGHTMainWindow(QMainWindow):
         self.resizeDocks([f_dock, acc_dock, dia_dock], [300, 300, 340], Qt.Orientation.Vertical)
         self.resizeDocks([map_dock, d_dock, p_dock], [760, 720, 420], Qt.Orientation.Horizontal)
 
+    def apply_simulation_view(self):
+        for dock in (self.dock_params, self.dock_fisher, self.dock_mle_accuracy, self.dock_diagnostics):
+            dock.show()
+        for dock in (self.dock_map, self.dock_decay, self.dock_phasor):
+            dock.hide()
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.dock_params)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_fisher)
+        self.splitDockWidget(self.dock_fisher, self.dock_mle_accuracy, Qt.Orientation.Vertical)
+        self.splitDockWidget(self.dock_mle_accuracy, self.dock_diagnostics, Qt.Orientation.Vertical)
+        self.resizeDocks([self.dock_params, self.dock_fisher], [420, 900], Qt.Orientation.Horizontal)
+        self.resizeDocks([self.dock_fisher, self.dock_mle_accuracy, self.dock_diagnostics], [320, 320, 320], Qt.Orientation.Vertical)
+
+    def apply_testing_view(self):
+        for dock in (self.dock_params, self.dock_map, self.dock_decay, self.dock_phasor):
+            dock.show()
+        for dock in (self.dock_fisher, self.dock_mle_accuracy, self.dock_diagnostics):
+            dock.hide()
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.dock_params)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_map)
+        self.splitDockWidget(self.dock_map, self.dock_decay, Qt.Orientation.Vertical)
+        self.splitDockWidget(self.dock_decay, self.dock_phasor, Qt.Orientation.Vertical)
+        self.resizeDocks([self.dock_params, self.dock_map], [420, 900], Qt.Orientation.Horizontal)
+        self.resizeDocks([self.dock_map, self.dock_decay, self.dock_phasor], [320, 320, 320], Qt.Orientation.Vertical)
+
     def connect_signals(self):
         # Context-aware Manual
         self.control_widget.context_changed.connect(self.manual_widget.scroll_to_section)
@@ -289,6 +424,7 @@ class HILIGHTMainWindow(QMainWindow):
         # Simulation controls
         self.control_widget.btn_precision.clicked.connect(self.run_precision_analysis)
         self.control_widget.btn_simulate.clicked.connect(self.run_image_gen)
+        self.control_widget.btn_fit_image.clicked.connect(self.fit_validation_image)
         self.control_widget.btn_export.clicked.connect(self.preview_last_precision_report)
         self.control_widget.btn_interrupt.clicked.connect(self.interrupt_simulation)
         self.control_widget.btn_manage_inst.clicked.connect(self.open_instrument_manager)
@@ -330,7 +466,7 @@ class HILIGHTMainWindow(QMainWindow):
             self.statusBar().showMessage("Instrument profile applied successfully.")
 
     def _set_export_enabled(self):
-        enabled = bool(self.last_precision_run or self.last_optimization_run)
+        enabled = bool(self.last_precision_run or self.last_optimization_run or self.last_validation_run)
         self.export_precision_act.setEnabled(enabled)
         self.control_widget.btn_export.setEnabled(enabled)
 
@@ -926,12 +1062,18 @@ class HILIGHTMainWindow(QMainWindow):
         cfg.burst_sub_fwhm = cw.spin_burst_fwhm.value() / 1000.0 # From ps to ns
         
         # Instrument & Noise
-        cfg.a_photons = cw.spin_photons.value()
-        cfg.sim_mode = cw.combo_sim_mode.currentText().lower()
+        cfg.a_photons = float(cw.spin_photons.value())
+        cfg.image_mc_repeats = int(cw.spin_image_repeats.value())
+        image_fit_map = {
+            "gridded mle": "gridded_mle",
+            "mle": "mle",
+            "tail fitting": "tail",
+        }
+        cfg.image_fit_method = image_fit_map.get(cw.combo_image_fit_method.currentText().lower(), "gridded_mle")
         cfg.timing_jitter = cw.spin_jitter.value()
         cfg.detector_deadtime = cw.spin_deadtime.value()
         cfg.b_multihit_mode = cw.chk_multihit.isChecked()
-        cfg.n_repeats = cw.spin_repeats.value()
+        cfg.n_repeats = int(cw.spin_image_repeats.value())
 
         # Gating
         gate_type = cw.combo_gate_type.currentText().lower()
@@ -1057,6 +1199,138 @@ class HILIGHTMainWindow(QMainWindow):
         if self.optimization_worker is not None:
             self.optimization_worker.request_interrupt()
         self.statusBar().showMessage("⌛ Interrupt Request Received...")
+
+    def _serialise_workspace_value(self, value):
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, dict):
+            return {k: self._serialise_workspace_value(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [self._serialise_workspace_value(v) for v in value]
+        return value
+
+    def _has_precision_workspace(self):
+        return bool(self.last_precision_run or self.last_optimization_run)
+
+    def _has_validation_workspace(self):
+        return bool(self.engine.raw_data is not None or self.last_validation_run)
+
+    def _confirm_workspace_transition(self, target_mode):
+        if target_mode == "precision" and self.workspace_mode == "validation" and self._has_validation_workspace():
+            reply = QMessageBox.question(
+                self,
+                "Clear Validation Workspace",
+                "TEST data is currently loaded. Clear the workspace before running RUN?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return False
+            self.clear_workspace(confirm=False)
+        if target_mode == "validation" and self.workspace_mode == "precision" and self._has_precision_workspace():
+            reply = QMessageBox.question(
+                self,
+                "Clear Precision Workspace",
+                "RUN results are currently loaded. Clear the workspace before running TEST?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return False
+            self.clear_workspace(confirm=False)
+        return True
+
+    def clear_workspace(self, confirm=False):
+        if confirm and not (self._has_precision_workspace() or self._has_validation_workspace()):
+            return
+        if confirm:
+            reply = QMessageBox.question(
+                self,
+                "Clear Workspace",
+                "Clear all generated data while keeping the controller settings?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        self.engine.clear_workspace_data()
+        self.last_precision_run = None
+        self.last_optimization_run = None
+        self.last_validation_run = None
+        self.workspace_mode = None
+        self.export_precision_act.setEnabled(False)
+        self.control_widget.btn_export.setEnabled(False)
+        self.map_widget.clear_image()
+        self.phasor_widget.update_data(np.array([]), np.array([]))
+        self.decay_widget.clear()
+        self.fisher_widget.clear_data()
+        self.mle_accuracy_widget.clear_data()
+        self.diagnostics_widget.clear_frames()
+        self.statusBar().showMessage("Workspace cleared.")
+
+    def save_workspace(self):
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Workspace", "hilighter_workspace.h5", "HDF5 Files (*.h5)")
+        if not file_path:
+            return
+        self.sync_ui_to_config()
+        metadata = {
+            "schema_version": 2,
+            "theme": self.settings.value("theme", "dark"),
+            "workspace_mode": self.workspace_mode,
+            "config": self.engine.config.model_dump() if hasattr(self.engine.config, "model_dump") else self.engine.config.dict(),
+            "last_precision_run": self._serialise_workspace_value(self.last_precision_run),
+            "last_optimization_run": self._serialise_workspace_value(self.last_optimization_run),
+            "last_validation_run": self._serialise_workspace_value(self.last_validation_run),
+            "validation_metadata": self._serialise_workspace_value(self.engine.validation_metadata),
+        }
+        arrays = {
+            "raw_data": self.engine.raw_data,
+            "tau_map": self.engine.tau_map,
+            "a_map": self.engine.a_map,
+            "b_map": self.engine.b_map,
+            "chi2_map": self.engine.chi2_map,
+            "validation_param_map": self.engine.validation_param_map,
+            "validation_truth_map": self.engine.validation_truth_map,
+        }
+        try:
+            storage.save_workspace(file_path, metadata, arrays)
+        except RuntimeError as exc:
+            QMessageBox.critical(self, "Save Workspace", str(exc))
+            return
+        self.statusBar().showMessage(f"Workspace saved to {file_path}")
+
+    def load_workspace(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load Workspace", "", "HDF5 Files (*.h5)")
+        if not file_path:
+            return
+        try:
+            metadata, arrays = storage.load_workspace(file_path)
+        except RuntimeError as exc:
+            QMessageBox.critical(self, "Load Workspace", str(exc))
+            return
+        self.engine.config = PhysicsConfig(**metadata.get("config", {}))
+        self.control_widget.update_from_config(self.engine.config)
+        self.settings.setValue("theme", metadata.get("theme", "dark"))
+        self.apply_theme()
+        self.engine.raw_data = arrays.get("raw_data")
+        self.engine.tau_map = arrays.get("tau_map")
+        self.engine.a_map = arrays.get("a_map")
+        self.engine.b_map = arrays.get("b_map")
+        self.engine.chi2_map = arrays.get("chi2_map")
+        self.engine.validation_param_map = arrays.get("validation_param_map")
+        self.engine.validation_truth_map = arrays.get("validation_truth_map")
+        self.engine.validation_metadata = metadata.get("validation_metadata", {})
+        self.last_precision_run = metadata.get("last_precision_run")
+        self.last_optimization_run = metadata.get("last_optimization_run")
+        self.last_validation_run = metadata.get("last_validation_run")
+        self.workspace_mode = metadata.get("workspace_mode")
+        self.engine.distill_gates()
+        if self.engine.raw_data is not None:
+            self._refresh_validation_views()
+            self.apply_testing_view()
+        elif self.engine.validation_param_map is not None:
+            self.map_widget.set_images(None, self.engine.validation_param_map)
+            self.apply_testing_view()
+        self._set_export_enabled()
+        self.statusBar().showMessage(f"Workspace loaded from {file_path}")
 
     def _run_precision_analysis_legacy(self):
         """Exclusively runs the theoretical Fisher/F-value evaluation."""
@@ -1300,7 +1574,11 @@ class HILIGHTMainWindow(QMainWindow):
 
     def run_precision_analysis(self):
         """Runs the theoretical precision evaluation and optional Monte Carlo validation."""
+        if not self._confirm_workspace_transition("precision"):
+            return
         self.sync_ui_to_config()
+        self.apply_simulation_view()
+        self.workspace_mode = "precision"
         baseline_cfg = copy.deepcopy(self.engine.config)
         cfg = baseline_cfg
         cfg.b_interrupt = False
@@ -1520,74 +1798,118 @@ class HILIGHTMainWindow(QMainWindow):
                 self.diagnostics_widget.resume_playback()
 
     def run_image_gen(self):
-        """Runs the actual Monte Carlo photon image simulation."""
+        """Generate the synthetic validation image."""
+        if not self._confirm_workspace_transition("validation"):
+            return
         self.engine.config.b_interrupt = False
         self.control_widget.btn_simulate.setEnabled(False)
         self.control_widget.btn_interrupt.setEnabled(True)
-        
         self.sync_ui_to_config()
-        self.statusBar().showMessage("🖼️ Generating Synthetic FLIM Image...")
+        self.apply_testing_view()
+        self.workspace_mode = "validation"
+        self.statusBar().showMessage("Generating synthetic validation image...")
         self.progress.show()
-        
-        res = self.control_widget.spin_res.value()
-        # Spatial gradient logic...
-        tau_grid = np.tile(np.linspace(0.5, 5.0, res), (res, 1))
-        
-        num_gates = len(self.engine.config.gate_edges) - 1
-        self.engine.raw_data = np.zeros((res, res, num_gates))
-        
-        # Fast simulated image (reduced repeats for UI responsiveness)
-        for y in range(res):
-            if self.engine.config.b_interrupt: break
-            for x in range(res):
-                counts = self.engine.simulate_photons_with_deadtime(tau_grid[y,x], self.engine.config.a_photons)
-                self.engine.raw_data[y,x,:] = counts
-            if y % 10 == 0:
-                self.progress.setValue(int(100 * y / res))
-                self.map_widget.set_image(np.sum(self.engine.raw_data, axis=2))
-                QApplication.processEvents()
-        
-        self.statusBar().showMessage("🎨 Imaging Complete.")
-        self.control_widget.btn_simulate.setEnabled(True)
-        self.control_widget.btn_interrupt.setEnabled(False)
-        self.progress.hide()
-        QApplication.restoreOverrideCursor()
+        self.progress.setValue(0)
+        try:
+            payload = self.engine.generate_validation_image(
+                n_photons=int(self.engine.config.a_photons),
+                target_repeats=int(self.engine.config.image_mc_repeats),
+                progress_callback=lambda done, total: self.progress.setValue(int((done / max(total, 1)) * 45)),
+            )
+            self.last_validation_run = {
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "geometry": copy.deepcopy(payload["geometry"]),
+                "fit_method": self.engine.config.image_fit_method,
+                "x_values": np.asarray(payload["x_values"], dtype=float).tolist(),
+            }
+            self._refresh_validation_views()
+            QApplication.processEvents()
+            self.progress.setValue(50)
+            self.fit_validation_image(update_buttons=False)
+            self.statusBar().showMessage("Validation image generated and fitted.")
+            self._set_export_enabled()
+        finally:
+            self.control_widget.btn_simulate.setEnabled(True)
+            self.control_widget.btn_interrupt.setEnabled(False)
+            self.progress.hide()
+            QApplication.restoreOverrideCursor()
+
+    def fit_validation_image(self, update_buttons=True):
+        if self.engine.raw_data is None:
+            self.statusBar().showMessage("Generate a validation image before fitting.")
+            return
+        self.sync_ui_to_config()
+        self.statusBar().showMessage("Fitting validation image...")
+        if update_buttons:
+            self.progress.show()
+            self.progress.setValue(0)
+        QApplication.processEvents()
+        try:
+            self.engine.run_fit(
+                method=self.engine.config.image_fit_method,
+                progress_callback=lambda done, total: self.progress.setValue(50 + int((done / max(total, 1)) * 50)) if not update_buttons else self.progress.setValue(int((done / max(total, 1)) * 100)),
+            )
+            self._refresh_validation_views()
+            if self.last_validation_run is None:
+                self.last_validation_run = {"timestamp": datetime.utcnow().isoformat() + "Z"}
+            self.last_validation_run["fit_method"] = self.engine.config.image_fit_method
+            self.last_validation_run["analysis_warnings"] = list(getattr(self.engine, "last_analysis_warnings", []))
+            warnings = list(getattr(self.engine, "last_analysis_warnings", []))
+            self.statusBar().showMessage("Validation image fitted." if not warnings else warnings[0])
+            self._set_export_enabled()
+        finally:
+            if update_buttons:
+                self.progress.hide()
+
+    def _refresh_validation_views(self):
+        intensity = None if self.engine.raw_data is None else np.sum(self.engine.raw_data, axis=2)
+        lifetime = self.engine.tau_map if self.engine.tau_map is not None else self.engine.validation_param_map
+        self.map_widget.set_images(intensity, lifetime)
+        g_map, s_map = self.engine.calculate_phasor()
+        if g_map is not None and s_map is not None:
+            self.phasor_widget.update_data(g_map, s_map)
+        self.on_pixel_select(0, 0)
 
 
     def on_pixel_select(self, y, x):
-        if self.engine.raw_data is None: return
-        
-        decay = self.engine.raw_data[y, x, :]
-        edges = np.array(self.engine.config.gate_edges)
-        centers = 0.5 * (edges[:-1] + edges[1:])
-        
-        # Generate fit curve if available
-        fit = None
+        if self.engine.raw_data is None:
+            return
+        payload = self.engine.get_pixel_fit_payload(y, x, fit_method=self.engine.config.image_fit_method)
+        if payload.get("status") != "ok":
+            return
+        histogram_values = None
         if self.engine.tau_map is not None:
-             # Basic implementation from main.py logic
-             tau = self.engine.tau_map[y, x]
-             if not np.isnan(tau):
-                 # Recalculate theoretical decay...
-                 t_vec = self.engine.time_vector
-                 sig = np.exp(-t_vec / tau)
-                 # Simpler visualization for desktop for now
-                 pj = self.engine.gate_shapes @ sig
-                 pj /= np.sum(pj)
-                 # Scaled to match raw data height
-                 fit = pj * np.sum(decay)
-        
-        self.decay_widget.update_decay(centers, decay, fit)
+            histogram_values = self.engine.tau_map[np.isfinite(self.engine.tau_map)]
+        elif self.engine.validation_param_map is not None:
+            histogram_values = self.engine.validation_param_map[np.isfinite(self.engine.validation_param_map)]
+        self.decay_widget.update_decay(
+            payload["centers"],
+            payload["counts"],
+            fit=payload.get("fit"),
+            residuals=payload.get("residuals"),
+            irf=payload.get("irf_gate"),
+            reduced_chi2=payload.get("reduced_chi2"),
+            randomness=payload.get("randomness"),
+            histogram_values=histogram_values,
+            selected_value=payload.get("estimate"),
+            truth_value=payload.get("truth"),
+        )
 
     def on_phasor_roi(self, gmin, gmax, smin, smax):
-        # Filtering logic for mask
-        if self.engine.raw_data is None: return
-        # Mocking masking feedback for now
-        pass
+        if self.engine.raw_data is None:
+            return
+        mask = self.engine.get_roi_mask(gmin, gmax, smin, smax)
+        if mask is None:
+            return
+        self.statusBar().showMessage(f"Phasor ROI selected {int(np.count_nonzero(mask))} pixels.")
 
     def export_last_precision_report(self):
         self.preview_last_precision_report()
 
     def preview_last_precision_report(self):
+        if self.workspace_mode == "validation" and self.last_validation_run:
+            self.save_workspace()
+            return
         if not self.last_precision_run and not self.last_optimization_run:
             self.statusBar().showMessage("No reportable precision or optimisation run is available to export.")
             return
@@ -2134,12 +2456,13 @@ class HILIGHTMainWindow(QMainWindow):
         <hr>
         <b>Powered by:</b>
         <ul>
-            <li><b>PhasorPy</b>: High-precision fit-free analysis.</li>
+            <li><b>PhasorPy</b>: Phasor analysis and IRF-calibrated image-validation phasor products.</li>
+            <li><b>FLIMfit / FLIMLib</b>: Lifetime-fitting backend used for validation-image analysis paths.</li>
             <li><b>PyQt6 & PyQtGraph</b>: High-performance UI and plotting.</li>
             <li><b>NumPy, SciPy & Numba</b>: Numerical processing kernels.</li>
             <li><b>QDarkStyle</b>: Sleek, research-ready aesthetics.</li>
         </ul>
-        <p><i>Special thanks to the PhasorPy contributors for their standard-setting phasor approach implementation.</i></p>
+        <p><i>Special thanks to the PhasorPy and FLIMfit / FLIMLib contributors for enabling the validation-analysis workflow.</i></p>
         """
         QMessageBox.about(self, "About HILIGHTer", about_text)
 

@@ -2,7 +2,7 @@ import numpy as np
 import copy
 from math import erfc, sqrt
 from scipy.interpolate import interp1d
-from scipy.optimize import minimize, fmin
+from scipy.optimize import minimize, fmin, minimize_scalar
 from scipy.signal import convolve
 from scipy.special import erf
 from typing import Optional, Tuple, List, Callable, Dict, Any
@@ -83,6 +83,10 @@ class TwinEngine:
         self.a_map = None
         self.b_map = None
         self.chi2_map = None
+        self.validation_metadata = {}
+        self.validation_param_map = None
+        self.validation_truth_map = None
+        self.last_analysis_warnings = []
         
         # Calibration Data
         self.sweep_data = None # List of [t, counts] arrays
@@ -97,6 +101,31 @@ class TwinEngine:
         self.grid_templates = None
         self.grid_tau_axis = None
         self.grid_signature = None
+
+    def clear_workspace_data(self):
+        self.raw_data = None
+        self.tau_map = None
+        self.a_map = None
+        self.b_map = None
+        self.chi2_map = None
+        self.validation_metadata = {}
+        self.validation_param_map = None
+        self.validation_truth_map = None
+        self.last_analysis_warnings = []
+
+    def build_precision_x_range(self) -> np.ndarray:
+        cfg = self.config
+        scale = str(cfg.f_x_scale).lower()
+        n_steps = max(int(cfg.f_x_steps), 2)
+        if scale == "log":
+            lo = max(float(cfg.f_x_min), 1e-6)
+            hi = max(float(cfg.f_x_max), lo * 1.0001)
+            return np.logspace(np.log10(lo), np.log10(hi), n_steps)
+        if scale == "linear":
+            return np.linspace(float(cfg.f_x_min), float(cfg.f_x_max), n_steps)
+        lo = max(float(cfg.f_x_min), 1e-6)
+        hi = max(float(cfg.f_x_max), lo * 1.0001)
+        return np.geomspace(lo, hi, n_steps)
 
     def _sync_grid_definition_from_precision_config(self):
         cfg = self.config
@@ -502,6 +531,325 @@ class TwinEngine:
         estimates[valid] = np.clip(refined, self.grid_tau_axis[0], self.grid_tau_axis[-1])
         return estimates
 
+    def plan_validation_image_geometry(self, n_values: Optional[int] = None,
+                                       target_repeats: Optional[int] = None) -> Dict[str, int]:
+        n_values = max(int(n_values if n_values is not None else self.config.f_x_steps), 1)
+        target_repeats = max(int(target_repeats if target_repeats is not None else self.config.image_mc_repeats), 1)
+        total_pixels = n_values * target_repeats
+        side = max(int(np.ceil(np.sqrt(total_pixels))), 1)
+        band_width = max(int(np.ceil(side / n_values)), 1)
+        x_pixels = max(n_values * band_width, n_values)
+        y_pixels = max(int(np.ceil(total_pixels / x_pixels)), 1)
+        if y_pixels > 10:
+            y_pixels = int(np.ceil(y_pixels / 10.0) * 10)
+        return {
+            "n_values": n_values,
+            "target_repeats": target_repeats,
+            "total_pixels": total_pixels,
+            "square_side": side,
+            "band_width": band_width,
+            "x_pixels": x_pixels,
+            "y_pixels": y_pixels,
+            "replicates_per_value": band_width * y_pixels,
+        }
+
+    def _effective_lifetime_ns(self) -> float:
+        cfg = self.config
+        if str(cfg.decay_model).lower() == "exponential":
+            n_components = max(int(getattr(cfg, "n_components", 1)), 1)
+            taus = np.asarray(getattr(cfg, "taus", [])[:n_components], dtype=float)
+            amps = np.asarray(getattr(cfg, "amplitudes", [])[:len(taus)], dtype=float)
+            if taus.size == 0:
+                return np.nan
+            amp_sum = float(np.sum(np.maximum(amps, 0.0)))
+            if amp_sum <= 0:
+                return float(taus[0])
+            return float(np.sum(np.maximum(amps, 0.0) * taus) / amp_sum)
+        return float(self.config.taus[0] if self.config.taus else np.nan)
+
+    def generate_validation_image(self, n_photons: Optional[int] = None,
+                                  target_repeats: Optional[int] = None,
+                                  progress_callback: Optional[Callable[[int, int], None]] = None) -> Dict[str, Any]:
+        cfg = self.config
+        self.distill_gates()
+        x_values = self.build_precision_x_range()
+        geometry = self.plan_validation_image_geometry(len(x_values), target_repeats)
+        n_y = geometry["y_pixels"]
+        n_x = geometry["x_pixels"]
+        band_width = geometry["band_width"]
+        n_gates = max(len(cfg.gate_edges) - 1, 1)
+        photon_budget = int(max(n_photons if n_photons is not None else cfg.a_photons, 1))
+
+        self.raw_data = np.zeros((n_y, n_x, n_gates), dtype=float)
+        self.validation_param_map = np.zeros((n_y, n_x), dtype=float)
+        self.validation_truth_map = np.zeros((n_y, n_x), dtype=float)
+        band_index_map = np.zeros((n_y, n_x), dtype=int)
+
+        original_value = self._get_cfg_param(cfg.f_x_param)
+        irf_cached = self.dt_excitation(self.time_vector)
+        irf_sum = np.sum(irf_cached)
+        if irf_sum > 0:
+            irf_cached = irf_cached / irf_sum
+
+        try:
+            for idx, x_val in enumerate(x_values):
+                self._set_cfg_param(cfg.f_x_param, float(x_val))
+                probs = self._gate_probabilities_for_current_config(self.time_vector, irf_cached=irf_cached)
+                lam = np.clip(photon_budget * probs, 0.0, None)
+                x_start = idx * band_width
+                x_end = min(x_start + band_width, n_x)
+                self.raw_data[:, x_start:x_end, :] = np.random.poisson(lam, size=(n_y, x_end - x_start, n_gates))
+                self.validation_param_map[:, x_start:x_end] = float(x_val)
+                self.validation_truth_map[:, x_start:x_end] = self._effective_lifetime_ns()
+                band_index_map[:, x_start:x_end] = idx
+                if progress_callback is not None:
+                    progress_callback(idx + 1, len(x_values))
+        finally:
+            self._set_cfg_param(cfg.f_x_param, original_value)
+
+        self.last_analysis_warnings = []
+        if not self._can_use_phasorpy():
+            self.last_analysis_warnings.append("PhasorPy is not installed; using internal phasor fallback.")
+        if not self._can_use_flimfit():
+            self.last_analysis_warnings.append("FLIMfit / FLIMLib is not installed; using the built-in fitting fallback.")
+
+        self.validation_metadata = {
+            "mode": "image_validation",
+            "x_param": str(cfg.f_x_param),
+            "x_values": np.asarray(x_values, dtype=float).tolist(),
+            "x_label": str(cfg.f_x_param),
+            "fit_method": str(getattr(cfg, "image_fit_method", "gridded_mle")),
+            "average_photons": photon_budget,
+            "geometry": geometry,
+            "band_index_map": band_index_map.tolist(),
+            "analysis_backends": {
+                "phasor": "PhasorPy" if self._can_use_phasorpy() else "internal fallback",
+                "fit": "FLIMfit / FLIMLib" if self._can_use_flimfit() else "internal fallback",
+            },
+        }
+        return {
+            "raw_data_shape": list(self.raw_data.shape),
+            "x_values": np.asarray(x_values, dtype=float),
+            "geometry": geometry,
+        }
+
+    def _fit_param_gridded(self, obs: np.ndarray) -> float:
+        return float(self.estimate_tau_batch(np.asarray(obs, dtype=float).reshape(1, -1))[0])
+
+    def _fit_param_tail(self, obs: np.ndarray) -> float:
+        if str(self.config.f_x_param) not in {"tau1", "tau2"}:
+            return self._fit_param_gridded(obs)
+        centers = 0.5 * (np.asarray(self.config.gate_edges[:-1], dtype=float) + np.asarray(self.config.gate_edges[1:], dtype=float))
+        obs = np.asarray(obs, dtype=float)
+        mask = obs > 0
+        if np.count_nonzero(mask) < 2:
+            return np.nan
+        valid_idx = np.flatnonzero(mask)
+        tail_start = valid_idx[max(len(valid_idx) // 2, 0)]
+        tail_mask = mask & (np.arange(mask.size) >= tail_start)
+        if np.count_nonzero(tail_mask) < 2:
+            tail_mask = mask
+        coeff = np.polyfit(centers[tail_mask], np.log(np.maximum(obs[tail_mask], 1e-12)), 1)
+        slope = float(coeff[0])
+        if slope >= 0:
+            return np.nan
+        return float(-1.0 / slope)
+
+    def _fit_param_mle(self, obs: np.ndarray) -> float:
+        target = str(self.config.f_x_param)
+        current_value = float(self._get_cfg_param(target))
+        lower, upper = self._get_cfg_param_bounds(target)
+        if lower is None:
+            lower = max(current_value * 0.1, 1e-6)
+        if upper is None:
+            upper = max(current_value * 10.0, lower * 1.001)
+        if upper <= lower:
+            return np.nan
+
+        total = float(np.sum(obs))
+        irf_cached = self.dt_excitation(self.time_vector)
+        irf_sum = np.sum(irf_cached)
+        if irf_sum > 0:
+            irf_cached = irf_cached / irf_sum
+
+        def objective(param_value: float) -> float:
+            self._set_cfg_param(target, float(param_value))
+            probs = self._gate_probabilities_for_current_config(self.time_vector, irf_cached=irf_cached)
+            lam = np.maximum(total * probs, 1e-12)
+            return float(np.sum(lam - (np.asarray(obs, dtype=float) * np.log(lam))))
+
+        try:
+            result = minimize_scalar(objective, bounds=(float(lower), float(upper)), method="bounded")
+            return float(result.x) if result.success else np.nan
+        finally:
+            self._set_cfg_param(target, current_value)
+
+    def predict_gate_counts(self, param_value: float, total_counts: float) -> np.ndarray:
+        target = str(self.config.f_x_param)
+        current_value = self._get_cfg_param(target)
+        irf_cached = self.dt_excitation(self.time_vector)
+        irf_sum = np.sum(irf_cached)
+        if irf_sum > 0:
+            irf_cached = irf_cached / irf_sum
+        try:
+            self._set_cfg_param(target, float(param_value))
+            probs = self._gate_probabilities_for_current_config(self.time_vector, irf_cached=irf_cached)
+            return np.asarray(probs, dtype=float) * float(total_counts)
+        finally:
+            self._set_cfg_param(target, current_value)
+
+    def _reduced_chi2(self, obs: np.ndarray, pred: np.ndarray, n_params: int = 1) -> float:
+        obs = np.asarray(obs, dtype=float)
+        pred = np.maximum(np.asarray(pred, dtype=float), 1e-12)
+        dof = max(obs.size - n_params, 1)
+        return float(np.sum(((obs - pred) ** 2) / pred) / dof)
+
+    def _runs_test(self, residuals: np.ndarray) -> Dict[str, float]:
+        residuals = np.asarray(residuals, dtype=float)
+        signs = np.sign(residuals[np.abs(residuals) > 1e-12])
+        if signs.size < 2:
+            return {"z_score": 0.0, "approx_p_value": 1.0}
+        runs = 1 + np.sum(signs[1:] != signs[:-1])
+        n_pos = np.count_nonzero(signs > 0)
+        n_neg = np.count_nonzero(signs < 0)
+        if n_pos == 0 or n_neg == 0:
+            return {"z_score": 0.0, "approx_p_value": 1.0}
+        mean_runs = (2.0 * n_pos * n_neg) / (n_pos + n_neg) + 1.0
+        var_runs = (
+            2.0 * n_pos * n_neg * (2.0 * n_pos * n_neg - n_pos - n_neg)
+            / (((n_pos + n_neg) ** 2) * max(n_pos + n_neg - 1, 1))
+        )
+        if var_runs <= 0:
+            return {"z_score": 0.0, "approx_p_value": 1.0}
+        z_score = float((runs - mean_runs) / np.sqrt(var_runs))
+        return {"z_score": z_score, "approx_p_value": float(erfc(abs(z_score) / np.sqrt(2.0)))}
+
+    def get_pixel_fit_payload(self, y: int, x: int, fit_method: Optional[str] = None) -> Dict[str, Any]:
+        if self.raw_data is None:
+            return {"status": "no_data"}
+        obs = np.asarray(self.raw_data[y, x, :], dtype=float)
+        method = str(fit_method or getattr(self.config, "image_fit_method", "gridded_mle")).lower()
+        if method == "mle":
+            estimate = self._fit_param_mle(obs)
+        elif method == "tail":
+            estimate = self._fit_param_tail(obs)
+        else:
+            estimate = self._fit_param_gridded(obs)
+
+        pred = None if not np.isfinite(estimate) else self.predict_gate_counts(float(estimate), float(np.sum(obs)))
+        residuals = None if pred is None else (obs - pred)
+        centers = 0.5 * (np.asarray(self.config.gate_edges[:-1], dtype=float) + np.asarray(self.config.gate_edges[1:], dtype=float))
+        irf = self.dt_excitation(self.time_vector)
+        irf_gate = self.gate_shapes @ (irf / max(np.sum(irf), 1e-12))
+        if np.sum(irf_gate) > 0:
+            irf_gate = irf_gate / np.sum(irf_gate) * max(float(np.max(obs)), 1.0)
+        return {
+            "status": "ok",
+            "estimate": None if not np.isfinite(estimate) else float(estimate),
+            "centers": centers.tolist(),
+            "counts": obs.tolist(),
+            "fit": None if pred is None else pred.tolist(),
+            "residuals": None if residuals is None else residuals.tolist(),
+            "reduced_chi2": None if pred is None else self._reduced_chi2(obs, pred),
+            "randomness": self._runs_test(residuals) if residuals is not None else {"z_score": 0.0, "approx_p_value": 1.0},
+            "irf_gate": irf_gate.tolist(),
+            "fit_method": method,
+            "truth": None if self.validation_param_map is None else float(self.validation_param_map[y, x]),
+        }
+
+    def _can_use_phasorpy(self) -> bool:
+        try:
+            import phasorpy.phasor  # noqa: F401
+            return True
+        except Exception:
+            return False
+
+    def _can_use_flimfit(self) -> bool:
+        for module_name in ("flimlib", "flim_fit", "flimfit"):
+            try:
+                __import__(module_name)
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _phasor_from_signal_fallback(self, data: np.ndarray, harmonic: int = 1) -> Tuple[np.ndarray, np.ndarray]:
+        edges = np.asarray(self.config.gate_edges, dtype=float)
+        widths = np.diff(edges)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        phase = 2.0 * np.pi * harmonic * centers / max(float(self.config.period), 1e-12)
+        exp_term = np.exp(-1j * phase)
+        totals = np.sum(data, axis=-1)
+        z = np.sum(np.asarray(data, dtype=float) * exp_term, axis=-1)
+        z = np.where(totals > 0, z / np.maximum(totals, 1e-12), np.nan + 1j * np.nan)
+
+        irf = self.dt_excitation(self.time_vector)
+        irf = irf / max(np.sum(irf), 1e-12)
+        irf_gate = self._statistical_gate_profiles(self.gate_shapes) @ irf
+        irf_total = float(np.sum(irf_gate))
+        if irf_total > 0:
+            z_irf = np.sum(irf_gate * exp_term) / irf_total
+            if abs(z_irf) > 1e-12:
+                z = z / z_irf
+
+        if (not self._can_use_phasorpy()) or not np.allclose(widths, widths[0], rtol=1e-4, atol=1e-8):
+            warning = "Using internal phasor fallback for unavailable PhasorPy or uneven gates."
+            if warning not in self.last_analysis_warnings:
+                self.last_analysis_warnings.append(warning)
+
+        return np.real(z), -np.imag(z)
+
+    def _phasor_from_validation_model(self, harmonic: int = 1) -> Tuple[np.ndarray, np.ndarray]:
+        if self.time_vector is None or not self._can_use_phasorpy():
+            return None, None
+
+        import phasorpy.phasor as pp
+
+        lifetime_map = None
+        if self.tau_map is not None and np.any(np.isfinite(self.tau_map)):
+            lifetime_map = np.asarray(self.tau_map, dtype=float)
+        elif self.validation_truth_map is not None and np.any(np.isfinite(self.validation_truth_map)):
+            lifetime_map = np.asarray(self.validation_truth_map, dtype=float)
+        elif self.validation_param_map is not None and str(self.config.f_x_param) in {"tau1", "tau2"}:
+            lifetime_map = np.asarray(self.validation_param_map, dtype=float)
+        if lifetime_map is None:
+            return None, None
+
+        finite_mask = np.isfinite(lifetime_map)
+        if not np.any(finite_mask):
+            return None, None
+
+        t = np.asarray(self.time_vector, dtype=float)
+        irf = self.dt_excitation(t)
+        irf = irf / max(np.sum(irf), 1e-12)
+        _, irf_g, irf_s = pp.phasor_from_signal(irf, harmonic=harmonic, axis=-1)
+
+        g_map = np.full(lifetime_map.shape, np.nan, dtype=float)
+        s_map = np.full(lifetime_map.shape, np.nan, dtype=float)
+        rounded_map = np.full(lifetime_map.shape, np.nan, dtype=float)
+        rounded_map[finite_mask] = np.round(lifetime_map[finite_mask], 3)
+
+        original_taus = list(getattr(self.config, "taus", []))
+        try:
+            for rounded_tau in np.unique(rounded_map[finite_mask]):
+                pixel_mask = rounded_map == rounded_tau
+                tau_value = float(np.nanmedian(lifetime_map[pixel_mask]))
+                if tau_value <= 0.0:
+                    continue
+                if not getattr(self.config, "taus", None):
+                    self.config.taus = [tau_value]
+                else:
+                    self.config.taus[0] = tau_value
+                decay = np.asarray(self.dt_pdf(t, irf=irf), dtype=float)
+                _, g_val, s_val = pp.phasor_from_signal(decay, harmonic=harmonic, axis=-1)
+                g_cal, s_cal = pp.phasor_divide(g_val, s_val, irf_g, irf_s)
+                g_map[pixel_mask] = float(np.asarray(g_cal, dtype=float).reshape(-1)[0])
+                s_map[pixel_mask] = float(np.asarray(s_cal, dtype=float).reshape(-1)[0])
+        finally:
+            self.config.taus = original_taus
+
+        return g_map, s_map
+
     def simulate_gate_histograms(self, tau: Optional[float], n_photons: int, n_repeats: int,
                                  irf_cached: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -551,10 +899,13 @@ class TwinEngine:
         n_detections = np.sum(gate_hist_all, axis=1)
         return gate_hist_all, n_detections
 
-    def run_fit(self, data: Optional[np.ndarray] = None, method: str = "gridded_mle"):
+    def run_fit(self, data: Optional[np.ndarray] = None, method: str = "gridded_mle",
+                progress_callback: Optional[Callable[[int, int], None]] = None):
         """Main fitting loop. Performance optimized for large images."""
         if data is None:
             data = self.raw_data
+        if data is None:
+            return
             
         nY, nX, nGates = data.shape
         self.tau_map = np.full((nY, nX), np.nan)
@@ -568,6 +919,11 @@ class TwinEngine:
         
         if len(valid_idx) == 0: return
 
+        method = str(method).lower()
+
+        total_valid = len(valid_idx)
+        processed = 0
+
         if method == "gridded_mle":
             self.ensure_grid_current()
             log_templates = np.log(np.maximum(self.grid_templates, 1e-300))
@@ -579,16 +935,33 @@ class TwinEngine:
                 log_likelihood = obs_norm @ log_templates.T
                 best_idx = np.argmax(log_likelihood)
                 tau_est = self.grid_tau_axis[best_idx]
+                pred = self.predict_gate_counts(float(tau_est), float(total_counts[idx]))
                 
                 y_coord, x_coord = divmod(idx, nX)
                 self.tau_map[y_coord, x_coord] = tau_est
                 self.a_map[y_coord, x_coord] = total_counts[idx]
                 self.b_map[y_coord, x_coord] = 0.0
-                self.chi2_map[y_coord, x_coord] = -log_likelihood[best_idx]
-        
-        elif method == "tail":
-            # ... existing tail fit ...
-            pass
+                self.chi2_map[y_coord, x_coord] = self._reduced_chi2(obs, pred)
+                processed += 1
+                if progress_callback is not None and (processed == total_valid or processed % 100 == 0):
+                    progress_callback(processed, total_valid)
+
+        elif method in {"mle", "tail"}:
+            fit_fn = self._fit_param_mle if method == "mle" else self._fit_param_tail
+            for idx in valid_idx:
+                obs = flat_data[idx].astype(float)
+                estimate = fit_fn(obs)
+                y_coord, x_coord = divmod(idx, nX)
+                if not np.isfinite(estimate):
+                    continue
+                pred = self.predict_gate_counts(float(estimate), float(total_counts[idx]))
+                self.tau_map[y_coord, x_coord] = float(estimate)
+                self.a_map[y_coord, x_coord] = total_counts[idx]
+                self.b_map[y_coord, x_coord] = 0.0
+                self.chi2_map[y_coord, x_coord] = self._reduced_chi2(obs, pred)
+                processed += 1
+                if progress_callback is not None and (processed == total_valid or processed % 50 == 0):
+                    progress_callback(processed, total_valid)
 
     def get_roi_mask(self, g_min: float, g_max: float, s_min: float, s_max: float) -> np.ndarray:
         """Returns a boolean mask for pixels within the specified phasor ROI."""
@@ -602,45 +975,56 @@ class TwinEngine:
         """
         Calculates G and S phasor coordinates using PhasorPy.
         """
-        import phasorpy.phasor as pp
-        
+        model_g, model_s = self._phasor_from_validation_model(harmonic=harmonic)
+        if model_g is not None and model_s is not None:
+            return model_g, model_s
+
         if data is None:
             data = self.raw_data
         if data is None:
             return None, None
-            
-        nY, nX, nGates = data.shape
-        # Repetition period T (ns)
-        T = self.config.period if self.config.period > 0 else 12.5
-        frequency = 1e9 / T # Frequency in Hz
-        
-        # Calculate phasor from signal using PhasorPy
-        # signal: array_like, (..., n_samples)
-        # We need to ensure the gating axis is the last one
-        g, s, _ = pp.phasor_from_signal(data, harmonic=harmonic, axis=-1)
-        
-        # Note: PhasorPy calculates centered phasor by DFT.
-        # If we need absolute phase alignment (e.g. to peak), we could use phasor_calibrate
-        # but for simulation parity, raw DFT on the gated histogram is standard.
-        
-        return g, s
+
+        edges = np.asarray(self.config.gate_edges, dtype=float)
+        even_sampling = len(edges) >= 3 and np.allclose(np.diff(edges), np.diff(edges)[0], rtol=1e-4, atol=1e-8)
+
+        if self._can_use_phasorpy() and even_sampling:
+            import phasorpy.phasor as pp
+
+            _, g, s = pp.phasor_from_signal(np.asarray(data, dtype=float), harmonic=harmonic, axis=-1)
+            irf = self.dt_excitation(self.time_vector)
+            irf = irf / max(np.sum(irf), 1e-12)
+            irf_gate = self._statistical_gate_profiles(self.gate_shapes) @ irf
+            _, irf_g, irf_s = pp.phasor_from_signal(np.asarray(irf_gate, dtype=float), harmonic=harmonic, axis=-1)
+            z_irf = complex(float(np.asarray(irf_g).reshape(-1)[0]), float(np.asarray(irf_s).reshape(-1)[0]))
+            if abs(z_irf) > 1e-12:
+                z = (np.asarray(g, dtype=float) + 1j * np.asarray(s, dtype=float)) / z_irf
+                return np.real(z), np.imag(z)
+            return np.asarray(g, dtype=float), np.asarray(s, dtype=float)
+
+        return self._phasor_from_signal_fallback(np.asarray(data, dtype=float), harmonic=harmonic)
 
     def get_theoretical_locus(self, tau_range: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
         """
         Calculates the theoretical G and S coordinates using PhasorPy.
         """
-        import phasorpy.phasor as pp
-        
         if tau_range is None:
-            tau_range = np.logspace(np.log10(0.05e-9), np.log10(50e-9), 100) # In seconds for PhasorPy
-        else:
-            tau_range = tau_range * 1e-9 # Convert ns to s for PhasorPy
-            
-        T = self.config.period if self.config.period > 0 else 12.5
-        frequency = 1e9 / T
-        
-        g, s = pp.phasor_from_lifetime(frequency, tau_range)
-        
+            tau_range = np.logspace(np.log10(0.05), np.log10(50.0), 100)
+        tau_range = np.asarray(tau_range, dtype=float)
+
+        if self._can_use_phasorpy():
+            try:
+                import phasorpy.phasor as pp
+
+                frequency_mhz = 1000.0 / max(float(self.config.period), 1e-12)
+                g, s = pp.phasor_from_lifetime(frequency_mhz, tau_range)
+                return np.asarray(g, dtype=float), np.asarray(s, dtype=float)
+            except Exception:
+                pass
+
+        omega = 2.0 * np.pi / max(float(self.config.period), 1e-12)
+        omega_tau = omega * tau_range
+        g = 1.0 / (1.0 + np.square(omega_tau))
+        s = omega_tau / (1.0 + np.square(omega_tau))
         return g, s
 
     def dt_excitation(self, t: np.ndarray) -> np.ndarray:
@@ -2077,7 +2461,17 @@ class TwinEngine:
             dt = max(float(getattr(cfg_local, "dt_input", 0.01)), 0.005)
             t = np.arange(0.0, max(float(cfg_local.period), float(cfg_local.irf_position + max(cfg_local.irf_fwhm, dt)) + dt), dt)
             excitation = self.dt_excitation(t)
-            area = float(np.trapz(excitation, t)) if len(t) > 1 else float(np.sum(excitation) * dt)
+            if len(t) > 1:
+                # NumPy 2.x exposes trapezoidal integration as `trapezoid`.
+                integrate_trapezoid = getattr(np, "trapezoid", None)
+                if integrate_trapezoid is None:
+                    integrate_trapezoid = getattr(np, "trapz", None)
+                if integrate_trapezoid is not None:
+                    area = float(integrate_trapezoid(excitation, t))
+                else:
+                    area = float(np.sum((excitation[1:] + excitation[:-1]) * 0.5 * np.diff(t)))
+            else:
+                area = float(np.sum(excitation) * dt)
             peak = float(np.max(excitation)) if excitation.size else 0.0
             return max(area, 1e-12), max(peak, 1e-12)
         finally:

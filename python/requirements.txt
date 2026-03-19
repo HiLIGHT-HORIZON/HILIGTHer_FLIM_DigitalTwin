@@ -6,6 +6,8 @@ fastapi
 uvicorn
 numba
 h5py
+phasorpy
+flimlib
 matplotlib
 pandas
 sdtfile

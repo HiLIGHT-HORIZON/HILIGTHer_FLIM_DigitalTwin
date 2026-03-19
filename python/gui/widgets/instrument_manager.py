@@ -1,199 +1,148 @@
-import os
-import json
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QListWidget, 
-                             QPushButton, QInputDialog, QMessageBox, QFileDialog, QLabel)
-from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QDialog,
+    QVBoxLayout,
+    QHBoxLayout,
+    QListWidget,
+    QPushButton,
+    QInputDialog,
+    QMessageBox,
+    QFileDialog,
+    QLabel,
+)
+
+from backend.profile_store import InstrumentProfileStore
+
 
 class InstrumentManager(QDialog):
-    """
-    Python port of InstrumentManager.m
-    Handles loading, saving, and applying instrument profiles.
-    """
+    """Versioned instrument-profile manager."""
+
     def __init__(self, parent=None, config=None):
         super().__init__(parent)
         self.setWindowTitle("Instrument Profile Manager")
-        self.resize(500, 450)
+        self.resize(640, 500)
         self.config = config
-        
-        # Primary path for new profiles
-        self.profiles_dir = os.path.join(os.path.dirname(__file__), "..", "..", "profiles", "instruments")
-        if not os.path.exists(self.profiles_dir):
-            os.makedirs(self.profiles_dir)
-            
-        # Legacy path from MATLAB workspace
-        self.legacy_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "AppProperties", "instruments")
-            
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("<b>Available Instrument Profiles</b>"))
-        
-        # List of profiles
-        self.list_widget = QListWidget()
-        self.refresh_list()
-        layout.addWidget(self.list_widget)
-        
-        # Actions
-        btn_layout = QHBoxLayout()
-        
-        btn_new = QPushButton("🆕 Save Current...")
-        btn_new.clicked.connect(self.save_current_as)
-        btn_layout.addWidget(btn_new)
-        
-        btn_apply = QPushButton("⚡ Apply Selected")
-        btn_apply.setStyleSheet("background-color: #1e3a8a; color: white; font-weight: bold;")
-        btn_apply.clicked.connect(self.apply_selected)
-        btn_layout.addWidget(btn_apply)
-        
-        btn_delete = QPushButton("🗑️ Delete")
-        btn_delete.clicked.connect(self.delete_selected)
-        btn_layout.addWidget(btn_delete)
-        
-        layout.addLayout(btn_layout)
-        
-        # Close button
-        btn_close = QPushButton("Close")
-        btn_close.clicked.connect(self.close)
-        layout.addWidget(btn_close)
+        self.store = InstrumentProfileStore()
+        self.store.ensure_default_profiles()
 
-        self.profile_paths = {} # name -> full_path
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("<b>Instrument Profiles</b>"))
+
+        self.list_widget = QListWidget()
+        layout.addWidget(self.list_widget)
+
+        row1 = QHBoxLayout()
+        self.btn_save = QPushButton("Save Current...")
+        self.btn_save.clicked.connect(self.save_current_as)
+        row1.addWidget(self.btn_save)
+        self.btn_apply = QPushButton("Apply Selected")
+        self.btn_apply.setStyleSheet("background-color: #1e3a8a; color: white; font-weight: bold;")
+        self.btn_apply.clicked.connect(self.apply_selected)
+        row1.addWidget(self.btn_apply)
+        self.btn_rename = QPushButton("Rename")
+        self.btn_rename.clicked.connect(self.rename_selected)
+        row1.addWidget(self.btn_rename)
+        self.btn_delete = QPushButton("Delete")
+        self.btn_delete.clicked.connect(self.delete_selected)
+        row1.addWidget(self.btn_delete)
+        layout.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        self.btn_import = QPushButton("Import...")
+        self.btn_import.clicked.connect(self.import_profile)
+        row2.addWidget(self.btn_import)
+        self.btn_export = QPushButton("Export...")
+        self.btn_export.clicked.connect(self.export_selected)
+        row2.addWidget(self.btn_export)
+        self.btn_refresh = QPushButton("Refresh")
+        self.btn_refresh.clicked.connect(self.refresh_list)
+        row2.addWidget(self.btn_refresh)
+        row2.addStretch()
+        layout.addLayout(row2)
+
+        self.btn_close = QPushButton("Close")
+        self.btn_close.clicked.connect(self.close)
+        layout.addWidget(self.btn_close)
+
+        self.refresh_list()
 
     def refresh_list(self):
         self.list_widget.clear()
-        self.profile_paths = {}
-        
-        # 1. Search Legacy
-        if os.path.exists(self.legacy_dir):
-            for f in os.listdir(self.legacy_dir):
-                if f.endswith(".json"):
-                    name = f.replace(".json", "") + " (Legacy)"
-                    self.list_widget.addItem(name)
-                    self.profile_paths[name] = os.path.join(self.legacy_dir, f)
-                    
-        # 2. Search Local
-        if os.path.exists(self.profiles_dir):
-            for f in os.listdir(self.profiles_dir):
-                if f.endswith(".json"):
-                    name = f.replace(".json", "")
-                    self.list_widget.addItem(name)
-                    self.profile_paths[name] = os.path.join(self.profiles_dir, f)
+        for profile in self.store.list_profiles():
+            label = profile["name"]
+            if profile.get("description"):
+                label = f"{label} — {profile['description']}"
+            self.list_widget.addItem(label)
 
-    def _translate_legacy(self, legacy_data):
-        """Maps MATLAB JSON fields to PhysicsConfig fields."""
-        mapping = {
-            "T": "period",
-            "fwhm": "irf_fwhm",
-            "profile": "irf_profile",
-            "toff": "period",
-            "rise_time": "irf_rise_time",
-            "fall_time": "irf_fall_time",
-            "bPulseTrain": "b_decay_wrapping",
-            "PT_Trep": "period",
-            "PT_sigma": "burst_sub_fwhm",
-            "r": "expansion_ratio",
-            "gates": "gate_edges",
-            "N_photons": "a_photons",
-            "M": "n_repeats",
-            "dt": "dt_input",
-            "gate_widths": "gate_widths",
-            "dt_override": "dt_override",
-            "jitter": "timing_jitter",
-            "deadtime": "detector_deadtime",
-            "name": "label"
-        }
-        
-        new_data = {}
-        for legacy_key, val in legacy_data.items():
-            if legacy_key in mapping:
-                new_key = mapping[legacy_key]
-                # Type/Value fixes
-                if new_key == "irf_profile" and isinstance(val, str):
-                    val = val.lower()
-                if legacy_key == "gate_type" and isinstance(val, str):
-                    if "Custom" in val: new_data["gate_type"] = "custom"
-                    elif "Equal" in val: new_data["gate_type"] = "equal"
-                    continue
-                new_data[new_key] = val
-            
-            # Special case for dt -> dt_override
-            if legacy_key == "dt" and "dt_override" not in new_data:
-                new_data["dt_override"] = val
-                
-        return new_data
+    def _selected_profile_name(self):
+        item = self.list_widget.currentItem()
+        if item is None:
+            return None
+        return item.text().split(" — ", 1)[0]
 
     def save_current_as(self):
-        if not self.config: return
-        
+        if self.config is None:
+            return
         name, ok = QInputDialog.getText(self, "Save Profile", "Enter instrument name:")
-        if ok and name:
-            safe_name = "".join([c for c in name if c.isalnum() or c in (' ', '.', '_', '-')]).strip()
-            filename = f"{safe_name}.json"
-            filepath = os.path.join(self.profiles_dir, filename)
-            
-            try:
-                data = self.config.dict()
-                with open(filepath, 'w') as f:
-                    json.dump(data, f, indent=4)
-                self.refresh_list()
-                QMessageBox.information(self, "Success", f"Profile '{name}' saved.")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Could not save profile: {str(e)}")
+        if not ok or not name.strip():
+            return
+        self.store.save_profile(name.strip(), self.config, description="Saved from desktop workspace")
+        self.refresh_list()
+        QMessageBox.information(self, "Saved", f"Profile '{name.strip()}' saved.")
 
     def apply_selected(self):
-        selected = self.list_widget.currentItem()
-        if not selected:
+        name = self._selected_profile_name()
+        if not name:
             QMessageBox.warning(self, "Warning", "Please select a profile first.")
             return
-        
-        name = selected.text()
-        filepath = self.profile_paths.get(name)
-        if not filepath: return
-        
-        try:
-            with open(filepath, 'r') as f:
-                data = json.load(f)
-            
-            # If legacy, translate first
-            if "(Legacy)" in name:
-                data = self._translate_legacy(data)
-            
-            # Update parent config
-            for key, val in data.items():
-                if hasattr(self.config, key):
-                    setattr(self.config, key, val)
-            
-            # Ensure Gate Consistency
-            # If gate_widths was updated but not gate_edges, or vice-versa
-            if "gate_widths" in data and "gate_edges" not in data:
-                import numpy as np
-                edges = [0.0]
-                for w in data["gate_widths"]: edges.append(edges[-1] + w)
-                self.config.gate_edges = edges
-            elif "gate_edges" in data and "gate_widths" not in data:
-                import numpy as np
-                self.config.gate_widths = np.diff(data["gate_edges"]).tolist()
+        loaded = self.store.load_profile(name)
+        if self.config is not None:
+            cfg = loaded["config"]
+            for key, value in (cfg.model_dump() if hasattr(cfg, "model_dump") else cfg.dict()).items():
+                setattr(self.config, key, value)
+            self.config.active_instrument_profile = name
+        QMessageBox.information(self, "Applied", f"Profile '{name}' applied.")
+        self.accept()
 
-            QMessageBox.information(self, "Success", f"Profile '{name}' applied.")
-            self.accept()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not load profile: {str(e)}")
+    def rename_selected(self):
+        name = self._selected_profile_name()
+        if not name:
+            QMessageBox.warning(self, "Warning", "Please select a profile first.")
+            return
+        new_name, ok = QInputDialog.getText(self, "Rename Profile", "New profile name:", text=name)
+        if not ok or not new_name.strip():
+            return
+        self.store.rename_profile(name, new_name.strip())
+        self.refresh_list()
 
     def delete_selected(self):
-        selected = self.list_widget.currentItem()
-        if not selected: return
-        
-        name = selected.text()
-        if "(Legacy)" in name:
-            QMessageBox.warning(self, "Protected", "Legacy profiles in AppProperties cannot be deleted from here.")
+        name = self._selected_profile_name()
+        if not name:
             return
-            
-        filepath = self.profile_paths.get(name)
-        if not filepath: return
-        
-        reply = QMessageBox.question(self, "Confirm Delete", f"Delete profile '{name}'?",
-                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            try:
-                os.remove(filepath)
-                self.refresh_list()
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Could not delete file: {str(e)}")
+        reply = QMessageBox.question(
+            self,
+            "Delete Profile",
+            f"Delete profile '{name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self.store.delete_profile(name)
+        self.refresh_list()
+
+    def import_profile(self):
+        source_path, _ = QFileDialog.getOpenFileName(self, "Import Profile", "", "JSON Files (*.json)")
+        if not source_path:
+            return
+        self.store.import_profile(source_path)
+        self.refresh_list()
+
+    def export_selected(self):
+        name = self._selected_profile_name()
+        if not name:
+            QMessageBox.warning(self, "Warning", "Please select a profile first.")
+            return
+        destination_path, _ = QFileDialog.getSaveFileName(self, "Export Profile", f"{name}.json", "JSON Files (*.json)")
+        if not destination_path:
+            return
+        self.store.export_profile(name, destination_path)
+        QMessageBox.information(self, "Exported", f"Profile '{name}' exported.")

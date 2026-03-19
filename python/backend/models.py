@@ -121,6 +121,9 @@ class PhysicsConfig(BaseModel):
     
     # Simulation Logic for Images
     n_repeats: int = 1 
+    image_mc_repeats: int = 200
+    image_fit_method: str = "gridded_mle"  # gridded_mle, mle, tail
+    active_instrument_profile: Optional[str] = None
     dt_override: Optional[float] = None # Manual dt setting
     precision_validate_mc: bool = True
     precision_compute_ci: bool = False

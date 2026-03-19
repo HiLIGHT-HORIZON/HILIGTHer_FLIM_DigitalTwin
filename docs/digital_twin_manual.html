@@ -124,7 +124,7 @@
       <div><h3>State Models</h3><p><span class="badge">Module</span><code>python/backend/models.py</code></p><p>Validated configuration and state objects shared across workflows, reports, APIs, and the desktop GUI.</p></div>
       <div><h3>Service Layer</h3><p><span class="badge">Module</span><code>python/backend/service_api.py</code></p><p>The main reusable orchestration surface for automation, HTTP, and MCP.</p></div>
       <div><h3>HTTP API</h3><p><span class="badge">Module</span><code>python/backend/main.py</code></p><p>Remote REST interface for workflows, configuration, data products, and diagnostics.</p></div>
-      <div><h3>Desktop Workspace</h3><p><span class="badge">Module</span><code>python/gui/main_window.py</code></p><p>Qt-based engineering workspace for precision, diagnostics, simulation, integrated optimisation mode, and report export.</p></div>
+      <div><h3>Desktop Workspace</h3><p><span class="badge">Module</span><code>python/gui/main_window.py</code></p><p>Qt-based engineering workspace for precision, diagnostics, image validation, integrated optimisation mode, workspace save/load, and report export.</p></div>
       <div><h3>Desktop Automation</h3><p><span class="badge">Module</span><code>python/gui/automation_api.py</code></p><p>In-process control surface for the live GUI.</p></div>
       <div><h3>MCP Server</h3><p><span class="badge">Module</span><code>python/mcp_server.py</code></p><p>Stdio MCP server exposing tools, resources, and prompts to LLM hosts.</p></div>
       <div><h3>HTML Export</h3><p><span class="badge">Module</span><code>python/gui/report_export.py</code></p><p>Generates an HTML report and a sibling asset folder with SVGs and CSVs.</p></div>
@@ -328,7 +328,7 @@ precision = service.run_precision({"precision_compute_ci": True})</pre>
       <tr><td><code>get_controller_state()</code></td><td>Read the current controller-backed configuration.</td></tr>
       <tr><td><code>set_controller_state(patch)</code></td><td>Patch controller state and refresh diagnostics.</td></tr>
       <tr><td><code>trigger_run()</code></td><td>Run the precision workflow.</td></tr>
-      <tr><td><code>trigger_test()</code></td><td>Run the synthetic image workflow.</td></tr>
+      <tr><td><code>trigger_test()</code></td><td>Run the validation-image workflow and prepare image, pixel, and phasor widgets.</td></tr>
       <tr><td><code>trigger_optimisation()</code></td><td>Start the integrated optimisation workflow from the desktop workspace.</td></tr>
       <tr><td><code>trigger_export_preview()</code></td><td>Open the latest report preview / Save As entry point.</td></tr>
       <tr><td><code>get_precision_plot()</code></td><td>Read ideal and per-series precision payloads, including compatibility masks and CI arrays.</td></tr>

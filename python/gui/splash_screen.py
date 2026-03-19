@@ -14,9 +14,16 @@ class HILIGHTSplashScreen(QSplashScreen):
     - Contributor extraction from git
     """
     def __init__(self, logo_path: str):
-        pixmap = QPixmap(logo_path).scaled(800, 800, Qt.AspectRatioMode.KeepAspectRatio)
-        super().__init__(pixmap)
+        base_pixmap = QPixmap(logo_path)
+        scaled = base_pixmap.scaled(800, 800, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        canvas = QPixmap(scaled.size())
+        canvas.fill(QColor("white"))
+        painter = QPainter(canvas)
+        painter.drawPixmap(0, 0, scaled)
+        painter.end()
+        super().__init__(canvas)
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         
         # Internal log buffer
         self.log_messages = ["Initializing HILIGHTer Engine..."]
@@ -69,19 +76,18 @@ class HILIGHTSplashScreen(QSplashScreen):
         
         w = self.width()
         h = self.height()
-        
-        # Transparent overlay for better readability
-        painter.fillRect(0, 0, w, h, QColor(0, 0, 0, 60))
+
+        log_rect = QRect(20, 20, w - 40, min(220, max(140, h // 3)))
 
         # 1. Logs (Top Left)
-        painter.setPen(QColor("#cbd5e1")) # Slate-300
+        painter.setPen(QColor("#0f172a"))
         painter.setFont(QFont("Consolas", 9))
         log_txt = "\n".join([f"> {m}" for m in self.log_messages])
-        painter.drawText(20, 30, w - 40, h - 300, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft, log_txt)
+        painter.drawText(log_rect, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft, log_txt)
 
         # 2. Credits (Bottom Right)
         # Funded by EU & UKRI
-        painter.setPen(QColor("#94a3b8")) # Slate-400
+        painter.setPen(QColor("#475569"))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         funding_rect = QRect(w - 450, h - 80, 430, 60)
         painter.drawText(funding_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom, 
@@ -94,12 +100,12 @@ class HILIGHTSplashScreen(QSplashScreen):
                          "Project created by Dr Alessandro Esposito")
 
         # 3. Contributors (Bottom Left)
-        painter.setPen(QColor("#f1f5f9")) # Slate-100
+        painter.setPen(QColor("#0f172a"))
         painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         painter.drawText(20, h - 140, 200, 25, Qt.AlignmentFlag.AlignLeft, "Contributors:")
         
         painter.setFont(QFont("Segoe UI", 9))
-        painter.setPen(QColor("#94a3b8")) # Slate-400
+        painter.setPen(QColor("#475569"))
         y_pos = h - 110
         for name, handle in self.contributors:
             handle_str = f" (@{handle})" if handle else ""

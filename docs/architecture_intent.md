@@ -10,6 +10,7 @@ The core product goals are:
 - Bootstrap-based estimator-accuracy testing and confidence intervals.
 - Rich virtual-instrument configuration across excitation, detection, gating, and acquisition parameters.
 - Synthetic image generation and testing workflows.
+- Validation-image workspaces with synthetic banded images driven by the same X-axis parameter used for precision sweeps.
 - Controller-driven optimisation integrated directly into the desktop workspace, with live objective history, retained intermediate states, optional post-run Monte Carlo validation, excitation-profile optimisation, Fisher-throughput selection, joint detection-plus-excitation workflows, and four selectable detection-gate strategies with Fisher Compression as the default.
 - API-first interoperability for other software and LLM agents through Python APIs, HTTP APIs, and MCP.
 - Exportable, publication-oriented HTML reports with SVG plot assets, CSV data assets, and theme-aware presentation.
@@ -49,11 +50,12 @@ Physics logic should live once in the backend engine and be reused by every inte
 
 | Layer | Main Module | Intent |
 | :--- | :--- | :--- |
-| Physics Engine | `python/backend/twin_engine.py` | Time-domain excitation, decay PDFs, gate distillation, Fisher estimation, gridded MLE, Monte Carlo workflows, bootstrap statistics, diagnostics, synthetic image generation. |
+| Physics Engine | `python/backend/twin_engine.py` | Time-domain excitation, decay PDFs, gate distillation, Fisher estimation, gridded MLE, Monte Carlo workflows, bootstrap statistics, diagnostics, synthetic image generation, validation-image sizing, pixel fitting payloads, and phasor fallback/calibration support. |
 | Shared State Models | `python/backend/models.py` | Validated configuration and state objects used across the backend and desktop. |
-| Service Layer | `python/backend/service_api.py` | Stable orchestration surface for workflows, data access, configuration changes, diagnostics, and sessions. |
+| Service Layer | `python/backend/service_api.py` | Stable orchestration surface for workflows, data access, configuration changes, diagnostics, validation-image fitting, and sessions. |
+| Profile Store | `python/backend/profile_store.py` | Versioned instrument-profile storage, migration, and import/export helpers. |
 | HTTP API | `python/backend/main.py` | Remote programmatic access to the shared service layer. |
-| Desktop Workspace | `python/gui/main_window.py` and widgets | Interactive engineering environment for precision, diagnostics, image simulation, integrated optimisation mode, and plot inspection. |
+| Desktop Workspace | `python/gui/main_window.py` and widgets | Interactive engineering environment for precision, diagnostics, validation-image testing, integrated optimisation mode, view presets, workspace save/load, and plot inspection. |
 | Desktop Automation | `python/gui/automation_api.py` | In-process control of the live desktop, including controller state, optimisation state, and plot payload access. |
 | MCP Server | `python/mcp_server.py` | Stdio MCP bridge exposing tools, resources, and prompts to LLM hosts. |
 | Documentation and Reports | `docs/` and HTML exporters | Human-readable manuals, parity reports, and precision-session outputs with SVG/CSV asset packages. |
@@ -70,6 +72,7 @@ Important state categories include:
 - precision execution settings such as photon budget, Monte Carlo repeats, bootstrap samples, CI level, and estimator-accuracy threshold,
 - plotting and reporting options used by the desktop workspace and exports, including light/dark theming and asset generation.
 - optimisation-execution options such as graphical real-time updates, retained intermediate states, and optional post-run Monte Carlo validation.
+- validation-image execution options such as photon budget, target repeats, fitting backend, and workspace persistence metadata.
 
 The GUI must synchronize to this model rather than holding independent hidden state.
 
@@ -148,10 +151,16 @@ The synthetic image workflow exists to test estimators and visualization paths o
 Expected outputs:
 
 - synthetic gated data,
+- parameter-band validation images derived from the active precision X-axis sweep,
 - fit maps,
 - phasor products,
 - pixel-level inspection payloads,
 - data summaries for software integration.
+
+The desktop workspace should expose two focused view presets:
+
+- simulation workspace: controller plus precision, accuracy, and diagnostics,
+- image validation workspace: controller plus image validation, pixel inspector, and phasor space.
 
 ## MCP and LLM Intent
 The MCP server is intended to let external LLM systems use the Digital Twin as a structured reasoning backend.
