@@ -63,7 +63,7 @@
 </head>
 <body>
     <h1>🔬 HILIGHTer Digital Twin Manual</h1>
-    <p>A comprehensive guide to modeling, simulating, and optimizing FLIM instrument architectures.</p>
+    <p>A comprehensive guide to modelling, simulating, and optimising FLIM instrument architectures.</p>
 
     <div class="card">
         <h2>1. System Architecture</h2>
@@ -87,7 +87,7 @@
 FIM_uv = N * sum( (dP_i/dTheta_u * dP_i/dTheta_v) / P_i )
 sigma_u = sqrt( inv(FIM)[u,u] )
         </pre>
-        <p><b>Numerical Method</b>: Detection probabilities $P_i$ are calculated by integrating the wrapped decay PDF with realistic <b>Sigmoid gate profiles</b>. The Jacobian $(\partial P / \partial \Theta)$ is estimated via central difference with $\epsilon=10^{-4}$.</p>
+        <p><b>Numerical Method</b>: Detection probabilities $P_i$ are calculated by integrating the wrapped decay PDF with realistic <b>Gaussian (Normal CDF) gate profiles</b>. The edge slopes are defined by the standard deviation ($\sigma$) of the transition. The Jacobian $(\partial P / \partial \Theta)$ is estimated via central difference with $\epsilon=10^{-4}$.</p>
     </div>
 
     <div class="card">
@@ -124,7 +124,7 @@ sigma_u = sqrt( inv(FIM)[u,u] )
         <table>
             <tr><th>Tab</th><th>Description</th></tr>
             <tr><td><b>Simulator</b></td><td>Configure photon counts, IRF, and simulation geometry.</td></tr>
-            <tr><td><b>Gating</b></td><td>Optimize time-gate edges using the SLSQP optimizer.</td></tr>
+            <tr><td><b>Gating</b></td><td>Optimise time-gate edges using the SLSQP optimiser.</td></tr>
             <tr><td><b>Decay Model</b></td><td>Set multi-exponential components or stretched (KWW) factors.</td></tr>
             <tr><td><b>Batch Sweep</b></td><td>Run instrument sensitivity sweeps (e.g., F-value vs Jitter).</td></tr>
         </table>

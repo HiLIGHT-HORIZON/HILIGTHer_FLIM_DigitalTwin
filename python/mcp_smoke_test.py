@@ -94,6 +94,7 @@ def main():
             "get_status",
             "get_config",
             "run_precision",
+            "run_optimisation",
             "get_results_snapshot",
             "get_tau_map",
             "get_phasor_map",
@@ -112,6 +113,7 @@ def main():
             "instrument-design",
             "data-inspection",
             "workspace-navigation",
+            "optimisation-loop",
         }
         missing_tools = sorted(required_tools.difference(tool_names))
         missing_resources = sorted(required_resources.difference(resource_names))

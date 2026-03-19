@@ -165,6 +165,104 @@ class DigitalTwinService:
         finally:
             self.engine.config = baseline
 
+    def run_optimization(self, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        params = params or {}
+        cfg = copy.deepcopy(self.engine.config)
+        if params:
+            cfg_dict = cfg.model_dump() if hasattr(cfg, "model_dump") else cfg.dict()
+            cfg_dict.update(params)
+            cfg = PhysicsConfig(**cfg_dict)
+
+        if not cfg.optimize_detection_gates:
+            if not cfg.optimize_excitation_profile:
+                return {"status": "invalid_request", "detail": "Enable at least one optimisation target to run optimisation."}
+
+        x_range = (
+            np.logspace(np.log10(cfg.f_x_min), np.log10(cfg.f_x_max), cfg.f_x_steps)
+            if cfg.f_x_scale == "log"
+            else np.linspace(cfg.f_x_min, cfg.f_x_max, cfg.f_x_steps)
+            if cfg.f_x_scale == "linear"
+            else np.geomspace(cfg.f_x_min, cfg.f_x_max, cfg.f_x_steps)
+        )
+
+        baseline = self.engine.config
+        self.engine.config = copy.deepcopy(cfg)
+        self.engine.invalidate_grid()
+        try:
+            objective_history = []
+            min_f_history = []
+
+            def on_progress(progress):
+                objective_history.append(float(progress["objective"]))
+                min_f_history.append(float(progress["min_f"]))
+
+            info = self.engine.run_optimization_workflow(progress_callback=on_progress)
+            final_cfg = PhysicsConfig(**info["final_config"])
+            best_edges = np.asarray(final_cfg.gate_edges, dtype=float)
+            best_j = float(info["best_objective"])
+            self.engine.config = copy.deepcopy(final_cfg)
+            self.engine.invalidate_grid()
+            theory_fi, theory_f = self.engine.compute_fisher_info(x_range, int(cfg.precision_photons))
+            return {
+                "status": "success",
+                "algorithm": str(
+                    cfg.detection_optimization_algorithm
+                    if cfg.optimize_detection_gates
+                    else f"excitation_{cfg.excitation_optimization_profile}"
+                ),
+                "workflow": (
+                    "joint"
+                    if cfg.optimize_detection_gates and cfg.optimize_excitation_profile
+                    else "detection"
+                    if cfg.optimize_detection_gates
+                    else "excitation"
+                ),
+                "x_range": x_range.tolist(),
+                "best_edges": np.asarray(best_edges, dtype=float).tolist(),
+                "final_gate_count": int(max(0, len(np.asarray(best_edges, dtype=float)) - 1)),
+                "best_objective": float(best_j),
+                "objective_history": objective_history,
+                "min_f_history": min_f_history,
+                "final_theory": {
+                    "fisher_info": np.asarray(theory_fi, dtype=float).tolist(),
+                    "f_value": np.asarray(theory_f, dtype=float).tolist(),
+                },
+                "window_start": float(info["window_start"]),
+                "window_end": float(info["window_end"]),
+                "optimization_config": {
+                    "optimize_detection_gates": bool(cfg.optimize_detection_gates),
+                    "optimize_excitation_profile": bool(cfg.optimize_excitation_profile),
+                    "optimization_objective": str(getattr(cfg, "optimization_objective", "fisher_information")),
+                    "optimization_max_fi_loss_pct": float(getattr(cfg, "optimization_max_fi_loss_pct", 5.0)),
+                    "optimization_mode": str(getattr(cfg, "optimization_mode", "sequential")),
+                    "optimization_first": str(getattr(cfg, "optimization_first", "detection")),
+                    "optimization_iterations": int(getattr(cfg, "optimization_iterations", 3)),
+                    "detection_optimization_algorithm": str(cfg.detection_optimization_algorithm),
+                    "detection_opt_restarts": int(getattr(cfg, "detection_opt_restarts", 20)),
+                    "detection_opt_ftol": float(getattr(cfg, "detection_opt_ftol", 1e-4)),
+                    "detection_opt_maxiter": int(getattr(cfg, "detection_opt_maxiter", 50)),
+                    "detection_opt_fine_bins_per_gate": int(getattr(cfg, "detection_opt_fine_bins_per_gate", 12)),
+                    "detection_opt_fine_bin_cap": int(getattr(cfg, "detection_opt_fine_bin_cap", 256)),
+                    "detection_opt_fc_nuisance_aware": bool(getattr(cfg, "detection_opt_fc_nuisance_aware", True)),
+                    "detection_opt_fc_auto_compress": bool(getattr(cfg, "detection_opt_fc_auto_compress", False)),
+                    "detection_opt_fc_initial_gates": int(getattr(cfg, "detection_opt_fc_initial_gates", 16)),
+                    "detection_opt_fc_min_gates": int(getattr(cfg, "detection_opt_fc_min_gates", 2)),
+                    "detection_opt_fc_max_f_loss_pct": float(getattr(cfg, "detection_opt_fc_max_f_loss_pct", 5.0)),
+                    "detection_opt_start_anchor": str(cfg.detection_opt_start_anchor),
+                    "detection_opt_start_time": float(cfg.detection_opt_start_time),
+                    "detection_opt_end_anchor": str(cfg.detection_opt_end_anchor),
+                    "detection_opt_end_time": float(cfg.detection_opt_end_time),
+                    "excitation_optimization_profile": str(getattr(cfg, "excitation_optimization_profile", "gaussian")),
+                    "excitation_optimization_constraint": str(getattr(cfg, "excitation_optimization_constraint", "fixed_dose")),
+                    "excitation_optimization_width_min": float(getattr(cfg, "excitation_optimization_width_min", 0.05)),
+                    "excitation_optimization_width_max": float(getattr(cfg, "excitation_optimization_width_max", 10.0)),
+                    "excitation_optimization_control_points": int(getattr(cfg, "excitation_optimization_control_points", 8)),
+                },
+                "final_config": final_cfg.model_dump() if hasattr(final_cfg, "model_dump") else final_cfg.dict(),
+            }
+        finally:
+            self.engine.config = baseline
+
     def get_tau_map(self) -> Dict[str, Any]:
         if self.engine.tau_map is None:
             return {"data": None, "shape": None}

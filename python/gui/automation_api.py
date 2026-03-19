@@ -45,6 +45,10 @@ class DesktopAutomationAPI:
         self.window.run_image_gen()
         return {"status": "test_complete"}
 
+    def trigger_optimisation(self):
+        self.window.run_optimization_workflow()
+        return {"status": "optimisation_started" if self.window.optimization_running else "optimisation_not_started"}
+
     def trigger_export_preview(self):
         self.window.preview_last_precision_report()
         return {"status": "export_preview_opened"}
@@ -95,3 +99,18 @@ class DesktopAutomationAPI:
                 "pdf": frame.get("pdf").tolist() if frame.get("pdf") is not None else None,
             })
         return {"frames": serialized}
+
+    def get_optimisation_state(self) -> Dict[str, Any]:
+        return {
+            "mode_active": bool(self.window.optimization_mode_active),
+            "running": bool(self.window.optimization_running),
+            "has_results": self.window.last_optimization_run is not None,
+            "saved": bool(self.window.optimization_results_saved),
+            "imported": bool(self.window.optimization_results_imported),
+            "objective_history": []
+            if self.window.last_optimization_run is None
+            else self.window.last_optimization_run["objective_history"].tolist(),
+            "min_f_history": []
+            if self.window.last_optimization_run is None
+            else self.window.last_optimization_run["min_f_history"].tolist(),
+        }

@@ -28,10 +28,16 @@ class DiagnosticsWidget(QWidget):
         self.chk_autoplay = QCheckBox("Auto-play")
         self.chk_autoplay.setChecked(True)
         self.chk_autoplay.stateChanged.connect(self._on_autoplay_changed)
+        self.btn_copy = QPushButton("📋")
+        self.btn_copy.setFixedWidth(30)
+        self.btn_copy.setToolTip("Copy this widget to clipboard")
+        self.btn_copy.clicked.connect(self._copy_to_clipboard)
+        
         nav_layout.addWidget(self.btn_prev)
         nav_layout.addWidget(self.btn_next)
         nav_layout.addWidget(self.lbl_frame, 1)
         nav_layout.addWidget(self.chk_autoplay)
+        nav_layout.addWidget(self.btn_copy)
         root_layout.addLayout(nav_layout)
 
         main_layout = QHBoxLayout()
@@ -64,30 +70,31 @@ class DiagnosticsWidget(QWidget):
             pen=pg.mkPen(color='#22d3ee', width=2),
             name="Excitation (IRF)"
         )
-        self.chk_irf = self._add_master_toggle("Show IRF", self.irf_curve, "#22d3ee")
+        self.chk_irf = self._add_master_toggle("IRF", self.irf_curve, "#22d3ee")
         
         self.pdf_curve = self.plot_widget.plot(
             pen=pg.mkPen(color='w', width=3, style=Qt.PenStyle.DashLine),
             name="Theoretical Reference"
         )
-        self.chk_pdf = self._add_master_toggle("Show Ref PDF", self.pdf_curve, "white")
+        self.chk_pdf = self._add_master_toggle("Ref PDF", self.pdf_curve, "white")
+        
+        self.chk_ensemble = QCheckBox("PDF Ensemble")
+        self.chk_ensemble.setChecked(True)
+        self.chk_ensemble.setStyleSheet("color: #71717a; font-weight: bold;")
+        self.chk_ensemble.stateChanged.connect(self._on_ensemble_toggle)
+        self.controls_layout.addWidget(self.chk_ensemble)
         
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         self.controls_layout.addWidget(line)
         
         # The Master Gate Toggle
-        self.chk_gates = QCheckBox("Show Time Gates")
+        self.chk_gates = QCheckBox("Time Gates")
         self.chk_gates.setChecked(True)
         self.chk_gates.setStyleSheet("font-weight: bold; color: #3b82f6;")
         self.chk_gates.stateChanged.connect(self._on_gates_toggle)
         self.controls_layout.addWidget(self.chk_gates)
 
-        self.btn_copy = QPushButton("📋 Copy Widget")
-        self.btn_copy.setToolTip("Copy this widget to clipboard")
-        self.btn_copy.clicked.connect(self._copy_to_clipboard)
-        self.btn_copy.setStyleSheet("margin-top: 10px;")
-        self.controls_layout.addWidget(self.btn_copy)
 
         # Registry for dynamic gate curves
         self.gate_curves = []
@@ -132,6 +139,11 @@ class DiagnosticsWidget(QWidget):
         self.controls_layout.addWidget(chk)
         return chk
 
+    def _on_ensemble_toggle(self, state):
+        visible = (state == Qt.CheckState.Checked.value)
+        for c in self.bg_curves:
+            c.setVisible(visible)
+
     def _on_gates_toggle(self, state):
         visible = (state == Qt.CheckState.Checked.value)
         for c in self.gate_curves:
@@ -149,21 +161,28 @@ class DiagnosticsWidget(QWidget):
             self.plot_widget.removeItem(c)
         self.bg_curves = []
 
-        # Plot Background Curves (Thin grey lines)
+        # 3. Plot background PDFs (Simulated PDFs)
         if background_curves:
             bg_color = '#555555' if self.current_theme == "dark" else '#cbd5e1'
+            ensemble_visible = self.chk_ensemble.isChecked()
             for bg_data in background_curves:
                 bg_norm = bg_data / np.max(bg_data) if np.max(bg_data) > 0 else bg_data
                 c = self.plot_widget.plot(
                     time_vec, bg_norm,
                     pen=pg.mkPen(color=bg_color, width=0.5)
                 )
+                c.setVisible(ensemble_visible)
                 self.bg_curves.append(c)
-        
-        # Plot Gate Shapes
+
+        # 4. Reference PDF (Theoretical Reference)
+        if pdf is not None:
+            pdf_norm = pdf / np.max(pdf) if np.max(pdf) > 0 else pdf
+            self.pdf_curve.setData(time_vec, pdf_norm)
+            self.pdf_curve.setZValue(10)
+
+        # 5. Gate Shapes
         colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4']
         num_gates = gate_shapes.shape[0]
-        
         gates_visible = self.chk_gates.isChecked()
         
         for i in range(num_gates):
@@ -174,18 +193,24 @@ class DiagnosticsWidget(QWidget):
                 fillLevel=0,
                 brush=pg.mkBrush(color=color + '44')
             )
+            c.setZValue(20)
             c.setVisible(gates_visible)
             self.gate_curves.append(c)
-            
-        # Update Static Data
+
+        # 6. IRF (Excitation)
         if irf is not None:
             irf_norm = irf / np.max(irf) if np.max(irf) > 0 else irf
             self.irf_curve.setData(time_vec, irf_norm)
+            self.irf_curve.setZValue(30)
         
         if pdf is not None:
             pdf_norm = pdf / np.max(pdf) if np.max(pdf) > 0 else pdf
             self.pdf_curve.setData(time_vec, pdf_norm)
+        
         if label:
+            if label.startswith("Ref PDF:"):
+                # Dynamically rename the checkbox in the legend
+                self.chk_pdf.setText(label.replace("Ref PDF: ", ""))
             self.lbl_frame.setText(label)
 
     def clear_frames(self):
@@ -221,6 +246,7 @@ class DiagnosticsWidget(QWidget):
             irf=frame.get("irf"),
             pdf=frame.get("pdf"),
             label=frame.get("label"),
+            background_curves=frame.get("background_curves"),
         )
         self._update_nav_enabled()
 

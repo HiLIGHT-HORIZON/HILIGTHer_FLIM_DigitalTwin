@@ -10,7 +10,9 @@ The core product goals are:
 - Bootstrap-based estimator-accuracy testing and confidence intervals.
 - Rich virtual-instrument configuration across excitation, detection, gating, and acquisition parameters.
 - Synthetic image generation and testing workflows.
+- Controller-driven optimisation integrated directly into the desktop workspace, with live objective history, retained intermediate states, optional post-run Monte Carlo validation, excitation-profile optimisation, Fisher-throughput selection, joint detection-plus-excitation workflows, and four selectable detection-gate strategies with Fisher Compression as the default.
 - API-first interoperability for other software and LLM agents through Python APIs, HTTP APIs, and MCP.
+- Exportable, publication-oriented HTML reports with SVG plot assets, CSV data assets, and theme-aware presentation.
 
 ## Architectural Principles
 
@@ -51,10 +53,10 @@ Physics logic should live once in the backend engine and be reused by every inte
 | Shared State Models | `python/backend/models.py` | Validated configuration and state objects used across the backend and desktop. |
 | Service Layer | `python/backend/service_api.py` | Stable orchestration surface for workflows, data access, configuration changes, diagnostics, and sessions. |
 | HTTP API | `python/backend/main.py` | Remote programmatic access to the shared service layer. |
-| Desktop Workspace | `python/gui/main_window.py` and widgets | Interactive engineering environment for precision, diagnostics, image simulation, and plot inspection. |
-| Desktop Automation | `python/gui/automation_api.py` | In-process control of the live desktop, including controller state and plot payload access. |
+| Desktop Workspace | `python/gui/main_window.py` and widgets | Interactive engineering environment for precision, diagnostics, image simulation, integrated optimisation mode, and plot inspection. |
+| Desktop Automation | `python/gui/automation_api.py` | In-process control of the live desktop, including controller state, optimisation state, and plot payload access. |
 | MCP Server | `python/mcp_server.py` | Stdio MCP bridge exposing tools, resources, and prompts to LLM hosts. |
-| Documentation and Reports | `docs/` and HTML exporters | Human-readable manuals, parity reports, and precision-session outputs. |
+| Documentation and Reports | `docs/` and HTML exporters | Human-readable manuals, parity reports, and precision-session outputs with SVG/CSV asset packages. |
 
 ## State Model Intent
 The validated configuration object is the single source of truth for simulation and precision workflows.
@@ -62,13 +64,25 @@ The validated configuration object is the single source of truth for simulation 
 Important state categories include:
 
 - decay model and component parameters,
-- excitation model, width, timing, rise/fall behavior, burst settings,
-- detection and gate geometry,
+- excitation model, width, timing, rise/fall behaviour, burst settings,
+- detection and gate geometry, including backend-resolved equal/custom edge definition, start/end anchoring, collection mode, overlap policy, overlap effect, and gate-tail wraparound,
 - sweep definitions for parameter studies,
 - precision execution settings such as photon budget, Monte Carlo repeats, bootstrap samples, CI level, and estimator-accuracy threshold,
-- plotting and reporting options used by the desktop workspace and exports.
+- plotting and reporting options used by the desktop workspace and exports, including light/dark theming and asset generation.
+- optimisation-execution options such as graphical real-time updates, retained intermediate states, and optional post-run Monte Carlo validation.
 
 The GUI must synchronize to this model rather than holding independent hidden state.
+
+The backend engine must also be able to resolve the effective gate geometry from that state without relying on GUI-side preprocessing. That is especially important for API, HTTP, and MCP-driven use where the controller may not be present.
+
+Sequential gate collection is also a backend concern, not just a label. Under a fixed total acquisition budget, sequential collection reduces the effective detected-photon throughput by the number of sequential gate acquisitions, which must feed through both Fisher and Monte Carlo precision calculations.
+
+Explicit overlap is split into two layers:
+
+- geometric gate definition used for diagnostics and gate visualization,
+- statistical overlap handling used for Fisher and Monte Carlo counting rules.
+
+That separation is intentional so the diagnostics view shows the physical gate geometry, while the estimator math applies exclusivity or duplicate-event semantics separately.
 
 ## Workflow Intent
 
@@ -83,7 +97,50 @@ Expected outputs:
 - optional bootstrap confidence intervals,
 - compatibility statistics for estimator-accuracy checks,
 - diagnostics frames for the swept configurations,
-- exportable HTML report.
+- PDF ensembles corresponding to the swept X-axis parameter,
+- exportable HTML report with SVG figures, CSV tables, and theme toggle support.
+
+### Optimisation Workflow
+The optimisation workflow is now part of the main desktop workspace, not a separate legacy optimiser dialog.
+
+Expected behaviour:
+
+- entering optimisation mode whenever detection-gate or excitation optimisation is enabled,
+- red visual emphasis on the optimisation workspace docks,
+- live use of Precision, MLE Accuracy, and Instrument Diagnostics as the optimisation display surfaces,
+- numerical-theory-only updates during the optimisation loop,
+- retained intermediate states including start and finish,
+- optional post-run Monte Carlo validation for those retained states,
+- export of optimisation options, history curves, retained states, and final instrument definitions.
+
+The currently implemented optimisation workspace supports:
+
+- detection-gate optimisation,
+- excitation-profile optimisation,
+- Fisher Information and Fisher-throughput objectives,
+- joint sequential alternating detection-plus-excitation optimisation with a configurable maximum number of alternating rounds.
+
+The implemented detection-gate strategies are:
+
+- Fisher Compression: dynamic-programming compression of a fine contiguous histogram into an optimal gate partition, with an optional nuisance-aware Schur-complement score and optional automatic gate-count reduction until a user-defined peak photon-efficiency loss is reached.
+- Direct Mean F Minimisation: continuous SLSQP edge optimisation over the current design grid.
+- Partition Theorem Bottom-Up: constructive split-based partition growth on a fine reference histogram.
+- Partition Theorem Top-Down: merge-based compression on a fine reference histogram.
+
+The Fisher Compression auto-compression loss test is referenced to the initial finer optimised partition, not to the unoptimised equal-gate starting point. When auto-compress is enabled, the optimisation start state is therefore the configured finer equal-width partition rather than the main GUI gate count.
+
+The implemented excitation-profile strategies are:
+
+- Gaussian width optimisation over the configured width range,
+- square / rectangular width optimisation over the configured width range,
+- free-form optimisation over a configurable number of non-negative control points.
+
+The implemented optimisation objectives are:
+
+- Fisher Information: choose the candidate with the best mean F-value over the active X-axis sweep,
+- Fisher Throughput: first enforce the configured peak F^-2 loss budget against the appropriate Dirac-based reference design, then choose the candidate with the best throughput metric. The configured percentage is interpreted as an absolute photon-efficiency loss in percentage points at the efficiency peak. For excitation, fixed-dose mode assumes no photon-budget gain from pulse area, so throughput changes are driven by the achieved information efficiency of the excitation and detection shapes. Under fixed-peak mode, the throughput metric also scales with the relative excitation area because photon count is assumed to grow proportionally to pulse area. For detection it is most meaningful for strategies that can change gate count, especially Fisher Compression auto-compress.
+
+Optimisation outputs should explicitly report the final gate count and, when excitation optimisation is active, the final excitation-profile summary including profile family, constraint, equivalent width, and either width or free-form control points.
 
 ### Synthetic Image Workflow
 The synthetic image workflow exists to test estimators and visualization paths on simulated datasets produced by the same instrument model.
@@ -103,12 +160,22 @@ MCP should expose:
 
 - configuration inspection and mutation,
 - workflow execution,
+- optimisation workflow execution,
+- detection-optimisation strategy selection and strategy-specific settings,
 - precision and diagnostics access,
 - data and result snapshots,
 - GUI schema metadata so an LLM can reference the desktop consistently,
 - reusable prompts that encode good operating patterns.
 
 The MCP layer currently targets backend and workspace-schema access. Live Qt widget driving remains the responsibility of the in-process desktop automation API unless a future dedicated desktop MCP bridge is introduced.
+
+Because some gating modes are still being stabilized, LLM-facing guidance should treat these options cautiously:
+
+- sequential gate collection,
+- explicit overlap mode,
+- duplicate-event overlap effects.
+
+These can be inspected and configured through APIs and MCP, but they should currently be surfaced to users as under development.
 
 ## Documentation Intent
 The HTML manual must stay synchronized with the actual implementation and cover:
@@ -119,7 +186,9 @@ The HTML manual must stay synchronized with the actual implementation and cover:
 - HTTP API,
 - desktop automation API,
 - MCP tools, resources, and prompts,
+- integrated optimisation-mode behaviour and current scope limits,
 - setup instructions for supported LLM hosts,
+- mathematical definitions of F, photon efficiency, Fisher scaling, and bootstrap outputs,
 - current scope limits and compatibility notes.
 
 ## Validation Intent

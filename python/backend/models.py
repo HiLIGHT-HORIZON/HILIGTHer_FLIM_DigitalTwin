@@ -50,6 +50,7 @@ class PhysicsConfig(BaseModel):
     irf_position: float = 0.0 # [ns] Center if Gaussian, Start if Rectangular
     irf_rise_time: float = 0.05
     irf_fall_time: float = 0.05
+    irf_freeform_points: List[float] = []
     
     # Burst Excitation (Sub-pulses within the IRF envelope)
     burst_enabled: bool = False
@@ -62,14 +63,20 @@ class PhysicsConfig(BaseModel):
     b_decay_wrapping: bool = True
     
     # Gating configurations
-    gate_type: str = "equal" # equal, custom, adaptive
+    gate_type: str = "equal" # equal, custom
     gate_profile: str = "sigmoid" # legacy compatibility field; gate edges are controlled by rise/fall
-    gate_widths: List[float] = [] # Only used if gate_type == "custom"
+    gate_widths: List[float] = []
     gate_rise: float = 0.05 # [ns] Sigmoid edge rise time
     gate_fall: float = 0.05 # [ns] Sigmoid edge fall time
-    gate_stick_to_end: bool = True
     gate_start_mode: str = "start" # irf_3sigma, start, free
     gate_first_start: float = 0.0
+    gate_end_mode: str = "period" # period, free
+    gate_last_end: float = 12.5
+    gate_collection_mode: str = "histogram" # histogram, sequential
+    gate_overlap_mode: str = "jitter_only" # jitter_only, never, allow
+    gate_overlap_ns: float = 0.0
+    gate_overlap_effect: str = "exclusive" # exclusive, duplicate_events, independent_duplicates
+    gate_wraparound: bool = True
     expansion_ratio: float = 0.001 # 'r' parameter for exponential gating
     
     # Advanced Noise Models
@@ -127,13 +134,26 @@ class PhysicsConfig(BaseModel):
     # Optimization Controller
     optimize_detection_gates: bool = False
     optimize_excitation_profile: bool = False
-    optimization_mode: str = "sequential"  # sequential, iterative
+    optimization_mode: str = "sequential"  # legacy compatibility field; joint optimisation now alternates sequentially
     optimization_first: str = "detection"  # detection, excitation
-    optimization_iterations: int = 3
-    optimization_objective: str = "fisher_information"  # fisher_information, fisher_throughput
+    optimization_iterations: int = 20
+    optimization_objective: str = "fisher_throughput"  # fisher_information, fisher_throughput
     optimization_max_fi_loss_pct: float = 5.0
+    optimization_realtime_visualization: bool = False
+    optimization_intermediate_steps: int = 6
+    optimization_validate_mc_intermediates: bool = False
 
-    detection_optimization_algorithm: str = "direct_slsqp"  # direct_slsqp, partition_bottom_up, partition_top_down, fisher_compression
+    detection_optimization_algorithm: str = "fisher_compression"  # direct_slsqp, partition_bottom_up, partition_top_down, fisher_compression
+    detection_opt_restarts: int = 20
+    detection_opt_ftol: float = 1e-4
+    detection_opt_maxiter: int = 50
+    detection_opt_fine_bins_per_gate: int = 12
+    detection_opt_fine_bin_cap: int = 256
+    detection_opt_fc_nuisance_aware: bool = True
+    detection_opt_fc_auto_compress: bool = False
+    detection_opt_fc_initial_gates: int = 16
+    detection_opt_fc_min_gates: int = 2
+    detection_opt_fc_max_f_loss_pct: float = 5.0
     detection_opt_start_anchor: str = "zero"  # zero, irf, custom
     detection_opt_start_time: float = 0.0
     detection_opt_end_anchor: str = "period"  # period, custom

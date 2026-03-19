@@ -9,8 +9,8 @@ from .service_api import DigitalTwinService
 
 app = FastAPI(
     title="HILIGHTer Digital Twin API",
-    version="1.0.0",
-    description="Programmatic backend, data, workflow, and GUI-schema APIs for the HILIGHTer Digital Twin.",
+    version="1.1.0",
+    description="Programmatic backend, data, workflow, optimisation, and GUI-schema APIs for the HILIGHTer Digital Twin.",
 )
 
 app.add_middleware(
@@ -87,6 +87,11 @@ async def run_advanced_simulation(req: SimulationRequest):
 @app.post("/api/v1/workflows/precision")
 async def run_precision_workflow(req: PrecisionRequest):
     return service.run_precision(req.config_patch)
+
+
+@app.post("/api/v1/workflows/optimisation")
+async def run_optimisation_workflow(req: PrecisionRequest):
+    return service.run_optimization(req.config_patch)
 
 
 @app.get("/api/v1/data/summary")

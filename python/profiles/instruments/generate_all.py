@@ -41,7 +41,7 @@ def generate_profile(legacy_data):
             v_low = v.lower()
             if "custom" in v_low: new_data["gate_type"] = "custom"
             elif "equal" in v_low: new_data["gate_type"] = "equal"
-            elif "adaptive" in v_low: new_data["gate_type"] = "adaptive"
+            elif "adaptive" in v_low: new_data["gate_type"] = "custom"
 
     if "gate_widths" in legacy_data and legacy_data["gate_widths"]:
         widths = legacy_data["gate_widths"]

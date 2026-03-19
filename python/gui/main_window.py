@@ -6,9 +6,9 @@ import numpy as np
 from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QApplication, QDockWidget, 
                              QVBoxLayout, QWidget, QStatusBar, QFileDialog,
-                             QMenuBar, QDialog, QHBoxLayout, QPushButton, QMessageBox)
-from PyQt6.QtGui import QAction
-from PyQt6.QtCore import Qt
+                             QMenuBar, QDialog, QHBoxLayout, QPushButton, QMessageBox, QCheckBox)
+from PyQt6.QtGui import QAction, QDesktopServices
+from PyQt6.QtCore import Qt, QUrl
 import qdarkstyle
 
 # Import custom widgets
@@ -20,10 +20,11 @@ from gui.widgets.fisher_plot import FisherWidget
 from gui.widgets.mle_accuracy_plot import MLEAccuracyWidget
 from gui.widgets.diagnostics_plot import DiagnosticsWidget
 from gui.widgets.instrument_manager import InstrumentManager
-from gui.widgets.optimizer_widget import OptimizerWidget
 from gui.widgets.manual_viewer import ManualWidget
 from gui.automation_api import DesktopAutomationAPI
+from gui.optimisation_worker import DetectionOptimisationWorker
 from gui.report_export import write_precision_report_package
+from backend.models import PhysicsConfig
 
 
 LIGHT_APP_STYLESHEET = """
@@ -87,6 +88,17 @@ class HILIGHTMainWindow(QMainWindow):
         self.control_widget.update_from_config(self.engine.config)
         self.control_widget.btn_export.setEnabled(False)
         self.last_precision_run = None
+        self.last_optimization_run = None
+        self.optimization_results_saved = False
+        self.optimization_results_imported = False
+        self.optimization_mode_active = False
+        self.optimization_running = False
+        self.optimization_toggle_suppressed = False
+        self.optimization_worker = None
+        self.optimization_baseline_snapshot = None
+        self.optimization_x_range = None
+        self.optimization_ideal_f = None
+        self.optimization_autoplay_previous = None
         self.desktop_api = DesktopAutomationAPI(self)
         
         # Setup Manual (Persistent Sidepanel)
@@ -99,6 +111,7 @@ class HILIGHTMainWindow(QMainWindow):
         self.init_menu()
         self.setup_docks()
         self.connect_signals()
+        self._update_primary_action_buttons()
         
         # Status Bar with Progress
         from PyQt6.QtWidgets import QProgressBar
@@ -142,7 +155,7 @@ class HILIGHTMainWindow(QMainWindow):
         menubar = self.menuBar()
         
         file_menu = menubar.addMenu("&File")
-        self.export_precision_act = QAction("Save Precision Report As...", self)
+        self.export_precision_act = QAction("Save Report As...", self)
         self.export_precision_act.setEnabled(False)
         self.export_precision_act.triggered.connect(self.export_last_precision_report)
         file_menu.addAction(self.export_precision_act)
@@ -152,6 +165,14 @@ class HILIGHTMainWindow(QMainWindow):
         file_menu.addAction(exit_act)
         
         help_menu = menubar.addMenu("&Help")
+        
+        self.manual_act = QAction("See Manual", self)
+        self.manual_act.setShortcut("Ctrl+H")
+        self.manual_act.triggered.connect(self.show_manual)
+        help_menu.addAction(self.manual_act)
+        
+        help_menu.addSeparator()
+        
         about_act = QAction("About", self)
         about_act.triggered.connect(self.show_about)
         help_menu.addAction(about_act)
@@ -173,6 +194,7 @@ class HILIGHTMainWindow(QMainWindow):
             self.theme_act.setText("Dark Mode")
 
         for widget in (
+            self.control_widget,
             self.map_widget,
             self.phasor_widget,
             self.decay_widget,
@@ -182,6 +204,7 @@ class HILIGHTMainWindow(QMainWindow):
         ):
             if hasattr(widget, "set_theme"):
                 widget.set_theme(theme)
+        self._apply_optimization_dock_highlight()
 
     def toggle_theme(self):
         """Switches between dark and light themes."""
@@ -200,6 +223,7 @@ class HILIGHTMainWindow(QMainWindow):
         c_dock = QDockWidget("Digital Twin Controller", self)
         c_dock.setObjectName("dock_params")
         c_dock.setWidget(self.control_widget)
+        self.dock_params = c_dock
         # Allow floating but persistent top-left placement
         c_dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable | 
                            QDockWidget.DockWidgetFeature.DockWidgetFloatable)
@@ -209,35 +233,41 @@ class HILIGHTMainWindow(QMainWindow):
         p_dock = QDockWidget("Phasor Space (G vs S)", self)
         p_dock.setObjectName("dock_phasor")
         p_dock.setWidget(self.phasor_widget)
+        self.dock_phasor = p_dock
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, p_dock)
 
         # Right Bottom: Fisher
         f_dock = QDockWidget("Precision (Fisher Info)", self)
         f_dock.setObjectName("dock_fisher")
         f_dock.setWidget(self.fisher_widget)
+        self.dock_fisher = f_dock
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, f_dock)
 
         acc_dock = QDockWidget("Gridded MLE Accuracy", self)
         acc_dock.setObjectName("dock_mle_accuracy")
         acc_dock.setWidget(self.mle_accuracy_widget)
+        self.dock_mle_accuracy = acc_dock
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, acc_dock)
 
         # Right Center: Diagnostics
         dia_dock = QDockWidget("Instrument Diagnostics", self)
         dia_dock.setObjectName("dock_diagnostics")
         dia_dock.setWidget(self.diagnostics_widget)
+        self.dock_diagnostics = dia_dock
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dia_dock)
 
         # Bottom: Decay
         d_dock = QDockWidget("Single Pixel Decay / Fit", self)
         d_dock.setObjectName("dock_decay")
         d_dock.setWidget(self.decay_widget)
+        self.dock_decay = d_dock
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, d_dock)
 
         # Bottom Left: Image / Map
         map_dock = QDockWidget("Lifetime Gradient Map", self)
         map_dock.setObjectName("dock_map")
         map_dock.setWidget(self.map_widget)
+        self.dock_map = map_dock
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, map_dock)
 
         self.splitDockWidget(c_dock, f_dock, Qt.Orientation.Horizontal)
@@ -263,6 +293,9 @@ class HILIGHTMainWindow(QMainWindow):
         self.control_widget.btn_interrupt.clicked.connect(self.interrupt_simulation)
         self.control_widget.btn_manage_inst.clicked.connect(self.open_instrument_manager)
         self.control_widget.btn_run_optimization.clicked.connect(self.run_optimization_workflow)
+        self.control_widget.btn_exit_optimization.clicked.connect(self.exit_optimization_mode)
+        self.control_widget.chk_opt_detection.toggled.connect(self._on_optimization_scope_toggled)
+        self.control_widget.chk_opt_excitation.toggled.connect(self._on_optimization_scope_toggled)
         
         # Auto-refresh diagnostics on any param change
         from PyQt6.QtWidgets import QDoubleSpinBox, QSpinBox, QComboBox, QCheckBox, QLineEdit
@@ -273,9 +306,19 @@ class HILIGHTMainWindow(QMainWindow):
                 widget.currentIndexChanged.connect(self.refresh_diagnostics)
             else:
                 widget.clicked.connect(self.refresh_diagnostics)
+        for widget in self.control_widget.findChildren(QLineEdit):
+            widget.textChanged.connect(self.refresh_diagnostics)
 
         self.map_widget.pixel_selected.connect(self.on_pixel_select)
         self.phasor_widget.roi_changed.connect(self.on_phasor_roi)
+
+    def _update_primary_action_buttons(self):
+        optimisation_mode = bool(self.optimization_mode_active)
+        optimisation_running = bool(self.optimization_running)
+        self.control_widget.btn_manage_inst.setEnabled(not optimisation_mode)
+        self.control_widget.btn_precision.setEnabled(not optimisation_mode)
+        self.control_widget.btn_simulate.setEnabled(not optimisation_mode)
+        self.control_widget.btn_interrupt.setEnabled(optimisation_running)
 
     def open_instrument_manager(self):
         # Pass engine config to manager
@@ -286,38 +329,303 @@ class HILIGHTMainWindow(QMainWindow):
             self.refresh_diagnostics()
             self.statusBar().showMessage("Instrument profile applied successfully.")
 
-    def open_optimizer(self):
-        """Opens the Gate Optimizer dialog."""
-        self.sync_ui_to_config() # Push current settings to engine
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Gate Optimization")
-        dlg.setLayout(QVBoxLayout())
-        
-        opt_widget = OptimizerWidget(self.engine)
-        opt_widget.spin_n_gates.setValue(max(2, len(self.engine.config.gate_edges) - 1))
-        t_max = (
-            self.engine.config.detection_opt_end_time
-            if getattr(self.engine.config, "detection_opt_end_anchor", "period") == "custom"
-            else self.engine.config.period
+    def _set_export_enabled(self):
+        enabled = bool(self.last_precision_run or self.last_optimization_run)
+        self.export_precision_act.setEnabled(enabled)
+        self.control_widget.btn_export.setEnabled(enabled)
+
+    def _current_target_label(self):
+        return self.control_widget.param_rows[self.engine.config.f_x_param]['label'].text().replace(":", "")
+
+    def _predicted_accuracy_from_theory(self, x_range, f_values, n_photons):
+        x_arr = np.asarray(x_range, dtype=float)
+        denom = np.maximum(np.abs(x_arr), 1e-12)
+        sigma = np.asarray(f_values, dtype=float) * denom / np.sqrt(max(int(n_photons), 1))
+        return {
+            "mean": np.array(x_arr, copy=True),
+            "std": np.array(sigma, copy=True),
+        }
+
+    def _coerce_physics_config(self, cfg_like):
+        if isinstance(cfg_like, PhysicsConfig):
+            return copy.deepcopy(cfg_like)
+        if isinstance(cfg_like, dict):
+            return PhysicsConfig(**copy.deepcopy(cfg_like))
+        raise TypeError(f"Unsupported configuration payload: {type(cfg_like).__name__}")
+
+    def _precision_throughput_scale(self, cfg_like, reference_excitation_area):
+        cfg = self._coerce_physics_config(cfg_like)
+        return float(self.engine._throughput_metric(cfg, float(reference_excitation_area)))
+
+    def _build_optimization_snapshot(self, cfg, label, objective=None, min_f=None):
+        original_config = self.engine.config
+        try:
+            self.engine.config = copy.deepcopy(cfg)
+            self.engine.invalidate_grid()
+            x_range = self._build_precision_x_range(self.engine.config)
+            _, ideal_f = self.engine.compute_ideal_reference(x_range, int(self.engine.config.precision_photons))
+            theory_fi, theory_f = self.engine.compute_fisher_info(x_range, int(self.engine.config.precision_photons))
+            frame = self._create_diagnostics_frame(self.engine.config, label)
+            frame["background_curves"] = self._build_precision_pdf_ensemble(self.engine.config, x_range)
+            gate_edges = np.asarray(self.engine.config.gate_edges, dtype=float)
+            return {
+                "label": label,
+                "objective": float(objective if objective is not None else np.nanmean(theory_f)),
+                "min_f": float(min_f if min_f is not None else np.nanmin(theory_f)),
+                "gate_count": int(max(0, gate_edges.size - 1)),
+                "x_range": np.array(x_range, copy=True),
+                "ideal_f": np.array(ideal_f, copy=True),
+                "theory_f": np.array(theory_f, copy=True),
+                "theory_fisher": np.array(theory_fi, copy=True),
+                "accuracy": self._predicted_accuracy_from_theory(x_range, theory_f, int(self.engine.config.precision_photons)),
+                "diagnostics_frame": frame,
+                "config": copy.deepcopy(self.engine.config.model_dump() if hasattr(self.engine.config, "model_dump") else self.engine.config.dict()),
+            }
+        finally:
+            self.engine.config = original_config
+            self.engine.invalidate_grid()
+
+    def _resolve_optimization_start_snapshot_cfg(self, cfg):
+        snapshot_cfg = copy.deepcopy(cfg)
+        algorithm = str(getattr(snapshot_cfg, "detection_optimization_algorithm", "fisher_compression")).lower()
+        auto_compress = bool(getattr(snapshot_cfg, "detection_opt_fc_auto_compress", False))
+        if algorithm != "fisher_compression" or not auto_compress:
+            return snapshot_cfg
+
+        start = 0.0
+        start_anchor = str(getattr(snapshot_cfg, "detection_opt_start_anchor", "zero")).lower()
+        if start_anchor == "irf":
+            jitter_ns = float(getattr(snapshot_cfg, "timing_jitter", 0.0)) / 1000.0
+            irf_profile = str(getattr(snapshot_cfg, "irf_profile", "gaussian")).lower()
+            if irf_profile == "gaussian":
+                sigma_total = np.sqrt((float(snapshot_cfg.irf_fwhm) / 2.355) ** 2 + jitter_ns ** 2)
+                start = float(snapshot_cfg.irf_position) + 3.0 * sigma_total
+            elif irf_profile == "ideal (dirac)":
+                start = float(snapshot_cfg.irf_position) + 3.0 * jitter_ns
+            else:
+                start = float(snapshot_cfg.irf_position) + float(snapshot_cfg.irf_fwhm) + 3.0 * jitter_ns
+        elif start_anchor == "custom":
+            start = float(getattr(snapshot_cfg, "detection_opt_start_time", 0.0))
+
+        end_anchor = str(getattr(snapshot_cfg, "detection_opt_end_anchor", "period")).lower()
+        if end_anchor == "custom":
+            end = float(getattr(snapshot_cfg, "detection_opt_end_time", snapshot_cfg.period))
+        else:
+            end = float(snapshot_cfg.period)
+        if end <= start:
+            end = start + 1e-3
+
+        n_gates = max(1, int(getattr(snapshot_cfg, "detection_opt_fc_initial_gates", max(2, len(snapshot_cfg.gate_edges) - 1))))
+        edges = np.linspace(start, end, n_gates + 1)
+        snapshot_cfg.gate_type = "custom"
+        snapshot_cfg.gate_edges = edges.tolist()
+        snapshot_cfg.gate_widths = np.diff(edges).tolist()
+        return snapshot_cfg
+
+    def _build_optimization_current_text(self, snapshot):
+        if snapshot is None:
+            return "Current simulated value: baseline configuration"
+        edges = np.asarray(snapshot.get("config", {}).get("gate_edges", []), dtype=float)
+        edge_text = ", ".join(f"{edge:.3f}" for edge in edges[:6])
+        if edges.size > 6:
+            edge_text += ", ..."
+        objective = snapshot.get("objective", np.nan)
+        min_f = snapshot.get("min_f", np.nan)
+        gate_count = int(snapshot.get("gate_count", max(0, len(edges) - 1)))
+        return (
+            f"Current simulated value: {snapshot.get('label', 'Current')} | "
+            f"Objective J = {objective:.6g} | Minimum F = {min_f:.6g} | Gate count = {gate_count} | Gates = [{edge_text}]"
         )
-        opt_widget.spin_t_max.setValue(t_max)
-        opt_widget.spin_tau_min.setValue(self.engine.config.f_x_min)
-        opt_widget.spin_tau_max.setValue(self.engine.config.f_x_max)
-        dlg.layout().addWidget(opt_widget)
-        
-        # Connect the export signal
-        opt_widget.gates_optimized.connect(self.on_gates_optimized)
-        opt_widget.gates_optimized.connect(dlg.accept)
-        
-        dlg.exec()
+
+    def _disable_diagnostics_autoplay_for_optimization(self):
+        if self.optimization_autoplay_previous is None:
+            self.optimization_autoplay_previous = bool(self.diagnostics_widget.chk_autoplay.isChecked())
+        if self.diagnostics_widget.chk_autoplay.isChecked():
+            self.diagnostics_widget.chk_autoplay.setChecked(False)
+        else:
+            self.diagnostics_widget.pause_playback()
+
+    def _restore_diagnostics_autoplay_after_optimization(self, checked=None):
+        restore_checked = self.optimization_autoplay_previous if checked is None else bool(checked)
+        if restore_checked is None:
+            restore_checked = bool(self.diagnostics_widget.chk_autoplay.isChecked())
+        self.diagnostics_widget.chk_autoplay.setChecked(bool(restore_checked))
+        if restore_checked:
+            self.diagnostics_widget.resume_playback()
+        else:
+            self.diagnostics_widget.pause_playback()
+        self.optimization_autoplay_previous = None
+
+    def _display_optimization_snapshots(self, x_range, ideal_f, snapshots, focus_last=False, resume_autoplay=False):
+        if not snapshots:
+            return
+        x_arr = np.asarray(x_range, dtype=float)
+        ideal_arr = np.asarray(ideal_f, dtype=float)
+        reference_excitation_area = self.engine._excitation_area_and_peak(self.engine.config)[0]
+        target_label = self.control_widget.param_rows[self.engine.config.f_x_param]['label'].text().replace(":", "")
+        self.fisher_widget.set_xaxis_label(target_label)
+        self.mle_accuracy_widget.set_xaxis_label(f"Ground Truth {target_label}")
+
+        plot_results = {}
+        accuracy_results = {}
+        frames = []
+        for snapshot in snapshots:
+            label = snapshot["label"]
+            throughput_scale = self._precision_throughput_scale(snapshot.get("config", self.engine.config), reference_excitation_area)
+            plot_results[f"Theory | {label}"] = {
+                "y": np.asarray(snapshot["theory_f"], dtype=float),
+                "throughput_scale": throughput_scale,
+            }
+            mc_payload = snapshot.get("mc")
+            if mc_payload is not None:
+                plot_results[f"Monte Carlo | {label}"] = {
+                    "y": np.asarray(mc_payload["f_value"], dtype=float),
+                    "compatible": np.asarray(mc_payload["compatible"], dtype=bool),
+                    "f_ci_lower": np.asarray(mc_payload["f_ci_lower"], dtype=float),
+                    "f_ci_upper": np.asarray(mc_payload["f_ci_upper"], dtype=float),
+                    "efficiency_ci_lower": np.asarray(mc_payload["efficiency_ci_lower"], dtype=float),
+                    "efficiency_ci_upper": np.asarray(mc_payload["efficiency_ci_upper"], dtype=float),
+                    "throughput_scale": throughput_scale,
+                }
+            accuracy_results[label] = {
+                "mean": np.asarray(snapshot["accuracy"]["mean"], dtype=float),
+                "std": np.asarray(snapshot["accuracy"]["std"], dtype=float),
+            }
+            frame = copy.deepcopy(snapshot["diagnostics_frame"])
+            frames.append(frame)
+
+        self.fisher_widget.plot_batch(x_arr, plot_results, ideal_x=x_arr, ideal_f=ideal_arr, ideal_throughput_scale=1.0)
+        self.mle_accuracy_widget.plot_accuracy(x_arr, accuracy_results)
+        self.diagnostics_widget.set_sweep_frames(frames)
+        if focus_last and frames:
+            self.diagnostics_widget.set_frame(len(frames) - 1)
+        if resume_autoplay and self.diagnostics_widget.chk_autoplay.isChecked():
+            self.diagnostics_widget.resume_playback()
+        else:
+            self.diagnostics_widget.pause_playback()
+
+    def _apply_optimization_results_to_instrument(self):
+        if not self.last_optimization_run:
+            return
+        final_cfg = copy.deepcopy(self.last_optimization_run["final_config"])
+        self.engine.config = self.engine.config.__class__(**final_cfg)
+        self.control_widget.update_from_config(self.engine.config)
+        self.optimization_results_imported = True
+        self.refresh_diagnostics()
+        self.statusBar().showMessage("Optimised detection gates imported into the current instrument.")
+
+    def _prompt_optimization_exit_actions(self):
+        if not self.last_optimization_run:
+            return
+        if not self.optimization_results_imported:
+            reply = QMessageBox.question(
+                self,
+                "Import Optimisation Results",
+                "Do you want to import the optimisation results into the current instrument definition?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._apply_optimization_results_to_instrument()
+        if not self.optimization_results_saved:
+            reply = QMessageBox.question(
+                self,
+                "Save Optimisation Results",
+                "Optimisation results have not been saved yet. Do you want to save them now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.preview_last_precision_report()
+
+    def _apply_optimization_dock_highlight(self):
+        if not hasattr(self, "dock_fisher"):
+            return
+        theme = self.settings.value("theme", "dark") if hasattr(self, "settings") else "dark"
+        if self.optimization_mode_active:
+            bg = "#7f1d1d" if theme == "dark" else "#b91c1c"
+            border = "#ef4444" if theme == "dark" else "#991b1b"
+            text = "#ffffff"
+            style = (
+                "QDockWidget::title {"
+                f"background: {bg}; color: {text}; padding: 6px 10px; border: 1px solid {border};"
+                "}"
+            )
+        else:
+            style = ""
+        for dock in (
+            getattr(self, "dock_params", None),
+            getattr(self, "dock_fisher", None),
+            getattr(self, "dock_mle_accuracy", None),
+            getattr(self, "dock_diagnostics", None),
+        ):
+            if dock is not None:
+                dock.setStyleSheet(style)
+
+    def _set_optimization_mode_ui(self, active, running=False):
+        self.optimization_mode_active = bool(active)
+        self.optimization_running = bool(running)
+        self.control_widget.set_optimization_mode_active(active, running=running)
+        self._apply_optimization_dock_highlight()
+        self._update_primary_action_buttons()
+
+    def _show_optimization_baseline(self):
+        self.sync_ui_to_config()
+        cfg = copy.deepcopy(self.engine.config)
+        if not (cfg.optimize_detection_gates or cfg.optimize_excitation_profile):
+            return
+        cfg = self._resolve_optimization_start_snapshot_cfg(cfg)
+        baseline = self._build_optimization_snapshot(cfg, "Step 1: Start")
+        self.optimization_baseline_snapshot = copy.deepcopy(baseline)
+        self.optimization_x_range = np.array(baseline["x_range"], copy=True)
+        self.optimization_ideal_f = np.array(baseline["ideal_f"], copy=True)
+        self.control_widget.clear_optimization_progress()
+        self.control_widget.set_optimization_status(
+            "Optimisation mode uses numerical theory only during the run. "
+            "Monte Carlo validation is optionally applied to the displayed intermediate states at the end."
+        )
+        self.control_widget.set_optimization_current_value(self._build_optimization_current_text(baseline))
+        self._display_optimization_snapshots(baseline["x_range"], baseline["ideal_f"], [baseline], focus_last=True, resume_autoplay=False)
+
+    def _on_optimization_scope_toggled(self, _checked):
+        if self.optimization_toggle_suppressed:
+            return
+        active = self.control_widget.chk_opt_detection.isChecked() or self.control_widget.chk_opt_excitation.isChecked()
+        if active and not self.optimization_mode_active:
+            self._disable_diagnostics_autoplay_for_optimization()
+            self._set_optimization_mode_ui(True, running=False)
+            self._show_optimization_baseline()
+            self.statusBar().showMessage("Optimisation mode active.")
+        elif not active and self.optimization_mode_active:
+            self.exit_optimization_mode()
+
+    def exit_optimization_mode(self):
+        if self.optimization_running:
+            QMessageBox.information(
+                self,
+                "Optimisation",
+                "Wait for the current optimisation run to finish before exiting optimisation mode.",
+            )
+            return
+        self._prompt_optimization_exit_actions()
+        self.optimization_toggle_suppressed = True
+        try:
+            self.control_widget.chk_opt_detection.setChecked(False)
+            self.control_widget.chk_opt_excitation.setChecked(False)
+        finally:
+            self.optimization_toggle_suppressed = False
+        self._set_optimization_mode_ui(False, running=False)
+        self.optimization_baseline_snapshot = None
+        self.optimization_x_range = None
+        self.optimization_ideal_f = None
+        self._restore_diagnostics_autoplay_after_optimization()
+        self.refresh_diagnostics()
+        self.statusBar().showMessage("Optimisation mode exited.")
 
     def run_optimization_workflow(self):
-        """
-        Entry point from the Optimization tab.
-        Currently supports the preserved detection-gate optimizer path.
-        """
         self.sync_ui_to_config()
         cfg = self.engine.config
+        cfg.b_interrupt = False
 
         run_detection = bool(getattr(cfg, "optimize_detection_gates", False))
         run_excitation = bool(getattr(cfg, "optimize_excitation_profile", False))
@@ -325,44 +633,145 @@ class HILIGHTMainWindow(QMainWindow):
         if not run_detection and not run_excitation:
             QMessageBox.information(
                 self,
-                "Optimization",
-                "Enable at least one optimization target in the Optimization tab.",
+                "Optimisation",
+                "Enable at least one optimisation target in the Optimisation tab.",
             )
             return
 
-        if run_excitation:
-            QMessageBox.information(
-                self,
-                "Optimization",
-                "Excitation-profile optimization is configured in the controller but is not implemented yet.\n\n"
-                "The currently supported runnable path is detection-gate optimization.",
-            )
+        if self.optimization_running:
             return
 
-        if run_detection and run_excitation and getattr(cfg, "optimization_mode", "sequential") == "iterative":
-            QMessageBox.information(
-                self,
-                "Optimization",
-                "Iterative alternating optimization is not implemented yet.\n\n"
-                "The currently supported runnable path is a single detection-gate optimization.",
+        # Force a fresh baseline build before launching the worker so optimisation
+        # does not depend on any previous simulation/diagnostics run.
+        self.engine.invalidate_grid()
+        self._show_optimization_baseline()
+        cfg = copy.deepcopy(self.engine.config)
+        cfg.b_interrupt = False
+        self._disable_diagnostics_autoplay_for_optimization()
+        self._set_optimization_mode_ui(True, running=True)
+        self.control_widget.clear_optimization_progress()
+        self.control_widget.set_optimization_status("Optimisation started. Numerical theory only is used during the live run.")
+        self.control_widget.set_optimization_current_value("Current simulated value: optimisation running...")
+        self.control_widget.btn_export.setEnabled(False)
+        self.optimization_results_saved = False
+        self.optimization_results_imported = False
+        self.last_optimization_run = None
+        self.export_precision_act.setEnabled(False)
+
+        self.optimization_worker = DetectionOptimisationWorker(copy.deepcopy(cfg))
+        self.optimization_worker.baseline_ready.connect(self._on_optimization_baseline_ready)
+        self.optimization_worker.progress_ready.connect(self._on_optimization_progress_ready)
+        self.optimization_worker.result_ready.connect(self._on_optimization_finished)
+        self.optimization_worker.failed.connect(self._on_optimization_failed)
+        self.optimization_worker.start()
+        self.statusBar().showMessage("Optimisation running...")
+
+    def _on_optimization_baseline_ready(self, payload):
+        baseline = payload["baseline"]
+        self.optimization_baseline_snapshot = copy.deepcopy(baseline)
+        self.optimization_x_range = np.array(payload["x_range"], copy=True)
+        self.optimization_ideal_f = np.array(payload["ideal_f"], copy=True)
+        self.control_widget.update_optimization_progress([0], [baseline["objective"]], [baseline["min_f"]])
+        self.control_widget.set_optimization_current_value(self._build_optimization_current_text(baseline))
+        if self.control_widget.chk_optimization_realtime.isChecked():
+            self._display_optimization_snapshots(payload["x_range"], payload["ideal_f"], [baseline], focus_last=True, resume_autoplay=False)
+
+    def _on_optimization_progress_ready(self, payload):
+        iterations = np.asarray(payload["iterations"], dtype=float)
+        objectives = np.asarray(payload["objective_history"], dtype=float)
+        min_f = np.asarray(payload["min_f_history"], dtype=float)
+        self.control_widget.update_optimization_progress(iterations, objectives, min_f)
+        current = payload.get("current")
+        if current is not None:
+            self.control_widget.set_optimization_current_value(self._build_optimization_current_text(current))
+            self.control_widget.set_optimization_status(
+                f"Optimisation running.\n\nCurrent step: {current.get('step', 0)}\n"
+                f"Objective J: {current.get('objective', np.nan):.6g}\n"
+                f"Minimum F: {current.get('min_f', np.nan):.6g}\n"
+                f"Gate count: {int(current.get('gate_count', max(0, len(current.get('config', {}).get('gate_edges', [])) - 1)))}"
             )
-            return
+            if self.control_widget.chk_optimization_realtime.isChecked():
+                snapshots = [current]
+                if self.optimization_baseline_snapshot is not None:
+                    snapshots = [self.optimization_baseline_snapshot, current]
+                self._display_optimization_snapshots(
+                    self.optimization_x_range if self.optimization_x_range is not None else current["accuracy"]["mean"],
+                    self.optimization_ideal_f if self.optimization_ideal_f is not None else current["theory_f"],
+                    snapshots,
+                    focus_last=True,
+                    resume_autoplay=False,
+                )
 
-        self.open_optimizer()
+    def _on_optimization_finished(self, payload):
+        self.optimization_running = False
+        self.optimization_x_range = np.array(payload["x_range"], copy=True)
+        self.optimization_ideal_f = np.array(payload["ideal_f"], copy=True)
+        self._set_optimization_mode_ui(True, running=False)
+        self.last_optimization_run = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "x_range": np.array(payload["x_range"], copy=True),
+            "ideal_f": np.array(payload["ideal_f"], copy=True),
+            "snapshots": copy.deepcopy(payload["snapshots"]),
+            "final_snapshot": copy.deepcopy(payload["final_snapshot"]),
+            "final_config": copy.deepcopy(payload["final_config"]),
+            "final_excitation_summary": copy.deepcopy(payload.get("final_excitation_summary", {})),
+            "objective_history": np.array(payload["objective_history"], copy=True),
+            "min_f_history": np.array(payload["min_f_history"], copy=True),
+            "final_gate_count": int(payload.get("final_gate_count", max(0, len(payload.get("best_edges", [])) - 1))),
+            "x_label": self._current_target_label(),
+            "config": copy.deepcopy(self.engine.config.model_dump() if hasattr(self.engine.config, "model_dump") else self.engine.config.dict()),
+        }
+        self.control_widget.update_optimization_progress(
+            np.arange(len(payload["objective_history"]), dtype=float),
+            payload["objective_history"],
+            payload["min_f_history"],
+        )
+        excitation_summary = payload.get("final_excitation_summary", {})
+        excitation_text = ""
+        if excitation_summary:
+            width_text = ""
+            if "width_ns" in excitation_summary:
+                width_text = f"\nExcitation width: {float(excitation_summary['width_ns']):.6g} ns"
+            elif excitation_summary.get("control_points"):
+                width_text = f"\nExcitation control points: {len(excitation_summary['control_points'])}"
+            excitation_text = (
+                f"\nBest excitation profile: {excitation_summary.get('profile', 'n/a')}"
+                f"\nExcitation constraint: {excitation_summary.get('constraint', 'n/a')}"
+                f"{width_text}"
+                f"\nEquivalent width: {float(excitation_summary.get('equivalent_width_ns', np.nan)):.6g} ns"
+            )
+        self.control_widget.set_optimization_current_value(self._build_optimization_current_text(payload["final_snapshot"]))
+        self.control_widget.set_optimization_status(
+            f"Optimisation complete.\n\nBest objective J: {payload['best_objective']:.6g}\n"
+            f"Displayed optimisation states: {len(payload['snapshots'])}\n"
+            f"Final gate count: {int(payload.get('final_gate_count', max(0, len(payload.get('best_edges', [])) - 1)))}"
+            f"{excitation_text}"
+        )
+        self._restore_diagnostics_autoplay_after_optimization(checked=True)
+        self._display_optimization_snapshots(
+            payload["x_range"],
+            payload["ideal_f"],
+            payload["snapshots"],
+            focus_last=False,
+            resume_autoplay=True,
+        )
+        self.optimization_results_saved = False
+        self.optimization_results_imported = False
+        self._update_primary_action_buttons()
+        self._set_export_enabled()
+        self.statusBar().showMessage("Optimisation complete.")
+        self.optimization_worker = None
 
-    def on_gates_optimized(self, edges):
-        """Callback for when new gate edges are decided by the optimizer."""
-        self.engine.config.gate_type = "custom"
-        self.engine.config.gate_edges = edges
-        
-        # Calculate widths for the UI
-        widths = np.diff(edges).tolist()
-        self.engine.config.gate_widths = widths
-        
-        # Sync back to Control UI
-        self.control_widget.update_from_config(self.engine.config)
-        self.refresh_diagnostics()
-        self.statusBar().showMessage("Optimized gates applied successfully.")
+    def _on_optimization_failed(self, message):
+        self.optimization_running = False
+        self._set_optimization_mode_ui(self.optimization_mode_active, running=False)
+        self.control_widget.set_optimization_status(f"Optimisation failed.\n\n{message}")
+        self._restore_diagnostics_autoplay_after_optimization()
+        self._update_primary_action_buttons()
+        self._set_export_enabled()
+        QMessageBox.warning(self, "Optimisation Failed", message)
+        self.statusBar().showMessage("Optimisation failed.")
+        self.optimization_worker = None
 
     def sync_ui_to_config(self):
         cfg = self.engine.config
@@ -425,8 +834,7 @@ class HILIGHTMainWindow(QMainWindow):
         # Optimization
         cfg.optimize_detection_gates = cw.chk_opt_detection.isChecked()
         cfg.optimize_excitation_profile = cw.chk_opt_excitation.isChecked()
-        optimization_mode_map = {"sequential": "sequential", "iterative": "iterative"}
-        cfg.optimization_mode = optimization_mode_map.get(cw.combo_optimization_mode.currentText().lower(), "sequential")
+        cfg.optimization_mode = "sequential"
         optimization_first_map = {"detection first": "detection", "excitation first": "excitation"}
         cfg.optimization_first = optimization_first_map.get(cw.combo_optimization_first.currentText().lower(), "detection")
         cfg.optimization_iterations = cw.spin_optimization_iterations.value()
@@ -436,25 +844,38 @@ class HILIGHTMainWindow(QMainWindow):
         }
         cfg.optimization_objective = optimization_objective_map.get(
             cw.combo_optimization_objective.currentText().lower(),
-            "fisher_information",
+            "fisher_throughput",
         )
         cfg.optimization_max_fi_loss_pct = cw.spin_optimization_fi_loss.value()
+        cfg.optimization_realtime_visualization = cw.chk_optimization_realtime.isChecked()
+        cfg.optimization_intermediate_steps = cw.spin_optimization_steps_to_show.value()
+        cfg.optimization_validate_mc_intermediates = cw.chk_optimization_validate_mc.isChecked()
 
         detection_algorithm_map = {
-            "direct mean f minimization": "direct_slsqp",
+            "direct mean f minimisation": "direct_slsqp",
             "partition theorem bottom-up": "partition_bottom_up",
             "partition theorem top-down": "partition_top_down",
             "fisher compression": "fisher_compression",
         }
         cfg.detection_optimization_algorithm = detection_algorithm_map.get(
             cw.combo_detection_algorithm.currentText().lower(),
-            "direct_slsqp",
+            "fisher_compression",
         )
         detection_start_map = {"stick to 0": "zero", "start after irf": "irf", "custom": "custom"}
         cfg.detection_opt_start_anchor = detection_start_map.get(
             cw.combo_detection_start_anchor.currentText().lower(),
             "zero",
         )
+        cfg.detection_opt_restarts = int(getattr(cw, "detection_opt_restarts", 20))
+        cfg.detection_opt_ftol = float(getattr(cw, "detection_opt_ftol", 1e-4))
+        cfg.detection_opt_maxiter = int(getattr(cw, "detection_opt_maxiter", 50))
+        cfg.detection_opt_fine_bins_per_gate = int(getattr(cw, "detection_opt_fine_bins_per_gate", 12))
+        cfg.detection_opt_fine_bin_cap = int(getattr(cw, "detection_opt_fine_bin_cap", 256))
+        cfg.detection_opt_fc_nuisance_aware = bool(getattr(cw, "detection_opt_fc_nuisance_aware", True))
+        cfg.detection_opt_fc_auto_compress = bool(getattr(cw, "detection_opt_fc_auto_compress", False))
+        cfg.detection_opt_fc_initial_gates = int(getattr(cw, "detection_opt_fc_initial_gates", 16))
+        cfg.detection_opt_fc_min_gates = int(getattr(cw, "detection_opt_fc_min_gates", 2))
+        cfg.detection_opt_fc_max_f_loss_pct = float(getattr(cw, "detection_opt_fc_max_f_loss_pct", 5.0))
         cfg.detection_opt_start_time = cw.spin_detection_start_anchor.value()
         detection_end_map = {"stick to period": "period", "custom": "custom"}
         cfg.detection_opt_end_anchor = detection_end_map.get(
@@ -487,7 +908,13 @@ class HILIGHTMainWindow(QMainWindow):
         # Laser & IRF
         cfg.period = cw.spin_period.value()
         cfg.b_decay_wrapping = cw.chk_decay_wrap.isChecked()
-        cfg.irf_profile = cw.combo_profile.currentText().lower()
+        irf_profile_map = {
+            "gaussian": "gaussian",
+            "rectangular": "rectangular",
+            "free form": "free_form",
+            "ideal (dirac)": "ideal (dirac)",
+        }
+        cfg.irf_profile = irf_profile_map.get(cw.combo_profile.currentText().lower(), "gaussian")
         cfg.irf_fwhm = cw.spin_fwhm.value()
         cfg.irf_position = cw.spin_irf_pos.value()
         cfg.irf_rise_time = cw.spin_rise.value()
@@ -511,39 +938,33 @@ class HILIGHTMainWindow(QMainWindow):
         cfg.gate_type = gate_type
         cfg.gate_rise = cw.spin_gate_rise.value()
         cfg.gate_fall = cw.spin_gate_fall.value()
-        cfg.gate_stick_to_end = cw.chk_gate_stick.isChecked()
         
         if cw.radio_gate_irf.isChecked(): cfg.gate_start_mode = "irf_3sigma"
         elif cw.radio_gate_start.isChecked(): cfg.gate_start_mode = "start"
         else: cfg.gate_start_mode = "free"
         cfg.gate_first_start = cw.spin_gate_first.value()
+        cfg.gate_end_mode = "free" if cw.radio_gate_end_free.isChecked() else "period"
+        cfg.gate_last_end = cw.spin_gate_last.value()
+        cfg.gate_collection_mode = "sequential" if cw.radio_gate_collection_seq.isChecked() else "histogram"
+        if cw.radio_overlap_never.isChecked():
+            cfg.gate_overlap_mode = "never"
+        elif cw.radio_overlap_yes.isChecked():
+            cfg.gate_overlap_mode = "allow"
+        else:
+            cfg.gate_overlap_mode = "jitter_only"
+        cfg.gate_overlap_ns = cw.spin_gate_overlap.value()
+        if cw.radio_overlap_effect_duplicate.isChecked():
+            cfg.gate_overlap_effect = "duplicate_events"
+        elif cw.radio_overlap_effect_independent.isChecked():
+            cfg.gate_overlap_effect = "independent_duplicates"
+        else:
+            cfg.gate_overlap_effect = "exclusive"
+        cfg.gate_wraparound = cw.chk_gate_wraparound.isChecked()
 
-        num_gates = cw.spin_num_gates.value()
-        
-        # Calculate dynamic edges for 'equal' or count mismatch
-        if gate_type == "equal" or (len(cfg.gate_edges)-1 != num_gates):
-            t_start = 0.0
-            if cfg.gate_start_mode == "irf_3sigma":
-                # Find 3-sigma point of IRF including jitter
-                jitter_ns = cfg.timing_jitter / 1000.0
-                if cfg.irf_profile == "gaussian":
-                    sigma_base = cfg.irf_fwhm / 2.35482
-                    sigma_total = np.sqrt(sigma_base**2 + jitter_ns**2)
-                    t_start = cfg.irf_position + 3.0 * sigma_total
-                elif cfg.irf_profile == "ideal (dirac)":
-                    t_start = cfg.irf_position + 3.0 * jitter_ns
-                else: # rectangular
-                    # Rect with jitter tails
-                    t_start = cfg.irf_position + cfg.irf_fwhm + 3.0 * jitter_ns
-            elif cfg.gate_start_mode == "free":
-                t_start = cfg.gate_first_start
-            
-            t_end = cfg.period if cfg.gate_stick_to_end else cfg.gate_edges[-1]
-            if t_end <= t_start: t_end = t_start + 5.0 # Safety
-            
-            edges = np.linspace(t_start, t_end, num_gates + 1)
-            cfg.gate_edges = edges.tolist()
-            cfg.gate_widths = [edges[1]-edges[0]] * num_gates
+        edges, _ = cw.validate_gate_definition()
+        if edges is not None:
+            cfg.gate_edges = list(edges)
+            cfg.gate_widths = np.diff(np.asarray(edges, dtype=float)).tolist()
             
         # Optional Instrument Sweep
         cfg.instr_sweep_active = not cw.radio_sweep_off.isChecked()
@@ -558,13 +979,19 @@ class HILIGHTMainWindow(QMainWindow):
             if cw.sweep_options["burst_edge_one_sharp_ns"]["extra"].currentText().startswith("Sharp Rise")
             else "sharp_fall"
         )
-        try:
-            cfg.instr_sweep_fixed_countrate_kcps = float(cw.sweep_options["deadtime_fixed_countrate_ns"]["extra"].text().strip())
-        except Exception:
+        if "deadtime_fixed_countrate_ns" in cw.sweep_options and cw.sweep_options["deadtime_fixed_countrate_ns"]["extra"] is not None:
+            try:
+                cfg.instr_sweep_fixed_countrate_kcps = float(cw.sweep_options["deadtime_fixed_countrate_ns"]["extra"].text().strip())
+            except Exception:
+                cfg.instr_sweep_fixed_countrate_kcps = 100.0
+        else:
             cfg.instr_sweep_fixed_countrate_kcps = 100.0
-        try:
-            cfg.instr_sweep_fixed_deadtime_ns = float(cw.sweep_options["countrate_fixed_deadtime_kcps"]["extra"].text().strip())
-        except Exception:
+        if "countrate_fixed_deadtime_kcps" in cw.sweep_options and cw.sweep_options["countrate_fixed_deadtime_kcps"]["extra"] is not None:
+            try:
+                cfg.instr_sweep_fixed_deadtime_ns = float(cw.sweep_options["countrate_fixed_deadtime_kcps"]["extra"].text().strip())
+            except Exception:
+                cfg.instr_sweep_fixed_deadtime_ns = 45.0
+        else:
             cfg.instr_sweep_fixed_deadtime_ns = 45.0
         cfg.instr_sweep_vals = self._parse_sweep_values(cfg.instr_sweep_param, cw.get_selected_sweep_values_text())
 
@@ -594,22 +1021,41 @@ class HILIGHTMainWindow(QMainWindow):
             self.diagnostics_widget.append_frame(frame, focus=True)
         else:
             self.diagnostics_widget.clear_frames()
+            # Build name for the legend: parameter=value
+            x_param = self.engine.config.f_x_param
+            # We assume f_x_param is something like "tau1"
+            val = getattr(self.engine.config, "taus", [2.5])[0] if x_param=="tau1" else getattr(self.engine.config, x_param, 2.5)
+            # Use label from control widget for better display
+            try:
+                display_label = self.control_widget.param_rows[x_param]['label'].text().split("(")[0].strip()
+            except:
+                display_label = x_param
+            
+            pdf_label = f"Ref PDF: {display_label} = {val:g} ns"
+            
             self.diagnostics_widget.update_plot(
                 frame["time_vec"],
                 frame["gate_shapes"],
                 irf=frame.get("irf"),
                 pdf=frame.get("pdf"),
-                label=frame.get("label"),
+                label=pdf_label
             )
 
     def refresh_diagnostics(self):
         """Forces a re-distillation of gates and updates the physics plots."""
+        if self.optimization_running:
+            return
         self.sync_ui_to_config()
+        if self.optimization_mode_active and not self.optimization_running:
+            self._show_optimization_baseline()
+            return
         frame = self._create_diagnostics_frame(self.engine.config)
         self._show_diagnostics_frame(frame, use_frames=False)
 
     def interrupt_simulation(self):
         self.engine.config.b_interrupt = True
+        if self.optimization_worker is not None:
+            self.optimization_worker.request_interrupt()
         self.statusBar().showMessage("⌛ Interrupt Request Received...")
 
     def _run_precision_analysis_legacy(self):
@@ -660,9 +1106,19 @@ class HILIGHTMainWindow(QMainWindow):
                 try:
                     _, f_val = self.engine.compute_fisher_info(x_range, int(sweep_cfg.a_photons))
                     batch_results[self._format_sweep_label(param, val, sweep_cfg)] = np.array(f_val, copy=True)
-                    print(f"  DEBUG: [{param}={val}] f_val[0]={f_val[0]:.6f}, f_val[mid]={f_val[len(f_val)//2]:.6f}")
                 finally:
                     self.engine.config = baseline_cfg  # Always restore baseline
+
+            sweep_pdfs = self._build_precision_pdf_ensemble(cfg, x_range)
+
+            # Update Diagnostics with the ensemble
+            frame = self._create_diagnostics_frame(cfg)
+            frame["background_curves"] = sweep_pdfs
+            self.diagnostics_widget.update_plot(
+                frame["time_vec"], frame["gate_shapes"], 
+                irf=frame["irf"], pdf=frame["pdf"], 
+                background_curves=sweep_pdfs
+            )
 
             # ---- SINGLE PLOT UPDATE WITH ALL CURVES ----
             self.fisher_widget.plot_batch(x_range, batch_results,
@@ -671,6 +1127,17 @@ class HILIGHTMainWindow(QMainWindow):
         else:
             # Single curve
             _, f_val = self.engine.compute_fisher_info(x_range, int(cfg.a_photons))
+            
+            sweep_pdfs = self._build_precision_pdf_ensemble(cfg, x_range)
+
+            frame = self._create_diagnostics_frame(cfg)
+            frame["background_curves"] = sweep_pdfs
+            self.diagnostics_widget.update_plot(
+                frame["time_vec"], frame["gate_shapes"], 
+                irf=frame["irf"], pdf=frame["pdf"], 
+                background_curves=sweep_pdfs
+            )
+
             self.fisher_widget.plot_batch(x_range, {"Simulated": np.array(f_val, copy=True)},
                                           ideal_x=x_range, ideal_f=f_ideal)
                                            
@@ -702,6 +1169,20 @@ class HILIGHTMainWindow(QMainWindow):
         if scale == "linear":
             return np.linspace(x_min, x_max, n_steps)
         return np.geomspace(x_min, x_max, n_steps)
+
+    def _build_precision_pdf_ensemble(self, cfg, x_range):
+        original_config = self.engine.config
+        try:
+            curves = []
+            for x_val in x_range:
+                pdf_cfg = copy.deepcopy(cfg)
+                self.engine.config = pdf_cfg
+                self.engine._set_cfg_param(pdf_cfg.f_x_param, float(x_val))
+                self.engine.distill_gates()
+                curves.append(np.array(self.engine.dt_pdf(self.engine.time_vector), copy=True))
+            return curves
+        finally:
+            self.engine.config = original_config
 
     def _parse_sweep_values(self, param, raw_text):
         tokens = [token.strip() for token in raw_text.split(",") if token.strip()]
@@ -758,11 +1239,16 @@ class HILIGHTMainWindow(QMainWindow):
             t_start = 0.0
             if cfg.gate_start_mode == "irf_3sigma":
                 jitter_ns = cfg.timing_jitter / 1000.0
-                sigma_total = np.sqrt((cfg.irf_fwhm / 2.355) ** 2 + jitter_ns ** 2)
-                t_start = cfg.irf_position + 3.0 * sigma_total
+                if cfg.irf_profile == "gaussian":
+                    sigma_total = np.sqrt((cfg.irf_fwhm / 2.355) ** 2 + jitter_ns ** 2)
+                    t_start = cfg.irf_position + 3.0 * sigma_total
+                elif cfg.irf_profile == "ideal (dirac)":
+                    t_start = cfg.irf_position + 3.0 * jitter_ns
+                else:
+                    t_start = cfg.irf_position + cfg.irf_fwhm + 3.0 * jitter_ns
             elif cfg.gate_start_mode == "free":
                 t_start = cfg.gate_first_start
-            t_end = cfg.period if cfg.gate_stick_to_end else cfg.gate_edges[-1]
+            t_end = cfg.period if getattr(cfg, "gate_end_mode", "period") == "period" else getattr(cfg, "gate_last_end", cfg.gate_edges[-1])
             edges = np.linspace(t_start, t_end, int(value) + 1)
             cfg.gate_edges = edges.tolist()
             cfg.gate_widths = np.diff(edges).tolist()
@@ -847,12 +1333,11 @@ class HILIGHTMainWindow(QMainWindow):
             self.engine.grid_templates = None
             self.engine.grid_tau_axis = None
             _, f_ideal = self.engine.compute_ideal_reference(x_range, int(cfg.precision_photons))
+            baseline_reference_area, _ = self.engine._excitation_area_and_peak(baseline_cfg)
 
             plot_results = {}
             accuracy_results = {}
             run_series = []
-            background_pdfs = [] # Accumulate PDFs for background visualization
-
             for raw_value in sweep_values:
                 if self.engine.config.b_interrupt:
                     break
@@ -865,17 +1350,16 @@ class HILIGHTMainWindow(QMainWindow):
                     label = self._format_sweep_label(cfg.instr_sweep_param, raw_value, sweep_cfg)
 
                 frame = self._create_diagnostics_frame(sweep_cfg, label)
+                frame["background_curves"] = self._build_precision_pdf_ensemble(sweep_cfg, x_range)
                 self.diagnostics_widget.append_frame(frame, focus=True)
-                
-                # Update with sweep history (thin lines)
-                background_pdfs.append(frame["pdf"]) # Add current PDF to background set
+
                 self.diagnostics_widget.update_plot(
                     frame["time_vec"],
                     frame["gate_shapes"],
                     irf=frame.get("irf"),
                     pdf=frame.get("pdf"),
                     label=frame.get("label"),
-                    background_curves=background_pdfs
+                    background_curves=frame["background_curves"]
                 )
                 
                 self.diagnostics_widget.pause_playback()
@@ -887,18 +1371,28 @@ class HILIGHTMainWindow(QMainWindow):
 
                 theory_f = np.full(len(x_range), np.nan)
                 theory_fi = np.full(len(x_range), np.nan)
+                throughput_scale = self._precision_throughput_scale(sweep_cfg, baseline_reference_area)
                 theory_label = "Theory" if raw_value is None else f"Theory | {label}"
 
                 def theory_callback(point_idx, fisher_val, f_val):
                     nonlocal completed_steps
                     theory_fi[point_idx] = fisher_val
                     theory_f[point_idx] = f_val
-                    plot_results[theory_label] = np.array(theory_f, copy=True)
+                    plot_results[theory_label] = {
+                        "y": np.array(theory_f, copy=True),
+                        "throughput_scale": throughput_scale,
+                    }
                     completed_steps += 1
                     self._set_progress(completed_steps, max(total_steps, 1), f"Precision theory: {label} ({point_idx + 1}/{len(x_range)})")
                     is_last = point_idx == len(x_range) - 1
                     if is_last or ((point_idx + 1) % plot_update_interval == 0):
-                        self.fisher_widget.plot_batch(x_range, plot_results, ideal_x=x_range, ideal_f=f_ideal)
+                        self.fisher_widget.plot_batch(
+                            x_range,
+                            plot_results,
+                            ideal_x=x_range,
+                            ideal_f=f_ideal,
+                            ideal_throughput_scale=1.0,
+                        )
                         QApplication.processEvents()
 
                 _, theory_final = self.engine.compute_fisher_info(
@@ -907,8 +1401,17 @@ class HILIGHTMainWindow(QMainWindow):
                     point_callback=theory_callback,
                 )
                 theory_f = np.array(theory_final, copy=True)
-                plot_results[theory_label] = theory_f
-                self.fisher_widget.plot_batch(x_range, plot_results, ideal_x=x_range, ideal_f=f_ideal)
+                plot_results[theory_label] = {
+                    "y": theory_f,
+                    "throughput_scale": throughput_scale,
+                }
+                self.fisher_widget.plot_batch(
+                    x_range,
+                    plot_results,
+                    ideal_x=x_range,
+                    ideal_f=f_ideal,
+                    ideal_throughput_scale=1.0,
+                )
 
                 mc_payload = None
                 if run_mc and not self.engine.config.b_interrupt:
@@ -940,6 +1443,7 @@ class HILIGHTMainWindow(QMainWindow):
                             "f_ci_upper": np.array(mc_f_ci_upper, copy=True),
                             "efficiency_ci_lower": np.array(mc_eff_ci_lower, copy=True),
                             "efficiency_ci_upper": np.array(mc_eff_ci_upper, copy=True),
+                            "throughput_scale": throughput_scale,
                         }
                         accuracy_results[label] = {
                             "mean": np.array(mc_mean, copy=True),
@@ -949,7 +1453,13 @@ class HILIGHTMainWindow(QMainWindow):
                         self._set_progress(completed_steps, max(total_steps, 1), f"Monte Carlo validation: {label} ({point_idx + 1}/{len(x_range)})")
                         is_last = point_idx == len(x_range) - 1
                         if is_last or ((point_idx + 1) % plot_update_interval == 0):
-                            self.fisher_widget.plot_batch(x_range, plot_results, ideal_x=x_range, ideal_f=f_ideal)
+                            self.fisher_widget.plot_batch(
+                                x_range,
+                                plot_results,
+                                ideal_x=x_range,
+                                ideal_f=f_ideal,
+                                ideal_throughput_scale=1.0,
+                            )
                             self.mle_accuracy_widget.plot_accuracy(x_range, accuracy_results)
                             QApplication.processEvents()
 
@@ -966,18 +1476,26 @@ class HILIGHTMainWindow(QMainWindow):
                         "f_ci_upper": np.array(mc_payload["f_ci_upper"], copy=True),
                         "efficiency_ci_lower": np.array(mc_payload["efficiency_ci_lower"], copy=True),
                         "efficiency_ci_upper": np.array(mc_payload["efficiency_ci_upper"], copy=True),
+                        "throughput_scale": throughput_scale,
                     }
                     accuracy_results[label] = {
                         "mean": np.array(mc_payload["mean_tau"], copy=True),
                         "std": np.array(mc_payload["std_tau"], copy=True),
                     }
-                    self.fisher_widget.plot_batch(x_range, plot_results, ideal_x=x_range, ideal_f=f_ideal)
+                    self.fisher_widget.plot_batch(
+                        x_range,
+                        plot_results,
+                        ideal_x=x_range,
+                        ideal_f=f_ideal,
+                        ideal_throughput_scale=1.0,
+                    )
                     self.mle_accuracy_widget.plot_accuracy(x_range, accuracy_results)
 
                 run_series.append({
                     "label": label,
                     "theory_fisher": np.array(theory_fi, copy=True),
                     "theory_f": np.array(theory_f, copy=True),
+                    "throughput_scale": throughput_scale,
                     "mc": mc_payload,
                     "diagnostics_frame": frame,
                     "config": copy.deepcopy(sweep_cfg),
@@ -991,8 +1509,7 @@ class HILIGHTMainWindow(QMainWindow):
                 "x_label": target_label,
                 "config": copy.deepcopy(baseline_cfg),
             }
-            self.export_precision_act.setEnabled(bool(run_series))
-            self.control_widget.btn_export.setEnabled(bool(run_series))
+            self._set_export_enabled()
             self.statusBar().showMessage("Precision analysis complete.")
         finally:
             self.engine.config = baseline_cfg
@@ -1071,13 +1588,13 @@ class HILIGHTMainWindow(QMainWindow):
         self.preview_last_precision_report()
 
     def preview_last_precision_report(self):
-        if not self.last_precision_run:
-            self.statusBar().showMessage("No precision run is available to export.")
+        if not self.last_precision_run and not self.last_optimization_run:
+            self.statusBar().showMessage("No reportable precision or optimisation run is available to export.")
             return
 
         html = self._build_precision_report_html()
         dlg = QDialog(self)
-        dlg.setWindowTitle("Precision Report Preview")
+        dlg.setWindowTitle("Report Preview")
         dlg.resize(1200, 850)
         dlg_layout = QVBoxLayout(dlg)
 
@@ -1088,8 +1605,11 @@ class HILIGHTMainWindow(QMainWindow):
 
         button_row = QHBoxLayout()
         button_row.addStretch()
+        open_after_save_chk = QCheckBox("Open saved report", dlg)
+        open_after_save_chk.setChecked(True)
         save_btn = QPushButton("Save As...", dlg)
         close_btn = QPushButton("Close", dlg)
+        button_row.addWidget(open_after_save_chk)
         button_row.addWidget(save_btn)
         button_row.addWidget(close_btn)
         dlg_layout.addLayout(button_row)
@@ -1097,82 +1617,141 @@ class HILIGHTMainWindow(QMainWindow):
         def save_report():
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
-                "Save Precision Report As",
-                "hilighter_precision_report.html",
+                "Save Report As",
+                "hilighter_report.html",
                 "HTML Files (*.html)",
             )
             if not file_path:
                 return
             html_path, asset_dir = self._save_precision_report_package(file_path)
-            self.statusBar().showMessage(f"Precision report saved to {html_path} with assets in {asset_dir}")
+            self.optimization_results_saved = bool(self.last_optimization_run)
+            self.statusBar().showMessage(f"Report saved to {html_path} with assets in {asset_dir}")
+            if open_after_save_chk.isChecked():
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(html_path)))
 
         save_btn.clicked.connect(save_report)
         close_btn.clicked.connect(dlg.accept)
         dlg.exec()
 
-    def _build_precision_report_payload(self):
-        report = self.last_precision_run
-        config_dump = report["config"].model_dump() if hasattr(report["config"], "model_dump") else {}
-        x_range = report["x_range"].tolist()
-        ideal_f = report["ideal_f"].tolist()
-        ideal_eff = (1.0 / np.maximum(report["ideal_f"], 1e-12) ** 2).tolist()
+    def _serialise_snapshot_series(self, label, theory_f, mc_payload=None, cfg_like=None, reference_excitation_area=1.0):
+        theory_arr = np.asarray(theory_f, dtype=float)
+        theory_eff = np.minimum(1.0, 1.0 / (np.maximum(theory_arr, 1e-12) ** 2))
+        throughput_scale = self._precision_throughput_scale(cfg_like, reference_excitation_area) if cfg_like is not None else 1.0
+        entry = {
+            "label": label,
+            "theory_f": theory_arr.tolist(),
+            "theory_eff": theory_eff.tolist(),
+            "theory_throughput": (theory_eff * throughput_scale).tolist(),
+            "throughput_scale": float(throughput_scale),
+        }
+        if mc_payload is not None:
+            mc_f = np.asarray(mc_payload["f_value"], dtype=float)
+            mc_eff = np.asarray(mc_payload["efficiency"], dtype=float)
+            entry["mc_f"] = mc_f.tolist()
+            entry["mc_eff"] = mc_eff.tolist()
+            entry["mc_throughput"] = (mc_eff * throughput_scale).tolist()
+            entry["mc_mean"] = np.asarray(mc_payload["mean_tau"], dtype=float).tolist()
+            entry["mc_std"] = np.asarray(mc_payload["std_tau"], dtype=float).tolist()
+            mc_f_ci_lower = np.asarray(mc_payload["f_ci_lower"], dtype=float)
+            mc_f_ci_upper = np.asarray(mc_payload["f_ci_upper"], dtype=float)
+            mc_eff_ci_lower = np.asarray(mc_payload["efficiency_ci_lower"], dtype=float)
+            mc_eff_ci_upper = np.asarray(mc_payload["efficiency_ci_upper"], dtype=float)
+            entry["mc_f_ci_lower"] = mc_f_ci_lower.tolist()
+            entry["mc_f_ci_upper"] = mc_f_ci_upper.tolist()
+            entry["mc_eff_ci_lower"] = mc_eff_ci_lower.tolist()
+            entry["mc_eff_ci_upper"] = mc_eff_ci_upper.tolist()
+            entry["mc_throughput_ci_lower"] = (mc_eff_ci_lower * throughput_scale).tolist()
+            entry["mc_throughput_ci_upper"] = (mc_eff_ci_upper * throughput_scale).tolist()
+        return entry
 
-        series_payload = []
-        frame_payload = []
-        for item in report["series"]:
-            entry = {
-                "label": item["label"],
-                "theory_f": item["theory_f"].tolist(),
-                "theory_eff": (1.0 / np.maximum(item["theory_f"], 1e-12) ** 2).tolist(),
-            }
-            if item["mc"] is not None:
-                entry["mc_f"] = item["mc"]["f_value"].tolist()
-                entry["mc_eff"] = item["mc"]["efficiency"].tolist()
-                entry["mc_mean"] = item["mc"]["mean_tau"].tolist()
-                entry["mc_std"] = item["mc"]["std_tau"].tolist()
-                entry["mc_f_ci_lower"] = item["mc"]["f_ci_lower"].tolist()
-                entry["mc_f_ci_upper"] = item["mc"]["f_ci_upper"].tolist()
-                entry["mc_eff_ci_lower"] = item["mc"]["efficiency_ci_lower"].tolist()
-                entry["mc_eff_ci_upper"] = item["mc"]["efficiency_ci_upper"].tolist()
-            frame = item["diagnostics_frame"]
-            frame_entry = {
-                "label": frame["label"],
-                "time": frame["time_vec"].tolist(),
-                "gates": frame["gate_shapes"].tolist(),
-                "irf": frame["irf"].tolist(),
-                "pdf": frame["pdf"].tolist(),
-            }
-            series_payload.append(entry)
-            frame_payload.append(frame_entry)
-
-        accuracy_payload = []
-        for label, values in self.mle_accuracy_widget.series_data.items():
-            accuracy_payload.append({
-                "label": label,
-                "mean": np.array(values["mean"], copy=True).tolist(),
-                "std": np.array(values["std"], copy=True).tolist(),
-            })
-
-        if self.diagnostics_widget.frames:
-            frame_payload = []
-            for frame in self.diagnostics_widget.frames:
-                frame_payload.append({
-                    "label": frame.get("label", "Instrument snapshot"),
-                    "time": np.array(frame["time_vec"], copy=True).tolist(),
-                    "gates": np.array(frame["gate_shapes"], copy=True).tolist(),
-                    "irf": np.array(frame.get("irf"), copy=True).tolist() if frame.get("irf") is not None else [],
-                    "pdf": np.array(frame.get("pdf"), copy=True).tolist() if frame.get("pdf") is not None else [],
-                })
-
-        metric_label = "Photon Efficiency (F^-2)" if self.fisher_widget.combo_mode.currentIndex() == 1 else "F-Value (F)"
-        metric_key = "efficiency" if self.fisher_widget.combo_mode.currentIndex() == 1 else "f"
-
+    def _serialise_frame(self, frame):
         return {
-            "timestamp": report["timestamp"],
-            "x_label": report["x_label"],
+            "label": frame.get("label", "Instrument snapshot"),
+            "time": np.array(frame["time_vec"], copy=True).tolist(),
+            "gates": np.array(frame["gate_shapes"], copy=True).tolist(),
+            "irf": np.array(frame.get("irf"), copy=True).tolist() if frame.get("irf") is not None else [],
+            "pdf": np.array(frame.get("pdf"), copy=True).tolist() if frame.get("pdf") is not None else [],
+        }
+
+    def _build_precision_report_payload(self):
+        primary_optimisation = bool(self.last_optimization_run) and (
+            self.optimization_mode_active
+            or not self.last_precision_run
+            or self.last_optimization_run.get("timestamp", "") >= self.last_precision_run.get("timestamp", "")
+        )
+        report = self.last_optimization_run if primary_optimisation else self.last_precision_run
+        if report is None:
+            raise RuntimeError("No reportable run is available.")
+
+        if primary_optimisation:
+            config_dump = copy.deepcopy(report["config"])
+            reference_excitation_area = self.engine._excitation_area_and_peak(self._coerce_physics_config(config_dump))[0]
+            x_range = np.asarray(report["x_range"], dtype=float).tolist()
+            ideal_f = np.asarray(report["ideal_f"], dtype=float).tolist()
+            series_payload = []
+            frame_payload = []
+            accuracy_payload = []
+            for snapshot in report["snapshots"]:
+                series_payload.append(
+                    self._serialise_snapshot_series(
+                        snapshot["label"],
+                        snapshot["theory_f"],
+                        snapshot.get("mc"),
+                        cfg_like=snapshot.get("config"),
+                        reference_excitation_area=reference_excitation_area,
+                    )
+                )
+                frame_payload.append(self._serialise_frame(snapshot["diagnostics_frame"]))
+                accuracy_payload.append({
+                    "label": snapshot["label"],
+                    "mean": np.asarray(snapshot["accuracy"]["mean"], dtype=float).tolist(),
+                    "std": np.asarray(snapshot["accuracy"]["std"], dtype=float).tolist(),
+                })
+            timestamp = report["timestamp"]
+            x_label = report["x_label"]
+        else:
+            config_dump = report["config"].model_dump() if hasattr(report["config"], "model_dump") else {}
+            reference_excitation_area = self.engine._excitation_area_and_peak(self._coerce_physics_config(config_dump))[0]
+            x_range = np.asarray(report["x_range"], dtype=float).tolist()
+            ideal_f = np.asarray(report["ideal_f"], dtype=float).tolist()
+            series_payload = []
+            frame_payload = []
+            for item in report["series"]:
+                series_payload.append(
+                    self._serialise_snapshot_series(
+                        item["label"],
+                        item["theory_f"],
+                        item["mc"],
+                        cfg_like=item.get("config"),
+                        reference_excitation_area=reference_excitation_area,
+                    )
+                )
+                frame_payload.append(self._serialise_frame(item["diagnostics_frame"]))
+            accuracy_payload = []
+            for label, values in self.mle_accuracy_widget.series_data.items():
+                accuracy_payload.append({
+                    "label": label,
+                    "mean": np.array(values["mean"], copy=True).tolist(),
+                    "std": np.array(values["std"], copy=True).tolist(),
+                })
+            timestamp = report["timestamp"]
+            x_label = report["x_label"]
+
+        combo_index = self.fisher_widget.combo_mode.currentIndex()
+        metric_options = {
+            0: ("F-Value (F)", "f"),
+            1: ("Photon Efficiency (F^-2)", "efficiency"),
+            2: ("Fisher Throughput", "throughput"),
+        }
+        metric_label, metric_key = metric_options.get(combo_index, metric_options[0])
+        ideal_eff = np.minimum(1.0, 1.0 / (np.maximum(np.asarray(ideal_f, dtype=float), 1e-12) ** 2))
+        payload = {
+            "timestamp": timestamp,
+            "x_label": x_label,
             "x_range": x_range,
             "ideal_f": ideal_f,
-            "ideal_eff": ideal_eff,
+            "ideal_eff": ideal_eff.tolist(),
+            "ideal_throughput": ideal_eff.tolist(),
             "series": series_payload,
             "frames": frame_payload,
             "config": config_dump,
@@ -1187,10 +1766,63 @@ class HILIGHTMainWindow(QMainWindow):
                 "series": accuracy_payload,
             },
         }
+        if self.last_optimization_run is not None:
+            optimisation_cfg = self.last_optimization_run["config"]
+            payload["optimization"] = {
+                "active_export": primary_optimisation,
+                "options": {
+                    "optimize_detection_gates": bool(optimisation_cfg.get("optimize_detection_gates", False)),
+                    "optimize_excitation_profile": bool(optimisation_cfg.get("optimize_excitation_profile", False)),
+                    "optimization_mode": "sequential",
+                    "optimization_first": str(optimisation_cfg.get("optimization_first", "detection")),
+                    "optimization_iterations": int(optimisation_cfg.get("optimization_iterations", 20)),
+                    "optimization_objective": str(optimisation_cfg.get("optimization_objective", "fisher_throughput")),
+                    "optimization_max_fi_loss_pct": float(optimisation_cfg.get("optimization_max_fi_loss_pct", 5.0)),
+                    "optimization_realtime_visualization": bool(optimisation_cfg.get("optimization_realtime_visualization", False)),
+                    "optimization_intermediate_steps": int(optimisation_cfg.get("optimization_intermediate_steps", 6)),
+                    "optimization_validate_mc_intermediates": bool(optimisation_cfg.get("optimization_validate_mc_intermediates", False)),
+                    "detection_optimization_algorithm": str(optimisation_cfg.get("detection_optimization_algorithm", "fisher_compression")),
+                    "detection_opt_restarts": int(optimisation_cfg.get("detection_opt_restarts", 20)),
+                    "detection_opt_ftol": float(optimisation_cfg.get("detection_opt_ftol", 1e-4)),
+                    "detection_opt_maxiter": int(optimisation_cfg.get("detection_opt_maxiter", 50)),
+                    "detection_opt_fine_bins_per_gate": int(optimisation_cfg.get("detection_opt_fine_bins_per_gate", 12)),
+                    "detection_opt_fine_bin_cap": int(optimisation_cfg.get("detection_opt_fine_bin_cap", 256)),
+                    "detection_opt_fc_nuisance_aware": bool(optimisation_cfg.get("detection_opt_fc_nuisance_aware", True)),
+                    "detection_opt_fc_auto_compress": bool(optimisation_cfg.get("detection_opt_fc_auto_compress", False)),
+                    "detection_opt_fc_initial_gates": int(optimisation_cfg.get("detection_opt_fc_initial_gates", 16)),
+                    "detection_opt_fc_min_gates": int(optimisation_cfg.get("detection_opt_fc_min_gates", 2)),
+                    "detection_opt_fc_max_f_loss_pct": float(optimisation_cfg.get("detection_opt_fc_max_f_loss_pct", 5.0)),
+                    "detection_opt_start_anchor": str(optimisation_cfg.get("detection_opt_start_anchor", "zero")),
+                    "detection_opt_start_time": float(optimisation_cfg.get("detection_opt_start_time", 0.0)),
+                    "detection_opt_end_anchor": str(optimisation_cfg.get("detection_opt_end_anchor", "period")),
+                    "detection_opt_end_time": float(optimisation_cfg.get("detection_opt_end_time", optimisation_cfg.get("period", 12.5))),
+                    "excitation_optimization_profile": str(optimisation_cfg.get("excitation_optimization_profile", "gaussian")),
+                    "excitation_optimization_constraint": str(optimisation_cfg.get("excitation_optimization_constraint", "fixed_dose")),
+                },
+                "objective_history": np.asarray(self.last_optimization_run["objective_history"], dtype=float).tolist(),
+                "min_f_history": np.asarray(self.last_optimization_run["min_f_history"], dtype=float).tolist(),
+                "final_gate_count": int(self.last_optimization_run.get("final_gate_count", max(0, len(self.last_optimization_run.get("final_config", {}).get("gate_edges", [])) - 1))),
+                "snapshots": [
+                    {
+                        "label": snapshot["label"],
+                        "objective": float(snapshot["objective"]),
+                        "min_f": float(snapshot["min_f"]),
+                        "gate_count": int(snapshot.get("gate_count", max(0, len(snapshot.get("config", {}).get("gate_edges", [])) - 1))),
+                        "config": copy.deepcopy(snapshot["config"]),
+                    }
+                    for snapshot in self.last_optimization_run["snapshots"]
+                ],
+                "final_config": copy.deepcopy(self.last_optimization_run["final_config"]),
+                "final_excitation_summary": copy.deepcopy(self.last_optimization_run.get("final_excitation_summary", {})),
+            }
+        return payload
 
     def _save_precision_report_package(self, file_path):
         payload = self._build_precision_report_payload()
-        return write_precision_report_package(file_path, payload)
+        html_path, asset_dir = write_precision_report_package(file_path, payload)
+        if self.last_optimization_run is not None:
+            self.optimization_results_saved = True
+        return html_path, asset_dir
 
     def _build_precision_report_html(self):
         payload = self._build_precision_report_payload()
@@ -1205,7 +1837,7 @@ class HILIGHTMainWindow(QMainWindow):
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HILIGHTer Precision Report</title>
+  <title>HILIGHTer Precision and Optimisation Report</title>
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <style>
     :root {{
@@ -1249,7 +1881,7 @@ class HILIGHTMainWindow(QMainWindow):
     <div class="panel">
       <div class="topbar">
         <div>
-          <h1>HILIGHTer Precision Report</h1>
+          <h1>HILIGHTer Precision and Optimisation Report</h1>
           <div>Generated: {payload["timestamp"]}</div>
           <div>X-Axis: {payload["x_label"]}</div>
         </div>
@@ -1257,10 +1889,15 @@ class HILIGHTMainWindow(QMainWindow):
       </div>
     </div>
     <div class="grid">
-      <div>
+        <div>
         <div class="panel">
           <div class="controls">
-            <label><input type="checkbox" id="showEfficiency"> Show Photon Efficiency</label>
+            <label for="metricSelect">Metric</label>
+            <select id="metricSelect">
+              <option value="f">F-Value (F)</option>
+              <option value="efficiency">Photon Efficiency (F^-2)</option>
+              <option value="throughput">Fisher Throughput</option>
+            </select>
           </div>
           <div id="precisionPlot"></div>
         </div>
@@ -1307,9 +1944,9 @@ class HILIGHTMainWindow(QMainWindow):
       return `rgba(${{r}}, ${{g}}, ${{b}}, ${{alpha}})`;
     }}
 
-    function precisionTraces(showEfficiency) {{
-      const metricKey = showEfficiency ? "theory_eff" : "theory_f";
-      const idealKey = showEfficiency ? "ideal_eff" : "ideal_f";
+    function precisionTraces(metricKey) {{
+      const theoryKey = metricKey === "throughput" ? "theory_throughput" : (metricKey === "efficiency" ? "theory_eff" : "theory_f");
+      const idealKey = metricKey === "throughput" ? "ideal_throughput" : (metricKey === "efficiency" ? "ideal_eff" : "ideal_f");
       const palette = ["#8b5cf6", "#3b82f6", "#ec4899", "#f59e0b", "#ef4444", "#06b6d4", "#84cc16"];
       const traces = [{{
         x: report.x_range,
@@ -1322,14 +1959,17 @@ class HILIGHTMainWindow(QMainWindow):
         const color = palette[idx % palette.length];
         traces.push({{
           x: report.x_range,
-          y: series[metricKey],
+          y: series[theoryKey],
           mode: "lines",
           name: `Theory | ${{series.label}}`,
           line: {{ width: 2, color }}
         }});
         if (series.mc_f) {{
-          const ciLower = showEfficiency ? series.mc_eff_ci_lower : series.mc_f_ci_lower;
-          const ciUpper = showEfficiency ? series.mc_eff_ci_upper : series.mc_f_ci_upper;
+          const mcKey = metricKey === "throughput" ? "mc_throughput" : (metricKey === "efficiency" ? "mc_eff" : "mc_f");
+          const ciLowerKey = metricKey === "throughput" ? "mc_throughput_ci_lower" : (metricKey === "efficiency" ? "mc_eff_ci_lower" : "mc_f_ci_lower");
+          const ciUpperKey = metricKey === "throughput" ? "mc_throughput_ci_upper" : (metricKey === "efficiency" ? "mc_eff_ci_upper" : "mc_f_ci_upper");
+          const ciLower = series[ciLowerKey];
+          const ciUpper = series[ciUpperKey];
           const hasCi = Array.isArray(ciLower) && Array.isArray(ciUpper)
             && ciLower.some((v) => Number.isFinite(v))
             && ciUpper.some((v) => Number.isFinite(v));
@@ -1353,7 +1993,7 @@ class HILIGHTMainWindow(QMainWindow):
             }});
             traces.push({{
               x: report.x_range,
-              y: showEfficiency ? series.mc_eff : series.mc_f,
+              y: series[mcKey],
               mode: "lines",
               name: `Monte Carlo | ${{series.label}}`,
               line: {{ width: 2, color }}
@@ -1361,7 +2001,7 @@ class HILIGHTMainWindow(QMainWindow):
           }} else {{
             traces.push({{
               x: report.x_range,
-              y: showEfficiency ? series.mc_eff : series.mc_f,
+              y: series[mcKey],
               mode: "markers",
               name: `Monte Carlo | ${{series.label}}`,
               marker: {{ size: 8, color, symbol: "circle" }}
@@ -1373,14 +2013,17 @@ class HILIGHTMainWindow(QMainWindow):
     }}
 
     function renderPrecision() {{
-      const showEfficiency = document.getElementById("showEfficiency").checked;
+      const metricKey = document.getElementById("metricSelect").value;
       const theme = themeConfig[currentTheme];
-      Plotly.newPlot("precisionPlot", precisionTraces(showEfficiency), {{
+      const yTitle = metricKey === "throughput"
+        ? "Fisher Throughput"
+        : (metricKey === "efficiency" ? "Photon Efficiency (F^-2)" : "F-Value");
+      Plotly.newPlot("precisionPlot", precisionTraces(metricKey), {{
         paper_bgcolor: theme.paperBg,
         plot_bgcolor: theme.plotBg,
         font: {{ color: theme.font }},
-        xaxis: {{ title: report.x_label, type: "log", gridcolor: theme.grid }},
-        yaxis: {{ title: showEfficiency ? "Photon Efficiency (1/F²)" : "F-Value", gridcolor: theme.grid }},
+        xaxis: {{ title: report.x_label, type: report.precision_display.log_x ? "log" : "linear", gridcolor: theme.grid }},
+        yaxis: {{ title: yTitle, type: report.precision_display.log_y ? "log" : "linear", gridcolor: theme.grid }},
         legend: {{ orientation: "h" }},
         margin: {{ t: 30, r: 20, b: 60, l: 70 }}
       }}, {{ responsive: true }});
@@ -1404,7 +2047,7 @@ class HILIGHTMainWindow(QMainWindow):
         paper_bgcolor: theme.paperBg,
         plot_bgcolor: theme.plotBg,
         font: {{ color: theme.font }},
-        xaxis: {{ title: report.x_label, type: "log", gridcolor: theme.grid }},
+        xaxis: {{ title: report.x_label, type: report.precision_display.log_x ? "log" : "linear", gridcolor: theme.grid }},
         yaxis: {{ title: "Monte Carlo mean τ ± std", gridcolor: theme.grid }},
         margin: {{ t: 30, r: 20, b: 60, l: 70 }}
       }}, {{ responsive: true }});
@@ -1457,7 +2100,8 @@ class HILIGHTMainWindow(QMainWindow):
       }}
     }}
 
-    document.getElementById("showEfficiency").addEventListener("change", renderPrecision);
+    document.getElementById("metricSelect").value = report.precision_display.metric || "f";
+    document.getElementById("metricSelect").addEventListener("change", renderPrecision);
     document.getElementById("themeToggle").addEventListener("click", () => {{
       applyTheme(currentTheme === "dark" ? "light" : "dark");
     }});
@@ -1474,19 +2118,37 @@ class HILIGHTMainWindow(QMainWindow):
     def show_about(self):
         from PyQt6.QtWidgets import QMessageBox
         about_text = """
-        <h2>HILIGHTer Digital Twin</h2>
+        <h2 style='color: #22d3ee;'>HILIGHTer Digital Twin | Desktop Workspace</h2>
         <p>A full-spectrum modeling environment for high-speed time-gated imaging.</p>
+        <hr>
+        <p><b>Project funded by EU HORIZON and UKRI</b><br>
+        <a href='https://hilighthorizon.eu/'>https://hilighthorizon.eu/</a></p>
+        
+        <p><b>Created by:</b><br>
+        Dr Alessandro Esposito (Brunel University London)</p>
+
+        <p><b>Contributors:</b><br>
+        Alessandro Esposito (@ae275)<br>
+        Conor Treacy (@c-treacy)</p>
+
         <hr>
         <b>Powered by:</b>
         <ul>
             <li><b>PhasorPy</b>: High-precision fit-free analysis.</li>
             <li><b>PyQt6 & PyQtGraph</b>: High-performance UI and plotting.</li>
-            <li><b>NumPy & SciPy</b>: Core numerical and signal processing.</li>
+            <li><b>NumPy, SciPy & Numba</b>: Numerical processing kernels.</li>
             <li><b>QDarkStyle</b>: Sleek, research-ready aesthetics.</li>
         </ul>
         <p><i>Special thanks to the PhasorPy contributors for their standard-setting phasor approach implementation.</i></p>
         """
         QMessageBox.about(self, "About HILIGHTer", about_text)
+
+    def show_manual(self):
+        """Displays the interactive manual as a floating window."""
+        self.manual_widget.show()
+        self.manual_widget.raise_()
+        self.manual_widget.activateWindow()
+        self.statusBar().showMessage("Displaying Interactive Manual (Ctrl+H).")
 
 
 if __name__ == "__main__":

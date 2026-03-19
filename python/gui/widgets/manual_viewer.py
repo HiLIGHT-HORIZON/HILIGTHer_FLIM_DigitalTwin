@@ -1,7 +1,7 @@
 import os
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import QUrl, Qt
 
 class ManualWidget(QWidget):
     """
@@ -11,6 +11,9 @@ class ManualWidget(QWidget):
     def __init__(self, manual_path: str):
         super().__init__()
         self.manual_path = manual_path
+        self.setWindowTitle("Interactive Manual")
+        self.setWindowFlag(Qt.WindowType.Window, True)
+        self.resize(1180, 860)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         

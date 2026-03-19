@@ -31,6 +31,7 @@ class FisherWidget(QWidget):
         self.batch_data = {}
         self.ideal_tau = None
         self.ideal_f = None
+        self.ideal_throughput_scale = 1.0
 
         ctrl_layout = QHBoxLayout()
         self.chk_log_x = QCheckBox("Log X")
@@ -43,9 +44,9 @@ class FisherWidget(QWidget):
         self.chk_log_y.setToolTip("Display the precision metric axis on a logarithmic scale.")
 
         self.combo_mode = QComboBox()
-        self.combo_mode.addItems(["F-Value (F)", "Photon Efficiency (F^-2)"])
+        self.combo_mode.addItems(["F-Value (F)", "Photon Efficiency (F^-2)", "Fisher Throughput"])
         self.combo_mode.currentIndexChanged.connect(self.refresh_plot)
-        self.combo_mode.setToolTip("Choose whether to display F or photon efficiency.")
+        self.combo_mode.setToolTip("Choose whether to display F, photon efficiency, or Fisher throughput.")
 
         self.chk_smooth_mc = QCheckBox("Smooth MC")
         self.chk_smooth_mc.toggled.connect(self._set_mc_smoothing_enabled)
@@ -205,10 +206,34 @@ class FisherWidget(QWidget):
     def set_xaxis_label(self, text):
         self.plot_widget.setLabel("bottom", text)
 
-    def plot_batch(self, x, results_dict, ideal_x=None, ideal_f=None):
+    @staticmethod
+    def _f_to_efficiency(f_values):
+        f_arr = np.asarray(f_values, dtype=float)
+        return np.minimum(1.0, 1.0 / (np.maximum(f_arr, 1e-12) ** 2))
+
+    def _metric_meta(self):
+        mode = self.combo_mode.currentIndex()
+        if mode == 0:
+            return "F-Value (F)", "f"
+        if mode == 1:
+            return "Photon Efficiency (F^-2)", "efficiency"
+        return "Fisher Throughput", "throughput"
+
+    def _display_metric_values(self, f_values, throughput_scale):
+        _metric_label, metric_key = self._metric_meta()
+        if metric_key == "f":
+            return np.asarray(f_values, dtype=float)
+        efficiency = self._f_to_efficiency(f_values)
+        if metric_key == "efficiency":
+            return efficiency
+        return efficiency * float(throughput_scale)
+
+    def plot_batch(self, x, results_dict, ideal_x=None, ideal_f=None, ideal_throughput_scale=None):
         if ideal_x is not None:
             self.ideal_tau = np.array(ideal_x, copy=True)
             self.ideal_f = np.array(ideal_f, copy=True)
+        if ideal_throughput_scale is not None:
+            self.ideal_throughput_scale = float(ideal_throughput_scale)
 
         self.batch_data = {}
         x_copy = np.array(x, copy=True)
@@ -222,6 +247,7 @@ class FisherWidget(QWidget):
                     "f_ci_upper": None if entry.get("f_ci_upper") is None else np.array(entry.get("f_ci_upper"), copy=True),
                     "efficiency_ci_lower": None if entry.get("efficiency_ci_lower") is None else np.array(entry.get("efficiency_ci_lower"), copy=True),
                     "efficiency_ci_upper": None if entry.get("efficiency_ci_upper") is None else np.array(entry.get("efficiency_ci_upper"), copy=True),
+                    "throughput_scale": float(entry.get("throughput_scale", 1.0)),
                 }
             else:
                 self.batch_data[label] = {
@@ -232,6 +258,7 @@ class FisherWidget(QWidget):
                     "f_ci_upper": None,
                     "efficiency_ci_lower": None,
                     "efficiency_ci_upper": None,
+                    "throughput_scale": 1.0,
                 }
 
         self.refresh_plot()
@@ -247,6 +274,7 @@ class FisherWidget(QWidget):
             "f_ci_upper": None,
             "efficiency_ci_lower": None,
             "efficiency_ci_upper": None,
+            "throughput_scale": 1.0,
         }
         if ideal_x is not None:
             self.ideal_tau = np.array(ideal_x, copy=True)
@@ -431,8 +459,7 @@ class FisherWidget(QWidget):
         self._clear_dynamic_legend()
         self.series_groups = {}
 
-        mode = self.combo_mode.currentIndex()
-        metric = "F-Value" if mode == 0 else "Efficiency (F^-2)"
+        metric, metric_key = self._metric_meta()
         self.plot_widget.setLabel("left", metric)
         self.plot_widget.setLogMode(x=self.chk_log_x.isChecked(), y=self.chk_log_y.isChecked())
 
@@ -453,7 +480,8 @@ class FisherWidget(QWidget):
 
             x = np.array(payload["x"], copy=False)
             f = np.array(payload["y"], copy=False)
-            y_data = f if mode == 0 else 1.0 / (np.maximum(f, 1e-12) ** 2)
+            throughput_scale = float(payload.get("throughput_scale", 1.0))
+            y_data = self._display_metric_values(f, throughput_scale)
             mask = self._valid_mask(x, y_data)
             if not np.any(mask):
                 continue
@@ -462,8 +490,12 @@ class FisherWidget(QWidget):
             all_y.append(np.array(y_data[mask], copy=True))
 
             if category == "mc":
-                ci_lower = payload.get("f_ci_lower") if mode == 0 else payload.get("efficiency_ci_lower")
-                ci_upper = payload.get("f_ci_upper") if mode == 0 else payload.get("efficiency_ci_upper")
+                if metric_key == "f":
+                    ci_lower = payload.get("f_ci_lower")
+                    ci_upper = payload.get("f_ci_upper")
+                else:
+                    ci_lower = payload.get("efficiency_ci_lower")
+                    ci_upper = payload.get("efficiency_ci_upper")
                 has_ci = (
                     ci_lower is not None
                     and ci_upper is not None
@@ -473,6 +505,12 @@ class FisherWidget(QWidget):
                 if has_ci:
                     ci_lower = np.array(ci_lower, copy=True)
                     ci_upper = np.array(ci_upper, copy=True)
+                    if metric_key != "f":
+                        ci_lower = np.minimum(1.0, ci_lower)
+                        ci_upper = np.minimum(1.0, ci_upper)
+                    if metric_key == "throughput":
+                        ci_lower = ci_lower * throughput_scale
+                        ci_upper = ci_upper * throughput_scale
                     ci_mask = mask & self._valid_mask(x, ci_lower) & self._valid_mask(x, ci_upper)
                     if not np.any(ci_mask):
                         continue
@@ -547,7 +585,7 @@ class FisherWidget(QWidget):
                 self._register_item(base_label, "theory", item)
 
         if self.ideal_tau is not None and self.ideal_f is not None:
-            ideal_y = self.ideal_f if mode == 0 else 1.0 / (np.maximum(self.ideal_f, 1e-12) ** 2)
+            ideal_y = self._display_metric_values(self.ideal_f, self.ideal_throughput_scale)
             ideal_mask = self._valid_mask(self.ideal_tau, ideal_y)
             if np.any(ideal_mask):
                 self.ideal_curve.setData(self.ideal_tau[ideal_mask], ideal_y[ideal_mask])

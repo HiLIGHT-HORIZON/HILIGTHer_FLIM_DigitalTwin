@@ -1,15 +1,21 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, 
-                             QDoubleSpinBox, QSpinBox, QPushButton, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
+                             QDoubleSpinBox, QSpinBox, QPushButton,
                              QComboBox, QLabel, QGroupBox, QTabWidget,
                              QCheckBox, QLineEdit, QRadioButton, QButtonGroup,
-                             QStackedWidget, QTextEdit)
+                             QStackedWidget, QTextEdit, QToolButton, QDialog,
+                             QDialogButtonBox)
 from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtGui import QGuiApplication
+import numpy as np
+import pyqtgraph as pg
 
 class ControlWidget(QWidget):
     context_changed = pyqtSignal(str) # Emits section ID for manual
 
     def __init__(self):
         super().__init__()
+        self.current_theme = "dark"
+        self.optimization_running_state = False
         layout = QVBoxLayout(self)
         
         # Main Tab Container
@@ -241,7 +247,7 @@ class ControlWidget(QWidget):
         laser_layout.addRow(self.chk_decay_wrap)
 
         self.combo_profile = QComboBox()
-        self.combo_profile.addItems(["Gaussian", "Rectangular", "Ideal (Dirac)"])
+        self.combo_profile.addItems(["Gaussian", "Rectangular", "Free Form", "Ideal (Dirac)"])
         laser_layout.addRow("IRF Profile:", self.combo_profile)
         
         self.spin_fwhm = QDoubleSpinBox(); self.spin_fwhm.setValue(0.25)
@@ -281,7 +287,7 @@ class ControlWidget(QWidget):
         
         self.tabs.addTab(laser_tab, "Excitation")
         
-        # Connect IRF profile changes for adaptive UI
+        # Connect IRF profile changes for the excitation-specific controls
         self.combo_profile.currentIndexChanged.connect(self._update_irf_ui)
         self._update_irf_ui()
 
@@ -302,16 +308,17 @@ class ControlWidget(QWidget):
         gating_group = QGroupBox("Gating")
         gate_layout = QFormLayout(gating_group)
         self.spin_num_gates = QSpinBox(); self.spin_num_gates.setRange(2, 512); self.spin_num_gates.setValue(4)
-        self.combo_gate_type = QComboBox(); self.combo_gate_type.addItems(["Equal", "Custom", "Adaptive"])
+        self.combo_gate_type = QComboBox(); self.combo_gate_type.addItems(["Equal", "Custom"])
         gate_layout.addRow(two_column_row("Num Gates:", self.spin_num_gates, "Gate Type:", self.combo_gate_type))
+        self.label_gate_definition = QLabel("Gate Edges (ns):")
         self.edit_gate_widths = QLineEdit()
-        gate_layout.addRow("Widths (ns):", self.edit_gate_widths)
+        gate_layout.addRow(self.label_gate_definition, self.edit_gate_widths)
+        self.lbl_gate_error = QLabel("")
+        self.lbl_gate_error.setStyleSheet("color: #dc2626; font-weight: bold;")
+        gate_layout.addRow("", self.lbl_gate_error)
         self.spin_gate_rise = QDoubleSpinBox(); self.spin_gate_rise.setValue(0.1)
         self.spin_gate_fall = QDoubleSpinBox(); self.spin_gate_fall.setValue(0.1)
         gate_layout.addRow(two_column_row("Edge Rise (ns):", self.spin_gate_rise, "Edge Fall (ns):", self.spin_gate_fall))
-        self.chk_gate_stick = QCheckBox("Stick last gate to period")
-        self.chk_gate_stick.setChecked(True)
-        gate_layout.addRow(self.chk_gate_stick)
 
         # Radio button group for gate start mode
         start_group = QGroupBox("Gate Start Alignment")
@@ -340,22 +347,107 @@ class ControlWidget(QWidget):
         start_layout.addLayout(free_layout)
         
         gate_layout.addRow(start_group)
+
+        end_group = QGroupBox("Gate End Alignment")
+        end_layout = QVBoxLayout(end_group)
+
+        self.radio_gate_end_period = QRadioButton("Stick to end of period")
+        self.radio_gate_end_free = QRadioButton("Free")
+        self.radio_gate_end_period.setChecked(True)
+
+        self.gate_end_bg = QButtonGroup()
+        self.gate_end_bg.addButton(self.radio_gate_end_period)
+        self.gate_end_bg.addButton(self.radio_gate_end_free)
+
+        end_layout.addWidget(self.radio_gate_end_period)
+        end_free_layout = QHBoxLayout()
+        end_free_layout.addWidget(self.radio_gate_end_free)
+        self.spin_gate_last = QDoubleSpinBox()
+        self.spin_gate_last.setRange(0, 1000)
+        self.spin_gate_last.setValue(12.5)
+        self.spin_gate_last.setEnabled(False)
+        end_free_layout.addWidget(self.spin_gate_last)
+        end_layout.addLayout(end_free_layout)
+        gate_layout.addRow(end_group)
+
+        collection_group = QGroupBox("Gate Collection")
+        collection_layout = QVBoxLayout(collection_group)
+        self.radio_gate_collection_hist = QRadioButton("Histogram bin")
+        self.radio_gate_collection_seq = QRadioButton("Sequential (under development)")
+        self.radio_gate_collection_hist.setChecked(True)
+        self.gate_collection_bg = QButtonGroup()
+        self.gate_collection_bg.addButton(self.radio_gate_collection_hist)
+        self.gate_collection_bg.addButton(self.radio_gate_collection_seq)
+        collection_layout.addWidget(self.radio_gate_collection_hist)
+        collection_layout.addWidget(self.radio_gate_collection_seq)
+        gate_layout.addRow(collection_group)
+
+        overlap_group = QGroupBox("Gate Overlap")
+        overlap_layout = QVBoxLayout(overlap_group)
+        self.radio_overlap_jitter = QRadioButton("Only for jittering/skewness")
+        self.radio_overlap_never = QRadioButton("Never")
+        self.radio_overlap_yes = QRadioButton("Yes (under development)")
+        self.radio_overlap_jitter.setChecked(True)
+        self.gate_overlap_bg = QButtonGroup()
+        self.gate_overlap_bg.addButton(self.radio_overlap_jitter)
+        self.gate_overlap_bg.addButton(self.radio_overlap_never)
+        self.gate_overlap_bg.addButton(self.radio_overlap_yes)
+        overlap_layout.addWidget(self.radio_overlap_jitter)
+        overlap_layout.addWidget(self.radio_overlap_never)
+        overlap_yes_row = QHBoxLayout()
+        overlap_yes_row.addWidget(self.radio_overlap_yes)
+        self.spin_gate_overlap = QDoubleSpinBox()
+        self.spin_gate_overlap.setRange(0.0, 1000.0)
+        self.spin_gate_overlap.setDecimals(3)
+        self.spin_gate_overlap.setSingleStep(0.01)
+        self.spin_gate_overlap.setValue(0.0)
+        self.spin_gate_overlap.setEnabled(False)
+        overlap_yes_row.addWidget(self.spin_gate_overlap)
+        overlap_layout.addLayout(overlap_yes_row)
+        gate_layout.addRow(overlap_group)
+
+        overlap_effect_group = QGroupBox("Overlap Effect")
+        overlap_effect_layout = QVBoxLayout(overlap_effect_group)
+        self.radio_overlap_effect_exclusive = QRadioButton("Exclusive")
+        self.radio_overlap_effect_duplicate = QRadioButton("Duplicate events (under development)")
+        self.radio_overlap_effect_independent = QRadioButton("Independent duplicates (under development)")
+        self.radio_overlap_effect_exclusive.setChecked(True)
+        self.gate_overlap_effect_bg = QButtonGroup()
+        self.gate_overlap_effect_bg.addButton(self.radio_overlap_effect_exclusive)
+        self.gate_overlap_effect_bg.addButton(self.radio_overlap_effect_duplicate)
+        self.gate_overlap_effect_bg.addButton(self.radio_overlap_effect_independent)
+        overlap_effect_layout.addWidget(self.radio_overlap_effect_exclusive)
+        overlap_effect_layout.addWidget(self.radio_overlap_effect_duplicate)
+        overlap_effect_layout.addWidget(self.radio_overlap_effect_independent)
+        gate_layout.addRow(overlap_effect_group)
+
+        self.chk_gate_wraparound = QCheckBox("Wrap around")
+        self.chk_gate_wraparound.setChecked(True)
+        gate_layout.addRow(self.chk_gate_wraparound)
         
         # Connect radio buttons
         self.radio_gate_free.toggled.connect(self.spin_gate_first.setEnabled)
+        self.radio_gate_end_free.toggled.connect(self.spin_gate_last.setEnabled)
+        self.radio_overlap_yes.toggled.connect(self.spin_gate_overlap.setEnabled)
 
         detection_layout.addWidget(gating_group)
         detection_layout.addStretch()
         self.tabs.addTab(detection_tab, "Detection")
 
-        # --- TAB 5: OPTIMIZATION ---
+        # --- TAB 5: OPTIMISATION ---
         optimization_tab = QWidget()
         optimization_layout = QVBoxLayout(optimization_tab)
 
-        optimization_scope_group = QGroupBox("Optimization Scope")
+        self.lbl_optimization_banner = QLabel("Optimisation mode inactive")
+        self.lbl_optimization_banner.setStyleSheet(
+            "padding: 8px 10px; border-radius: 8px; background: #334155; color: white; font-weight: bold;"
+        )
+        optimization_layout.addWidget(self.lbl_optimization_banner)
+
+        optimization_scope_group = QGroupBox("Optimisation Setup")
         optimization_scope_form = QFormLayout(optimization_scope_group)
-        self.chk_opt_detection = QCheckBox("Optimize detection gates")
-        self.chk_opt_excitation = QCheckBox("Optimize excitation profile")
+        self.chk_opt_detection = QCheckBox("Optimise detection gates")
+        self.chk_opt_excitation = QCheckBox("Optimise excitation profile")
         scope_row = QWidget()
         scope_row_layout = QHBoxLayout(scope_row)
         scope_row_layout.setContentsMargins(0, 0, 0, 0)
@@ -365,41 +457,69 @@ class ControlWidget(QWidget):
         optimization_scope_form.addRow(scope_row)
 
         self.combo_optimization_mode = QComboBox()
-        self.combo_optimization_mode.addItems(["Sequential", "Iterative"])
-        optimization_scope_form.addRow("Execution Mode:", self.combo_optimization_mode)
+        self.combo_optimization_mode.addItems(["Sequential"])
+        self.combo_optimization_mode.hide()
 
         self.combo_optimization_first = QComboBox()
         self.combo_optimization_first.addItems(["Detection First", "Excitation First"])
         self.spin_optimization_iterations = QSpinBox()
         self.spin_optimization_iterations.setRange(1, 50)
-        self.spin_optimization_iterations.setValue(3)
-        optimization_scope_form.addRow(two_column_row("Run Order:", self.combo_optimization_first, "Iterations:", self.spin_optimization_iterations))
+        self.spin_optimization_iterations.setValue(20)
+        optimization_scope_form.addRow(two_column_row("Run Order:", self.combo_optimization_first, "Max iterations:", self.spin_optimization_iterations))
         optimization_layout.addWidget(optimization_scope_group)
 
-        optimization_objective_group = QGroupBox("Optimization Objective")
-        optimization_objective_form = QFormLayout(optimization_objective_group)
-        self.combo_optimization_objective = QComboBox()
-        self.combo_optimization_objective.addItems(["Fisher Information", "Fisher Throughput"])
-        optimization_objective_form.addRow("Objective:", self.combo_optimization_objective)
+        optimization_view_group = QGroupBox("Optimisation Visualisation")
+        optimization_view_form = QFormLayout(optimization_view_group)
+        self.chk_optimization_realtime = QCheckBox("Real-time display")
+        self.chk_optimization_realtime.setChecked(False)
+        self.spin_optimization_steps_to_show = QSpinBox()
+        self.spin_optimization_steps_to_show.setRange(2, 24)
+        self.spin_optimization_steps_to_show.setValue(6)
+        self.chk_optimization_validate_mc = QCheckBox("Run MC")
+        self.chk_optimization_validate_mc.setChecked(False)
+        optimization_view_row = QWidget()
+        optimization_view_row_layout = QHBoxLayout(optimization_view_row)
+        optimization_view_row_layout.setContentsMargins(0, 0, 0, 0)
+        optimization_view_row_layout.addWidget(self.chk_optimization_realtime)
+        optimization_view_row_layout.addSpacing(10)
+        optimization_view_row_layout.addWidget(QLabel("Stored steps:"))
+        optimization_view_row_layout.addWidget(self.spin_optimization_steps_to_show)
+        optimization_view_row_layout.addSpacing(10)
+        optimization_view_row_layout.addWidget(self.chk_optimization_validate_mc)
+        optimization_view_row_layout.addStretch()
+        optimization_view_form.addRow(optimization_view_row)
+        optimization_layout.addWidget(optimization_view_group)
 
-        self.spin_optimization_fi_loss = QDoubleSpinBox()
-        self.spin_optimization_fi_loss.setRange(0.0, 100.0)
-        self.spin_optimization_fi_loss.setDecimals(2)
-        self.spin_optimization_fi_loss.setSingleStep(0.5)
-        self.spin_optimization_fi_loss.setValue(5.0)
-        optimization_objective_form.addRow("Max FI Loss (%):", self.spin_optimization_fi_loss)
-        optimization_layout.addWidget(optimization_objective_group)
-
-        detection_opt_group = QGroupBox("Detection Gate Optimization")
+        detection_opt_group = QGroupBox("Detection Gate Optimisation")
         detection_opt_form = QFormLayout(detection_opt_group)
         self.combo_detection_algorithm = QComboBox()
         self.combo_detection_algorithm.addItems([
-            "Direct Mean F Minimization",
+            "Fisher Compression",
+            "Direct Mean F Minimisation",
             "Partition Theorem Bottom-Up",
             "Partition Theorem Top-Down",
-            "Fisher Compression",
         ])
-        detection_opt_form.addRow("Algorithm:", self.combo_detection_algorithm)
+        self.btn_detection_algorithm_settings = QToolButton()
+        self.btn_detection_algorithm_settings.setText("⚙")
+        self.btn_detection_algorithm_settings.setAutoRaise(True)
+        self.btn_detection_algorithm_settings.setFixedWidth(28)
+        self.btn_detection_algorithm_settings.clicked.connect(self._open_detection_algorithm_settings)
+        self.detection_opt_restarts = 20
+        self.detection_opt_ftol = 1e-4
+        self.detection_opt_maxiter = 50
+        self.detection_opt_fine_bins_per_gate = 12
+        self.detection_opt_fine_bin_cap = 256
+        self.detection_opt_fc_nuisance_aware = True
+        self.detection_opt_fc_auto_compress = False
+        self.detection_opt_fc_initial_gates = 16
+        self.detection_opt_fc_min_gates = 2
+        self.detection_opt_fc_max_f_loss_pct = 5.0
+        algorithm_row = QWidget()
+        algorithm_row_layout = QHBoxLayout(algorithm_row)
+        algorithm_row_layout.setContentsMargins(0, 0, 0, 0)
+        algorithm_row_layout.addWidget(self.combo_detection_algorithm, 1)
+        algorithm_row_layout.addWidget(self.btn_detection_algorithm_settings)
+        detection_opt_form.addRow("Algorithm:", algorithm_row)
 
         self.combo_detection_start_anchor = QComboBox()
         self.combo_detection_start_anchor.addItems(["Stick to 0", "Start after IRF", "Custom"])
@@ -417,48 +537,146 @@ class ControlWidget(QWidget):
         detection_opt_form.addRow(two_column_row("Last Gate End:", self.combo_detection_end_anchor, "Custom End (ns):", self.spin_detection_end_anchor))
         optimization_layout.addWidget(detection_opt_group)
 
-        excitation_opt_group = QGroupBox("Excitation Optimization")
+        excitation_opt_group = QGroupBox("Excitation Optimisation")
         excitation_opt_form = QFormLayout(excitation_opt_group)
         self.combo_excitation_optimization_profile = QComboBox()
         self.combo_excitation_optimization_profile.addItems(["Gaussian", "Square", "Free Form"])
-        excitation_opt_form.addRow("Profile Family:", self.combo_excitation_optimization_profile)
-
         self.combo_excitation_constraint = QComboBox()
         self.combo_excitation_constraint.addItems(["Fixed dose (area)", "Fixed peak"])
-        excitation_opt_form.addRow("Constraint:", self.combo_excitation_constraint)
+        self.combo_optimization_objective = QComboBox()
+        self.combo_optimization_objective.addItems(["Fisher Information", "Fisher Throughput"])
+        self.combo_optimization_objective.setCurrentText("Fisher Throughput")
+        self.spin_optimization_fi_loss = QDoubleSpinBox()
+        self.spin_optimization_fi_loss.setRange(0.0, 100.0)
+        self.spin_optimization_fi_loss.setDecimals(2)
+        self.spin_optimization_fi_loss.setSingleStep(0.5)
+        self.spin_optimization_fi_loss.setValue(5.0)
+        excitation_opt_form.addRow(
+            two_column_row("Type:", self.combo_excitation_optimization_profile, "Constraint:", self.combo_excitation_constraint)
+        )
+        excitation_opt_form.addRow(
+            two_column_row("Objective:", self.combo_optimization_objective, "Max F^-2 loss (%):", self.spin_optimization_fi_loss)
+        )
 
         self.spin_excitation_width_min = QDoubleSpinBox()
-        self.spin_excitation_width_min.setRange(0.001, 1000.0)
+        self.spin_excitation_width_min.setRange(0.0001, 1000.0)
+        self.spin_excitation_width_min.setDecimals(6)
+        self.spin_excitation_width_min.setSingleStep(0.0001)
         self.spin_excitation_width_min.setValue(0.05)
         self.spin_excitation_width_max = QDoubleSpinBox()
-        self.spin_excitation_width_max.setRange(0.001, 1000.0)
+        self.spin_excitation_width_max.setRange(0.0001, 1000.0)
+        self.spin_excitation_width_max.setDecimals(6)
+        self.spin_excitation_width_max.setSingleStep(0.0001)
         self.spin_excitation_width_max.setValue(10.0)
-        excitation_opt_form.addRow(two_column_row("Width Min (ns):", self.spin_excitation_width_min, "Width Max (ns):", self.spin_excitation_width_max))
-
         self.spin_excitation_control_points = QSpinBox()
         self.spin_excitation_control_points.setRange(3, 64)
         self.spin_excitation_control_points.setValue(8)
-        excitation_opt_form.addRow("Free-Form Control Points:", self.spin_excitation_control_points)
+        excitation_row = QWidget()
+        excitation_row_layout = QHBoxLayout(excitation_row)
+        excitation_row_layout.setContentsMargins(0, 0, 0, 0)
+        excitation_row_layout.addWidget(QLabel("Width min (ns):"))
+        excitation_row_layout.addWidget(self.spin_excitation_width_min, 1)
+        excitation_row_layout.addSpacing(8)
+        excitation_row_layout.addWidget(QLabel("Max (ns):"))
+        excitation_row_layout.addWidget(self.spin_excitation_width_max, 1)
+        excitation_row_layout.addSpacing(8)
+        excitation_row_layout.addWidget(QLabel("Control pts:"))
+        excitation_row_layout.addWidget(self.spin_excitation_control_points, 1)
+        excitation_opt_form.addRow(excitation_row)
         optimization_layout.addWidget(excitation_opt_group)
+
+        self.lbl_optimization_current = QLabel("Current simulated value: baseline configuration")
+        self.lbl_optimization_current.setWordWrap(True)
+        optimization_layout.addWidget(self.lbl_optimization_current)
 
         self.txt_optimization_hint = QTextEdit()
         self.txt_optimization_hint.setReadOnly(True)
-        self.txt_optimization_hint.setMaximumHeight(72)
+        self.txt_optimization_hint.setMaximumHeight(110)
         self.txt_optimization_hint.setPlainText(
-            "Run optimization from here. All detection-gate algorithms are now wired through this entry point. "
-            "Excitation and joint optimization modes are configured but not fully implemented yet."
+            "Optimisation mode uses the Precision, MLE Accuracy, and Instrument Diagnostics widgets as the live "
+            "workspace. Detection, excitation, throughput-aware selection, and joint sequential or iterative "
+            "optimisation all run from this tab."
         )
         optimization_layout.addWidget(self.txt_optimization_hint)
 
-        self.btn_run_optimization = QPushButton("RUN OPTIMIZATION")
+        button_row = QWidget()
+        button_row_layout = QHBoxLayout(button_row)
+        button_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.btn_run_optimization = QPushButton("RUN OPTIMISATION")
         self.btn_run_optimization.setStyleSheet("background-color: #166534; color: white; font-weight: bold;")
-        optimization_layout.addWidget(self.btn_run_optimization)
+        button_row_layout.addWidget(self.btn_run_optimization)
+        self.btn_exit_optimization = QPushButton("EXIT OPTIMISATION MODE")
+        self.btn_exit_optimization.setStyleSheet("background-color: #991b1b; color: white; font-weight: bold;")
+        self.btn_exit_optimization.setEnabled(False)
+        button_row_layout.addWidget(self.btn_exit_optimization)
+        optimization_layout.addWidget(button_row)
+
+        objective_header = QWidget()
+        objective_header_layout = QHBoxLayout(objective_header)
+        objective_header_layout.setContentsMargins(0, 0, 0, 0)
+        objective_header_layout.addWidget(QLabel("Objective History"))
+        objective_header_layout.addStretch()
+        self.btn_copy_optimization_objective = QPushButton("📋")
+        self.btn_copy_optimization_objective.setToolTip("Copy objective-history plot to clipboard")
+        self.btn_copy_optimization_objective.setMaximumWidth(30)
+        self.btn_copy_optimization_objective.setStyleSheet("padding: 2px; font-size: 14px;")
+        self.btn_copy_optimization_objective.clicked.connect(
+            lambda: self._copy_widget_to_clipboard(self.optimization_objective_plot)
+        )
+        objective_header_layout.addWidget(self.btn_copy_optimization_objective)
+        optimization_layout.addWidget(objective_header)
+
+        self.optimization_objective_plot = pg.PlotWidget()
+        self.optimization_objective_plot.setMinimumHeight(180)
+        self.optimization_objective_plot.showGrid(x=True, y=True, alpha=0.25)
+        self.optimization_objective_plot.setLabel("left", "Objective")
+        self.optimization_objective_plot.setLabel("bottom", "Iteration")
+        self.optimization_objective_plot.setLogMode(x=False, y=True)
+        self.optimization_objective_curve = self.optimization_objective_plot.plot(
+            pen=pg.mkPen("#ef4444", width=2),
+            symbol="o",
+            symbolSize=5,
+            symbolBrush=pg.mkBrush("#ef4444"),
+            symbolPen=pg.mkPen("#ef4444"),
+        )
+        optimization_layout.addWidget(self.optimization_objective_plot)
+
+        best_f_header = QWidget()
+        best_f_header_layout = QHBoxLayout(best_f_header)
+        best_f_header_layout.setContentsMargins(0, 0, 0, 0)
+        best_f_header_layout.addWidget(QLabel("Minimum F History"))
+        best_f_header_layout.addStretch()
+        self.btn_copy_optimization_best_f = QPushButton("📋")
+        self.btn_copy_optimization_best_f.setToolTip("Copy minimum-F plot to clipboard")
+        self.btn_copy_optimization_best_f.setMaximumWidth(30)
+        self.btn_copy_optimization_best_f.setStyleSheet("padding: 2px; font-size: 14px;")
+        self.btn_copy_optimization_best_f.clicked.connect(
+            lambda: self._copy_widget_to_clipboard(self.optimization_best_f_plot)
+        )
+        best_f_header_layout.addWidget(self.btn_copy_optimization_best_f)
+        optimization_layout.addWidget(best_f_header)
+
+        self.optimization_best_f_plot = pg.PlotWidget()
+        self.optimization_best_f_plot.setMinimumHeight(180)
+        self.optimization_best_f_plot.showGrid(x=True, y=True, alpha=0.25)
+        self.optimization_best_f_plot.setLabel("left", "Minimum F")
+        self.optimization_best_f_plot.setLabel("bottom", "Iteration")
+        self.optimization_best_f_plot.setLogMode(x=False, y=True)
+        self.optimization_best_f_curve = self.optimization_best_f_plot.plot(
+            pen=pg.mkPen("#22c55e", width=2),
+            symbol="o",
+            symbolSize=5,
+            symbolBrush=pg.mkBrush("#22c55e"),
+            symbolPen=pg.mkPen("#22c55e"),
+        )
+        optimization_layout.addWidget(self.optimization_best_f_plot)
 
         optimization_layout.addStretch()
-        self.tabs.addTab(optimization_tab, "Optimization")
+        self.tabs.addTab(optimization_tab, "Optimisation")
 
         self.combo_detection_start_anchor.currentIndexChanged.connect(self._sync_optimization_ui)
         self.combo_detection_end_anchor.currentIndexChanged.connect(self._sync_optimization_ui)
+        self.combo_detection_algorithm.currentIndexChanged.connect(self._sync_optimization_ui)
         self.combo_optimization_mode.currentIndexChanged.connect(self._sync_optimization_ui)
         self.combo_optimization_objective.currentIndexChanged.connect(self._sync_optimization_ui)
         self.combo_excitation_optimization_profile.currentIndexChanged.connect(self._sync_optimization_ui)
@@ -552,9 +770,16 @@ class ControlWidget(QWidget):
         
         self.btn_manage_inst = QPushButton("🔬 Profiles")
         self.btn_manage_inst.setMinimumHeight(btn_height)
+        self.btn_manage_inst.setStyleSheet(
+            "QPushButton { background-color: #374151; color: white; font-weight: bold; }"
+            "QPushButton:disabled { background-color: #1f2937; color: #6b7280; }"
+        )
         
         self.btn_precision = QPushButton("RUN")
-        self.btn_precision.setStyleSheet("background-color: #1e3a8a; color: white; font-weight: bold;")
+        self.btn_precision.setStyleSheet(
+            "QPushButton { background-color: #1e3a8a; color: white; font-weight: bold; }"
+            "QPushButton:disabled { background-color: #1f2937; color: #6b7280; }"
+        )
         self.btn_precision.setMinimumHeight(btn_height)
         
         self.btn_export = QPushButton("SAVE AS")
@@ -562,7 +787,10 @@ class ControlWidget(QWidget):
         self.btn_export.setMinimumHeight(btn_height)
 
         self.btn_simulate = QPushButton("TEST")
-        self.btn_simulate.setStyleSheet("background-color: #0d9488; color: white; font-weight: bold;")
+        self.btn_simulate.setStyleSheet(
+            "QPushButton { background-color: #0d9488; color: white; font-weight: bold; }"
+            "QPushButton:disabled { background-color: #1f2937; color: #6b7280; }"
+        )
         self.btn_simulate.setMinimumHeight(btn_height)
         self.btn_simulate.setMinimumWidth(90)
         
@@ -579,6 +807,127 @@ class ControlWidget(QWidget):
         
         layout.addLayout(action_layout)
         self._apply_tooltips()
+        self.set_theme("dark")
+        self.combo_gate_type.currentIndexChanged.connect(self._sync_gate_controls)
+        self.spin_num_gates.valueChanged.connect(self._sync_gate_controls)
+        self.edit_gate_widths.textChanged.connect(self._sync_gate_controls)
+        self.radio_gate_irf.toggled.connect(self._sync_gate_controls)
+        self.radio_gate_start.toggled.connect(self._sync_gate_controls)
+        self.radio_gate_free.toggled.connect(self._sync_gate_controls)
+        self.spin_gate_first.valueChanged.connect(self._sync_gate_controls)
+        self.radio_gate_end_period.toggled.connect(self._sync_gate_controls)
+        self.radio_gate_end_free.toggled.connect(self._sync_gate_controls)
+        self.spin_gate_last.valueChanged.connect(self._sync_gate_controls)
+        self.spin_period.valueChanged.connect(self._sync_gate_controls)
+        self.combo_profile.currentIndexChanged.connect(self._sync_gate_controls)
+        self.spin_fwhm.valueChanged.connect(self._sync_gate_controls)
+        self.spin_irf_pos.valueChanged.connect(self._sync_gate_controls)
+        self.spin_jitter.valueChanged.connect(self._sync_gate_controls)
+        self.radio_overlap_jitter.toggled.connect(self._sync_gate_controls)
+        self.radio_overlap_never.toggled.connect(self._sync_gate_controls)
+        self.radio_overlap_yes.toggled.connect(self._sync_gate_controls)
+        self._sync_gate_controls()
+
+    def _compute_gate_anchor_start(self):
+        t_start = 0.0
+        jitter_ns = max(float(self.spin_jitter.value()), 0.0) / 1000.0
+        if self.radio_gate_irf.isChecked():
+            profile = self.combo_profile.currentText().lower()
+            if profile == "gaussian":
+                sigma_base = max(float(self.spin_fwhm.value()), 0.0) / 2.35482
+                sigma_total = np.sqrt((sigma_base ** 2) + (jitter_ns ** 2))
+                t_start = float(self.spin_irf_pos.value()) + (3.0 * sigma_total)
+            elif profile == "ideal (dirac)":
+                t_start = float(self.spin_irf_pos.value()) + (3.0 * jitter_ns)
+            else:
+                t_start = float(self.spin_irf_pos.value()) + float(self.spin_fwhm.value()) + (3.0 * jitter_ns)
+        elif self.radio_gate_free.isChecked():
+            t_start = float(self.spin_gate_first.value())
+        return max(0.0, t_start)
+
+    def _compute_gate_anchor_end(self):
+        if self.radio_gate_end_free.isChecked():
+            return max(float(self.spin_gate_last.value()), 0.0)
+        return max(float(self.spin_period.value()), 0.0)
+
+    @staticmethod
+    def _parse_float_list(text):
+        values = []
+        raw = str(text).replace(";", ",").strip()
+        if not raw:
+            return values
+        for token in raw.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            values.append(float(token))
+        return values
+
+    def validate_gate_definition(self):
+        gate_type = self.combo_gate_type.currentText().lower()
+        start = self._compute_gate_anchor_start()
+        end = self._compute_gate_anchor_end()
+        if end <= start:
+            return None, "The last gate edge must be larger than the first gate edge."
+
+        if gate_type == "equal":
+            n_gates = max(int(self.spin_num_gates.value()), 1)
+            edges = np.linspace(start, end, n_gates + 1)
+            return edges.tolist(), ""
+
+        try:
+            edges = self._parse_float_list(self.edit_gate_widths.text())
+        except Exception:
+            return None, "Gate edges must be a comma-separated list of numbers."
+
+        if len(edges) < 2:
+            return None, "Define at least two edges to create one or more custom gates."
+        if any(edges[idx + 1] <= edges[idx] for idx in range(len(edges) - 1)):
+            return None, "Gate edges must be strictly increasing."
+
+        adjusted = list(edges)
+        if not self.radio_gate_free.isChecked():
+            adjusted[0] = start
+        if not self.radio_gate_end_free.isChecked():
+            adjusted[-1] = end
+        if any(adjusted[idx + 1] <= adjusted[idx] for idx in range(len(adjusted) - 1)):
+            return None, "Custom edges conflict with the selected start/end anchors."
+        return adjusted, ""
+
+    def _sync_gate_controls(self):
+        gate_type = self.combo_gate_type.currentText().lower()
+        edges, error = self.validate_gate_definition()
+        self.lbl_gate_error.setText(error)
+
+        is_custom = gate_type == "custom"
+        self.spin_num_gates.setEnabled(not is_custom)
+        self.edit_gate_widths.setReadOnly(not is_custom)
+        self.label_gate_definition.setText("Gate Edges (ns):")
+
+        if gate_type == "equal":
+            self.edit_gate_widths.blockSignals(True)
+            self.edit_gate_widths.setText(", ".join(f"{edge:g}" for edge in (edges or [])))
+            self.edit_gate_widths.blockSignals(False)
+        elif edges is not None:
+            self.spin_num_gates.blockSignals(True)
+            self.spin_num_gates.setValue(max(1, len(edges) - 1))
+            self.spin_num_gates.blockSignals(False)
+            if (not self.radio_gate_free.isChecked()) or (not self.radio_gate_end_free.isChecked()):
+                self.edit_gate_widths.blockSignals(True)
+                self.edit_gate_widths.setText(", ".join(f"{edge:g}" for edge in edges))
+                self.edit_gate_widths.blockSignals(False)
+
+        allow_overlap = not self.radio_overlap_never.isChecked()
+        self.spin_gate_overlap.setVisible(self.radio_overlap_yes.isChecked())
+        self.spin_gate_overlap.setEnabled(self.radio_overlap_yes.isChecked())
+        for widget in (
+            self.radio_overlap_effect_exclusive,
+            self.radio_overlap_effect_duplicate,
+            self.radio_overlap_effect_independent,
+        ):
+            widget.setEnabled(allow_overlap)
+        if not allow_overlap:
+            self.radio_overlap_effect_exclusive.setChecked(True)
 
     def _handle_x_selection(self):
         """Ensures exclusive selection (Radio button behavior)."""
@@ -615,7 +964,7 @@ class ControlWidget(QWidget):
         self.tabs.setTabToolTip(1, "Synthetic image generation settings.")
         self.tabs.setTabToolTip(2, "Excitation and IRF definition.")
         self.tabs.setTabToolTip(3, "Detector and gating settings.")
-        self.tabs.setTabToolTip(4, "Detection and excitation optimization settings.")
+        self.tabs.setTabToolTip(4, "Detection and excitation optimisation settings.")
         self.tabs.setTabToolTip(5, "Instrument batch sweeps for comparative precision runs.")
 
         tooltips = {
@@ -651,33 +1000,51 @@ class ControlWidget(QWidget):
             self.chk_multihit: "Allow more than one detected photon per excitation cycle.",
             self.spin_num_gates: "Number of detector gates across the measurement period.",
             self.combo_gate_type: "Gate construction mode.",
-            self.edit_gate_widths: "Comma-separated custom gate widths in nanoseconds.",
-            self.spin_gate_rise: "Gate opening edge rise time.",
-            self.spin_gate_fall: "Gate closing edge fall time.",
-            self.chk_gate_stick: "Force the final gate edge to coincide with the measurement period.",
+            self.edit_gate_widths: "Comma-separated gate edges in nanoseconds. In Equal mode this field shows the generated edges; in Custom mode you can edit them directly.",
+            self.lbl_gate_error: "Inline validation message for the custom gate-edge definition.",
+            self.spin_gate_rise: "Gate opening edge transition width, defined as the standard deviation (sigma) of a Gaussian transition.",
+            self.spin_gate_fall: "Gate closing edge transition width, defined as the standard deviation (sigma) of a Gaussian transition.",
             self.radio_gate_irf: "Start the first gate after the IRF tail.",
             self.radio_gate_start: "Start the first gate at time zero.",
             self.radio_gate_free: "Use a user-defined first gate start time.",
             self.spin_gate_first: "Manual start time for the first gate when Free is selected.",
-            self.chk_opt_detection: "Enable optimization of detection gate boundaries.",
-            self.chk_opt_excitation: "Enable optimization of the excitation waveform or width.",
-            self.combo_optimization_mode: "Choose whether to run one pass sequentially or alternate the two optimizations iteratively.",
-            self.combo_optimization_first: "When both optimizations are enabled sequentially, choose which one runs first.",
-            self.spin_optimization_iterations: "Number of alternating optimization rounds in iterative mode.",
-            self.combo_optimization_objective: "Optimize either pure Fisher Information or information throughput.",
-            self.spin_optimization_fi_loss: "Maximum Fisher Information loss allowed when optimizing throughput.",
-            self.combo_detection_algorithm: "Detection-gate optimization algorithm family.",
-            self.combo_detection_start_anchor: "Constrain where the first optimized gate starts.",
+            self.radio_gate_end_period: "Force the final gate edge to coincide with the measurement period.",
+            self.radio_gate_end_free: "Use a user-defined final gate edge.",
+            self.spin_gate_last: "Manual end time for the last gate when Free is selected.",
+            self.radio_gate_collection_hist: "Histogram-style gating: photons are binned into gates without being discarded.",
+            self.radio_gate_collection_seq: "Sequential gating: each gate is acquired in a separate pass and photons outside the active gate are lost in that pass.",
+            self.radio_overlap_jitter: "Allow only the natural overlap caused by jittered or skewed gate tails.",
+            self.radio_overlap_never: "Do not allow gate overlap. Overlapping tails are clipped and can create photon-loss gaps between gates.",
+            self.radio_overlap_yes: "Allow user-specified geometric overlap between adjacent gates.",
+            self.spin_gate_overlap: "Overlap added to each gate in nanoseconds when explicit overlap is enabled.",
+            self.radio_overlap_effect_exclusive: "Overlapped photons contribute to only one gate.",
+            self.radio_overlap_effect_duplicate: "Overlapped photons can appear in more than one gate, but do not improve photon statistics.",
+            self.radio_overlap_effect_independent: "Overlapped photons are treated as independent duplicated counts and improve Fisher Information.",
+            self.chk_gate_wraparound: "Wrap gate tails around the repetition period. Disable to clip tails at the period boundaries.",
+            self.chk_opt_detection: "Enable optimisation of detection gate boundaries.",
+            self.chk_opt_excitation: "Enable optimisation of the excitation waveform or width.",
+            self.combo_optimization_mode: "Joint optimisation now alternates sequentially; this hidden compatibility control remains fixed to Sequential.",
+            self.combo_optimization_first: "When both optimisations are enabled, choose which one runs first in the alternating sequential loop.",
+            self.spin_optimization_iterations: "Maximum number of alternating detection/excitation rounds when both optimisation targets are enabled.",
+            self.combo_optimization_objective: "Excitation optimisation objective. Fisher Throughput is the default and combines peak photon efficiency with throughput scaling.",
+            self.spin_optimization_fi_loss: "Maximum absolute peak photon-efficiency loss allowed in throughput mode, expressed as F^-2 percentage points relative to the Dirac-reference design.",
+            self.chk_optimization_realtime: "When enabled, update the main analysis widgets during optimisation. Disable this for a faster run.",
+            self.spin_optimization_steps_to_show: "Number of optimisation states to retain for the final Precision, Accuracy, and Diagnostics displays, including start and finish.",
+            self.chk_optimization_validate_mc: "Run Monte Carlo validation for the retained optimisation states after the numerical optimisation has finished.",
+            self.combo_detection_algorithm: "Detection-gate optimisation algorithm family. Fisher Compression is the default strategy.",
+            self.btn_detection_algorithm_settings: "Open advanced settings for the currently selected detection-gate optimiser.",
+            self.combo_detection_start_anchor: "Constrain where the first optimised gate starts.",
             self.spin_detection_start_anchor: "Custom start time for the first gate when the anchor is set to Custom.",
-            self.combo_detection_end_anchor: "Constrain where the last optimized gate ends.",
+            self.combo_detection_end_anchor: "Constrain where the last optimised gate ends.",
             self.spin_detection_end_anchor: "Custom end time for the last gate when the anchor is set to Custom.",
-            self.combo_excitation_optimization_profile: "Excitation profile family to optimize.",
-            self.combo_excitation_constraint: "Choose whether excitation optimization preserves pulse area or preserves peak amplitude.",
-            self.spin_excitation_width_min: "Lower width bound for Gaussian or square excitation optimization.",
-            self.spin_excitation_width_max: "Upper width bound for Gaussian or square excitation optimization.",
-            self.spin_excitation_control_points: "Number of control points for free-form excitation optimization.",
-            self.txt_optimization_hint: "Execution note for the current optimization implementation status.",
-            self.btn_run_optimization: "Run the currently supported optimization workflow from the Optimization tab.",
+            self.combo_excitation_optimization_profile: "Excitation profile family to optimise.",
+            self.combo_excitation_constraint: "Choose whether excitation optimisation preserves pulse area or preserves peak amplitude.",
+            self.spin_excitation_width_min: "Lower width bound in nanoseconds for Gaussian or square excitation optimisation. Supports values down to 0.0001 ns (100 fs).",
+            self.spin_excitation_width_max: "Upper width bound in nanoseconds for Gaussian or square excitation optimisation. Supports values down to 0.0001 ns (100 fs).",
+            self.spin_excitation_control_points: "Number of control points for free-form excitation optimisation.",
+            self.txt_optimization_hint: "Execution note for the current optimisation implementation status.",
+            self.btn_run_optimization: "Run the currently supported optimisation workflow from the Optimisation tab.",
+            self.btn_exit_optimization: "Exit optimisation mode by clearing the optimisation targets.",
             self.radio_sweep_off: "Disable instrument batch sweeping.",
             self.btn_manage_inst: "Open the instrument-profile manager.",
             self.btn_precision: "Run the theory and optional Monte Carlo precision workflow.",
@@ -748,6 +1115,139 @@ class ControlWidget(QWidget):
         
         self.enforce_single_x_selection()
 
+    def _update_detection_algorithm_settings_tooltip(self):
+        algorithm = self.combo_detection_algorithm.currentText().lower()
+        if algorithm == "direct mean f minimisation":
+            text = (
+                "Direct optimiser settings.\n"
+                f"Restarts: {int(self.detection_opt_restarts)}\n"
+                f"SLSQP ftol: {float(self.detection_opt_ftol):.2g}\n"
+                f"Max iterations per restart: {int(self.detection_opt_maxiter)}"
+            )
+        elif algorithm in {"partition theorem bottom-up", "partition theorem top-down"}:
+            text = (
+                "Partition optimiser settings.\n"
+                f"Fine bins per gate: {int(self.detection_opt_fine_bins_per_gate)}\n"
+                f"Fine-bin cap: {int(self.detection_opt_fine_bin_cap)}"
+            )
+        else:
+            text = (
+                "Fisher Compression settings.\n"
+                f"Fine bins per gate: {int(self.detection_opt_fine_bins_per_gate)}\n"
+                f"Fine-bin cap: {int(self.detection_opt_fine_bin_cap)}\n"
+                f"Nuisance-aware: {'On' if self.detection_opt_fc_nuisance_aware else 'Off'}\n"
+                f"Auto-compress: {'On' if self.detection_opt_fc_auto_compress else 'Off'}\n"
+                f"Initial gates: {int(self.detection_opt_fc_initial_gates)}\n"
+                f"Minimum gates: {int(self.detection_opt_fc_min_gates)}\n"
+                f"Max F^-2 loss: {float(self.detection_opt_fc_max_f_loss_pct):g}%"
+            )
+        self.btn_detection_algorithm_settings.setToolTip(text)
+
+    def _open_detection_algorithm_settings(self):
+        dialog = QDialog(self)
+        algorithm = self.combo_detection_algorithm.currentText().lower()
+        dialog.setWindowTitle(f"{self.combo_detection_algorithm.currentText()} Settings")
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        widgets = {}
+
+        if algorithm == "direct mean f minimisation":
+            spin_restarts = QSpinBox()
+            spin_restarts.setRange(1, 200)
+            spin_restarts.setValue(int(self.detection_opt_restarts))
+            spin_restarts.setToolTip("Number of random optimiser restarts for the direct mean-F search.")
+            form.addRow("Restarts:", spin_restarts)
+            widgets["restarts"] = spin_restarts
+
+            spin_ftol = QDoubleSpinBox()
+            spin_ftol.setRange(1e-8, 1e-1)
+            spin_ftol.setDecimals(8)
+            spin_ftol.setSingleStep(1e-4)
+            spin_ftol.setValue(float(self.detection_opt_ftol))
+            spin_ftol.setToolTip("SLSQP convergence tolerance for each restart.")
+            form.addRow("SLSQP ftol:", spin_ftol)
+            widgets["ftol"] = spin_ftol
+
+            spin_maxiter = QSpinBox()
+            spin_maxiter.setRange(5, 500)
+            spin_maxiter.setValue(int(self.detection_opt_maxiter))
+            spin_maxiter.setToolTip("Maximum SLSQP iterations allowed within each restart.")
+            form.addRow("Max iterations per restart:", spin_maxiter)
+            widgets["maxiter"] = spin_maxiter
+        else:
+            spin_fine_bins = QSpinBox()
+            spin_fine_bins.setRange(2, 64)
+            spin_fine_bins.setValue(int(self.detection_opt_fine_bins_per_gate))
+            spin_fine_bins.setToolTip("Number of fine histogram bins allocated per requested gate before partition optimisation.")
+            form.addRow("Fine bins per gate:", spin_fine_bins)
+            widgets["fine_bins"] = spin_fine_bins
+
+            spin_fine_cap = QSpinBox()
+            spin_fine_cap.setRange(24, 2048)
+            spin_fine_cap.setSingleStep(8)
+            spin_fine_cap.setValue(int(self.detection_opt_fine_bin_cap))
+            spin_fine_cap.setToolTip("Upper limit for the fine histogram used internally by the partition or compression solver.")
+            form.addRow("Fine-bin cap:", spin_fine_cap)
+            widgets["fine_cap"] = spin_fine_cap
+
+            if algorithm == "fisher compression":
+                chk_nuisance = QCheckBox("Use nuisance-aware effective FI (Schur complement)")
+                chk_nuisance.setChecked(bool(self.detection_opt_fc_nuisance_aware))
+                chk_nuisance.setToolTip("Project the parameter of interest against unfixed nuisance parameters using the Schur complement before computing Fisher Compression segment costs.")
+                form.addRow(chk_nuisance)
+                widgets["nuisance"] = chk_nuisance
+
+                chk_auto = QCheckBox("Auto-compress until max F^-2 loss")
+                chk_auto.setChecked(bool(self.detection_opt_fc_auto_compress))
+                chk_auto.setToolTip("Start from a finer optimised partition and reduce the gate count until the peak photon-efficiency loss exceeds the chosen absolute F^-2 limit.")
+                form.addRow(chk_auto)
+                widgets["auto"] = chk_auto
+
+                spin_initial_gates = QSpinBox()
+                spin_initial_gates.setRange(2, 512)
+                spin_initial_gates.setValue(int(self.detection_opt_fc_initial_gates))
+                spin_initial_gates.setToolTip("Initial number of gates for the finer Fisher-compression partition before compression begins.")
+                form.addRow("Initial gates:", spin_initial_gates)
+                widgets["initial_gates"] = spin_initial_gates
+
+                spin_min_gates = QSpinBox()
+                spin_min_gates.setRange(1, 512)
+                spin_min_gates.setValue(int(self.detection_opt_fc_min_gates))
+                spin_min_gates.setToolTip("Smallest gate count the auto-compression loop is allowed to reach.")
+                form.addRow("Minimum gates:", spin_min_gates)
+                widgets["min_gates"] = spin_min_gates
+
+                spin_loss = QDoubleSpinBox()
+                spin_loss.setRange(0.0, 100.0)
+                spin_loss.setDecimals(3)
+                spin_loss.setSingleStep(0.5)
+                spin_loss.setValue(float(self.detection_opt_fc_max_f_loss_pct))
+                spin_loss.setToolTip("Maximum allowed absolute peak photon-efficiency loss, expressed as F^-2 percentage points, compared with the initial finer optimised partition.")
+                form.addRow("Max F^-2 loss (%):", spin_loss)
+                widgets["max_loss"] = spin_loss
+
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec():
+            if "restarts" in widgets:
+                self.detection_opt_restarts = int(widgets["restarts"].value())
+                self.detection_opt_ftol = float(widgets["ftol"].value())
+                self.detection_opt_maxiter = int(widgets["maxiter"].value())
+            else:
+                self.detection_opt_fine_bins_per_gate = int(widgets["fine_bins"].value())
+                self.detection_opt_fine_bin_cap = int(widgets["fine_cap"].value())
+                if "auto" in widgets:
+                    self.detection_opt_fc_nuisance_aware = bool(widgets["nuisance"].isChecked())
+                    self.detection_opt_fc_auto_compress = bool(widgets["auto"].isChecked())
+                    self.detection_opt_fc_initial_gates = int(widgets["initial_gates"].value())
+                    self.detection_opt_fc_min_gates = int(widgets["min_gates"].value())
+                    self.detection_opt_fc_max_f_loss_pct = float(widgets["max_loss"].value())
+            self._update_detection_algorithm_settings_tooltip()
+
     def _on_tab_changed(self, index):
         # Map tab index to manual section ID
         mapping = {
@@ -764,17 +1264,26 @@ class ControlWidget(QWidget):
     def _sync_optimization_ui(self, *_args):
         detection_enabled = self.chk_opt_detection.isChecked()
         excitation_enabled = self.chk_opt_excitation.isChecked()
+        optimisation_active = detection_enabled or excitation_enabled
         multi_target = detection_enabled and excitation_enabled
-        iterative = self.combo_optimization_mode.currentText().lower().startswith("iterative")
         throughput_mode = self.combo_optimization_objective.currentText().lower().startswith("fisher throughput")
         free_form = self.combo_excitation_optimization_profile.currentText().lower() == "free form"
-
-        self.combo_optimization_mode.setEnabled(multi_target)
+        selected_algorithm = self.combo_detection_algorithm.currentText().lower()
+        self.combo_optimization_mode.setEnabled(False)
         self.combo_optimization_first.setEnabled(multi_target)
-        self.spin_optimization_iterations.setEnabled(multi_target and iterative)
-        self.spin_optimization_fi_loss.setEnabled(throughput_mode)
+        self.spin_optimization_iterations.setEnabled(multi_target)
+        self.combo_optimization_objective.setEnabled(excitation_enabled)
+        self.spin_optimization_fi_loss.setEnabled(excitation_enabled and throughput_mode)
 
         self.combo_detection_algorithm.setEnabled(detection_enabled)
+        self.btn_detection_algorithm_settings.setEnabled(
+            detection_enabled and selected_algorithm in {
+                "fisher compression",
+                "direct mean f minimisation",
+                "partition theorem bottom-up",
+                "partition theorem top-down",
+            }
+        )
         self.combo_detection_start_anchor.setEnabled(detection_enabled)
         self.combo_detection_end_anchor.setEnabled(detection_enabled)
         self.spin_detection_start_anchor.setEnabled(
@@ -789,16 +1298,23 @@ class ControlWidget(QWidget):
         self.spin_excitation_width_min.setEnabled(excitation_enabled and not free_form)
         self.spin_excitation_width_max.setEnabled(excitation_enabled and not free_form)
         self.spin_excitation_control_points.setEnabled(excitation_enabled and free_form)
-        self.btn_run_optimization.setEnabled(detection_enabled or excitation_enabled)
+        self.chk_optimization_realtime.setEnabled(optimisation_active)
+        self.spin_optimization_steps_to_show.setEnabled(optimisation_active)
+        self.chk_optimization_validate_mc.setEnabled(optimisation_active)
+        self.btn_run_optimization.setEnabled(optimisation_active and not self.optimization_running_state)
+        self.btn_exit_optimization.setEnabled(optimisation_active and not self.optimization_running_state)
+        self._update_detection_algorithm_settings_tooltip()
+        self.set_optimization_mode_active(optimisation_active, running=self.optimization_running_state)
 
     def _update_irf_ui(self, index=0):
         """Toggles visibility based on profile (Gaussian vs Rectangular)."""
         mode = self.combo_profile.currentText().lower()
         is_rect = "rectangular" in mode
+        is_free_form = "free form" in mode
         self.label_rise.setVisible(is_rect); self.spin_rise.setVisible(is_rect)
         self.label_fall.setVisible(is_rect); self.spin_fall.setVisible(is_rect)
         
-        if is_rect:
+        if is_rect or is_free_form:
             self.label_irf_pos.setText("Position (Start ns):")
         else:
             self.label_irf_pos.setText("Position (Center ns):")
@@ -899,6 +1415,7 @@ class ControlWidget(QWidget):
             profile_map = {
                 "gaussian": "Gaussian",
                 "rectangular": "Rectangular",
+                "free_form": "Free Form",
                 "ideal (dirac)": "Ideal (Dirac)",
             }
             self.combo_profile.setCurrentText(profile_map.get(cfg.irf_profile, "Gaussian"))
@@ -922,20 +1439,41 @@ class ControlWidget(QWidget):
                     self.param_rows[name]['x'].setChecked(cfg.f_x_param == name)
             
             # Gating alignment
-            gate_type_map = {"equal": "Equal", "custom": "Custom", "adaptive": "Adaptive"}
+            gate_type_map = {"equal": "Equal", "custom": "Custom"}
             self.spin_num_gates.setValue(max(2, len(cfg.gate_edges) - 1))
             self.combo_gate_type.setCurrentText(gate_type_map.get(cfg.gate_type, "Equal"))
-            if cfg.gate_widths:
-                self.edit_gate_widths.setText(", ".join(f"{width:g}" for width in cfg.gate_widths))
-            else:
-                self.edit_gate_widths.clear()
+            self.edit_gate_widths.setText(", ".join(f"{edge:g}" for edge in cfg.gate_edges))
             self.spin_gate_rise.setValue(cfg.gate_rise)
             self.spin_gate_fall.setValue(getattr(cfg, "gate_fall", cfg.gate_rise))
-            self.chk_gate_stick.setChecked(cfg.gate_stick_to_end)
             self.spin_gate_first.setValue(cfg.gate_first_start)
             if cfg.gate_start_mode == "irf_3sigma": self.radio_gate_irf.setChecked(True)
             elif cfg.gate_start_mode == "start": self.radio_gate_start.setChecked(True)
             elif cfg.gate_start_mode == "free": self.radio_gate_free.setChecked(True)
+            self.spin_gate_last.setValue(getattr(cfg, "gate_last_end", cfg.period))
+            if getattr(cfg, "gate_end_mode", "period") == "free":
+                self.radio_gate_end_free.setChecked(True)
+            else:
+                self.radio_gate_end_period.setChecked(True)
+            if getattr(cfg, "gate_collection_mode", "histogram") == "sequential":
+                self.radio_gate_collection_seq.setChecked(True)
+            else:
+                self.radio_gate_collection_hist.setChecked(True)
+            overlap_mode = getattr(cfg, "gate_overlap_mode", "jitter_only")
+            if overlap_mode == "never":
+                self.radio_overlap_never.setChecked(True)
+            elif overlap_mode == "allow":
+                self.radio_overlap_yes.setChecked(True)
+            else:
+                self.radio_overlap_jitter.setChecked(True)
+            self.spin_gate_overlap.setValue(getattr(cfg, "gate_overlap_ns", 0.0))
+            overlap_effect = getattr(cfg, "gate_overlap_effect", "exclusive")
+            if overlap_effect == "duplicate_events":
+                self.radio_overlap_effect_duplicate.setChecked(True)
+            elif overlap_effect == "independent_duplicates":
+                self.radio_overlap_effect_independent.setChecked(True)
+            else:
+                self.radio_overlap_effect_exclusive.setChecked(True)
+            self.chk_gate_wraparound.setChecked(getattr(cfg, "gate_wraparound", True))
 
             # Optimization
             self.chk_opt_detection.setChecked(getattr(cfg, "optimize_detection_gates", False))
@@ -948,25 +1486,35 @@ class ControlWidget(QWidget):
             self.combo_optimization_first.setCurrentText(
                 optimization_first_map.get(getattr(cfg, "optimization_first", "detection"), "Detection First")
             )
-            self.spin_optimization_iterations.setValue(getattr(cfg, "optimization_iterations", 3))
+            self.spin_optimization_iterations.setValue(getattr(cfg, "optimization_iterations", 20))
             optimization_objective_map = {
                 "fisher_information": "Fisher Information",
                 "fisher_throughput": "Fisher Throughput",
             }
             self.combo_optimization_objective.setCurrentText(
-                optimization_objective_map.get(getattr(cfg, "optimization_objective", "fisher_information"), "Fisher Information")
+                optimization_objective_map.get(getattr(cfg, "optimization_objective", "fisher_throughput"), "Fisher Throughput")
             )
             self.spin_optimization_fi_loss.setValue(getattr(cfg, "optimization_max_fi_loss_pct", 5.0))
+            self.chk_optimization_realtime.setChecked(getattr(cfg, "optimization_realtime_visualization", False))
+            self.spin_optimization_steps_to_show.setValue(getattr(cfg, "optimization_intermediate_steps", 6))
+            self.chk_optimization_validate_mc.setChecked(getattr(cfg, "optimization_validate_mc_intermediates", False))
 
             detection_algorithm_map = {
-                "direct_slsqp": "Direct Mean F Minimization",
+                "fisher_compression": "Fisher Compression",
+                "direct_slsqp": "Direct Mean F Minimisation",
                 "partition_bottom_up": "Partition Theorem Bottom-Up",
                 "partition_top_down": "Partition Theorem Top-Down",
-                "fisher_compression": "Fisher Compression",
             }
             self.combo_detection_algorithm.setCurrentText(
-                detection_algorithm_map.get(getattr(cfg, "detection_optimization_algorithm", "direct_slsqp"), "Direct Mean F Minimization")
+                detection_algorithm_map.get(getattr(cfg, "detection_optimization_algorithm", "fisher_compression"), "Fisher Compression")
             )
+            self.detection_opt_fine_bins_per_gate = int(getattr(cfg, "detection_opt_fine_bins_per_gate", 12))
+            self.detection_opt_fine_bin_cap = int(getattr(cfg, "detection_opt_fine_bin_cap", 256))
+            self.detection_opt_fc_nuisance_aware = bool(getattr(cfg, "detection_opt_fc_nuisance_aware", True))
+            self.detection_opt_fc_auto_compress = bool(getattr(cfg, "detection_opt_fc_auto_compress", False))
+            self.detection_opt_fc_initial_gates = int(getattr(cfg, "detection_opt_fc_initial_gates", 16))
+            self.detection_opt_fc_min_gates = int(getattr(cfg, "detection_opt_fc_min_gates", 2))
+            self.detection_opt_fc_max_f_loss_pct = float(getattr(cfg, "detection_opt_fc_max_f_loss_pct", 5.0))
             detection_start_map = {"zero": "Stick to 0", "irf": "Start after IRF", "custom": "Custom"}
             self.combo_detection_start_anchor.setCurrentText(
                 detection_start_map.get(getattr(cfg, "detection_opt_start_anchor", "zero"), "Stick to 0")
@@ -977,6 +1525,10 @@ class ControlWidget(QWidget):
                 detection_end_map.get(getattr(cfg, "detection_opt_end_anchor", "period"), "Stick to period")
             )
             self.spin_detection_end_anchor.setValue(getattr(cfg, "detection_opt_end_time", cfg.period))
+            self.detection_opt_restarts = int(getattr(cfg, "detection_opt_restarts", 20))
+            self.detection_opt_ftol = float(getattr(cfg, "detection_opt_ftol", 1e-4))
+            self.detection_opt_maxiter = int(getattr(cfg, "detection_opt_maxiter", 50))
+            self._update_detection_algorithm_settings_tooltip()
 
             excitation_profile_map = {
                 "gaussian": "Gaussian",
@@ -1038,6 +1590,74 @@ class ControlWidget(QWidget):
             self.update_param_visibility()
             self.update_gridded_mle_summary()
             self._sync_precision_execution_ui(cfg.precision_validate_mc)
+            self._sync_gate_controls()
             self._sync_optimization_ui()
             self._update_sweep_inputs_enabled()
             self.blockSignals(False)
+
+    def set_theme(self, theme_name):
+        self.current_theme = str(theme_name).lower()
+        dark = self.current_theme == "dark"
+        bg = "#0a0a0a" if dark else "#ffffff"
+        text = "#e5eefb" if dark else "#0f172a"
+        grid = "#334155" if dark else "#d7dee8"
+        for plot in (self.optimization_objective_plot, self.optimization_best_f_plot):
+            plot.setBackground(bg)
+            for axis_name in ("bottom", "left"):
+                axis = plot.getAxis(axis_name)
+                axis.setTextPen(pg.mkPen(text))
+                axis.setPen(pg.mkPen(text))
+            plot.showGrid(x=True, y=True, alpha=0.25)
+        self.optimization_objective_curve.setPen(pg.mkPen("#ef4444", width=2))
+        self.optimization_objective_curve.setSymbolBrush(pg.mkBrush("#ef4444"))
+        self.optimization_objective_curve.setSymbolPen(pg.mkPen("#ef4444"))
+        self.optimization_best_f_curve.setPen(pg.mkPen("#22c55e", width=2))
+        self.optimization_best_f_curve.setSymbolBrush(pg.mkBrush("#22c55e"))
+        self.optimization_best_f_curve.setSymbolPen(pg.mkPen("#22c55e"))
+        self.optimization_objective_plot.getPlotItem().getViewBox().setBorder(pg.mkPen(grid))
+        self.optimization_best_f_plot.getPlotItem().getViewBox().setBorder(pg.mkPen(grid))
+
+    def set_optimization_mode_active(self, active, running=False):
+        self.optimization_running_state = bool(running)
+        if running:
+            self.lbl_optimization_banner.setText("Optimisation mode active: optimisation running")
+            self.lbl_optimization_banner.setStyleSheet(
+                "padding: 8px 10px; border-radius: 8px; background: #991b1b; color: white; font-weight: bold;"
+            )
+        elif active:
+            self.lbl_optimization_banner.setText("Optimisation mode active")
+            self.lbl_optimization_banner.setStyleSheet(
+                "padding: 8px 10px; border-radius: 8px; background: #7f1d1d; color: white; font-weight: bold;"
+            )
+        else:
+            self.lbl_optimization_banner.setText("Optimisation mode inactive")
+            self.lbl_optimization_banner.setStyleSheet(
+                "padding: 8px 10px; border-radius: 8px; background: #334155; color: white; font-weight: bold;"
+            )
+        self.btn_exit_optimization.setEnabled(bool(active) and not bool(running))
+        self.btn_run_optimization.setEnabled(bool(active) and not bool(running))
+
+    def set_optimization_status(self, text):
+        self.txt_optimization_hint.setPlainText(str(text))
+
+    def set_optimization_current_value(self, text):
+        self.lbl_optimization_current.setText(str(text))
+
+    def _copy_widget_to_clipboard(self, widget):
+        pixmap = widget.grab()
+        QGuiApplication.clipboard().setPixmap(pixmap)
+
+    def clear_optimization_progress(self):
+        self.optimization_objective_curve.setData([], [])
+        self.optimization_best_f_curve.setData([], [])
+
+    def update_optimization_progress(self, iterations, objective_values, best_f_values):
+        x_obj = np.asarray(iterations, dtype=float)
+        y_obj = np.asarray(objective_values, dtype=float)
+        x_best = np.asarray(iterations, dtype=float)
+        y_best = np.asarray(best_f_values, dtype=float)
+        self.optimization_objective_curve.setData(x_obj, y_obj)
+        self.optimization_best_f_curve.setData(x_best, y_best)
+        if x_obj.size:
+            self.optimization_objective_plot.enableAutoRange()
+            self.optimization_best_f_plot.enableAutoRange()

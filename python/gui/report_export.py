@@ -80,15 +80,15 @@ def _write_csv_assets(asset_dir, payload):
     x_values = np.asarray(payload["x_range"], dtype=float)
     x_label = payload["x_label"]
 
-    theory_headers = [x_label, "ideal_f", "ideal_eff"]
+    theory_headers = [x_label, "ideal_f", "ideal_eff", "ideal_throughput"]
     for series in payload["series"]:
         series_slug = slugify(series["label"])
-        theory_headers.extend([f"{series_slug}_theory_f", f"{series_slug}_theory_eff"])
+        theory_headers.extend([f"{series_slug}_theory_f", f"{series_slug}_theory_eff", f"{series_slug}_theory_throughput"])
     theory_rows = []
     for idx, x_val in enumerate(x_values):
-        row = [x_val, payload["ideal_f"][idx], payload["ideal_eff"][idx]]
+        row = [x_val, payload["ideal_f"][idx], payload["ideal_eff"][idx], payload["ideal_throughput"][idx]]
         for series in payload["series"]:
-            row.extend([series["theory_f"][idx], series["theory_eff"][idx]])
+            row.extend([series["theory_f"][idx], series["theory_eff"][idx], series["theory_throughput"][idx]])
         theory_rows.append(row)
     theory_name = "precision_theory.csv"
     _write_csv(asset_dir / theory_name, theory_headers, theory_rows)
@@ -108,12 +108,15 @@ def _write_csv_assets(asset_dir, payload):
             mc_headers.extend([
                 f"{series_slug}_mc_f",
                 f"{series_slug}_mc_eff",
+                f"{series_slug}_mc_throughput",
                 f"{series_slug}_mean_tau",
                 f"{series_slug}_std_tau",
                 f"{series_slug}_mc_f_ci_lower",
                 f"{series_slug}_mc_f_ci_upper",
                 f"{series_slug}_mc_eff_ci_lower",
                 f"{series_slug}_mc_eff_ci_upper",
+                f"{series_slug}_mc_throughput_ci_lower",
+                f"{series_slug}_mc_throughput_ci_upper",
             ])
         mc_rows = []
         for idx, x_val in enumerate(x_values):
@@ -122,12 +125,15 @@ def _write_csv_assets(asset_dir, payload):
                 row.extend([
                     series["mc_f"][idx],
                     series["mc_eff"][idx],
+                    series["mc_throughput"][idx],
                     series["mc_mean"][idx],
                     series["mc_std"][idx],
                     series["mc_f_ci_lower"][idx],
                     series["mc_f_ci_upper"][idx],
                     series["mc_eff_ci_lower"][idx],
                     series["mc_eff_ci_upper"][idx],
+                    series["mc_throughput_ci_lower"][idx],
+                    series["mc_throughput_ci_upper"][idx],
                 ])
             mc_rows.append(row)
         mc_name = "precision_monte_carlo.csv"
@@ -190,6 +196,68 @@ def _write_csv_assets(asset_dir, payload):
             "column_help": _describe_columns(headers, x_label),
         })
 
+    optimisation = payload.get("optimization")
+    if optimisation:
+        options = optimisation.get("options", {})
+        if options:
+            opt_headers = list(options.keys())
+            opt_rows = [[options.get(header) for header in opt_headers]]
+            opt_name = "optimisation_options.csv"
+            _write_csv(asset_dir / opt_name, opt_headers, opt_rows)
+            entries.append({
+                "title": "Optimisation Options",
+                "filename": opt_name,
+                "headers": opt_headers,
+                "rows": opt_rows,
+                "column_help": _describe_columns(opt_headers, x_label),
+            })
+
+        objective_history = optimisation.get("objective_history", [])
+        min_f_history = optimisation.get("min_f_history", [])
+        if objective_history or min_f_history:
+            history_headers = ["iteration", "objective", "minimum_f"]
+            history_rows = []
+            n_rows = max(len(objective_history), len(min_f_history))
+            for idx in range(n_rows):
+                history_rows.append([
+                    idx,
+                    objective_history[idx] if idx < len(objective_history) else np.nan,
+                    min_f_history[idx] if idx < len(min_f_history) else np.nan,
+                ])
+            history_name = "optimisation_history.csv"
+            _write_csv(asset_dir / history_name, history_headers, history_rows)
+            entries.append({
+                "title": "Optimisation History",
+                "filename": history_name,
+                "headers": history_headers,
+                "rows": history_rows,
+                "column_help": _describe_columns(history_headers, x_label),
+            })
+
+        snapshots = optimisation.get("snapshots", [])
+        if snapshots:
+            snapshot_headers = ["label", "gate_count", "objective", "minimum_f", "gate_edges_ns"]
+            snapshot_rows = []
+            for snapshot in snapshots:
+                cfg = snapshot.get("config", {})
+                edges = cfg.get("gate_edges", [])
+                snapshot_rows.append([
+                    snapshot.get("label", ""),
+                    int(snapshot.get("gate_count", max(0, len(edges) - 1))),
+                    snapshot.get("objective", np.nan),
+                    snapshot.get("min_f", np.nan),
+                    ", ".join(f"{float(edge):.6g}" for edge in edges),
+                ])
+            snapshot_name = "optimisation_snapshots.csv"
+            _write_csv(asset_dir / snapshot_name, snapshot_headers, snapshot_rows)
+            entries.append({
+                "title": "Optimisation Snapshot Summary",
+                "filename": snapshot_name,
+                "headers": snapshot_headers,
+                "rows": snapshot_rows,
+                "column_help": _describe_columns(snapshot_headers, x_label),
+            })
+
     return entries
 
 
@@ -198,17 +266,19 @@ def _save_precision_svg(path, payload, theme_name):
     metric = payload["precision_display"]["metric"]
     log_x = bool(payload["precision_display"]["log_x"])
     log_y = bool(payload["precision_display"]["log_y"])
-    y_label = "Photon Efficiency (F^-2)" if metric == "efficiency" else "F-Value"
+    y_label = "Fisher Throughput" if metric == "throughput" else ("Photon Efficiency (F^-2)" if metric == "efficiency" else "F-Value")
     fig, ax = plt.subplots(figsize=(10.8, 6.8), constrained_layout=False)
     _style_axes(fig, ax, palette)
 
     x = np.asarray(payload["x_range"], dtype=float)
-    ideal = np.asarray(payload["ideal_eff"] if metric == "efficiency" else payload["ideal_f"], dtype=float)
+    ideal_key = "ideal_throughput" if metric == "throughput" else ("ideal_eff" if metric == "efficiency" else "ideal_f")
+    ideal = np.asarray(payload[ideal_key], dtype=float)
     ax.plot(x, ideal, linestyle="--", linewidth=2.0, color=palette["ideal"], label="Ideal Reference")
 
     for idx, series in enumerate(payload["series"]):
         color = palette["series"][idx % len(palette["series"])]
-        theory = np.asarray(series["theory_eff"] if metric == "efficiency" else series["theory_f"], dtype=float)
+        theory_key = "theory_throughput" if metric == "throughput" else ("theory_eff" if metric == "efficiency" else "theory_f")
+        theory = np.asarray(series[theory_key], dtype=float)
         theory_mask = np.isfinite(x) & np.isfinite(theory)
         if log_x:
             theory_mask &= x > 0
@@ -216,9 +286,9 @@ def _save_precision_svg(path, payload, theme_name):
             theory_mask &= theory > 0
         _plot_masked_line(ax, x, theory, theory_mask, color=color, linewidth=2.0, label=f"Theory | {series['label']}")
 
-        mc_key = "mc_eff" if metric == "efficiency" else "mc_f"
-        ci_low_key = "mc_eff_ci_lower" if metric == "efficiency" else "mc_f_ci_lower"
-        ci_high_key = "mc_eff_ci_upper" if metric == "efficiency" else "mc_f_ci_upper"
+        mc_key = "mc_throughput" if metric == "throughput" else ("mc_eff" if metric == "efficiency" else "mc_f")
+        ci_low_key = "mc_throughput_ci_lower" if metric == "throughput" else ("mc_eff_ci_lower" if metric == "efficiency" else "mc_f_ci_lower")
+        ci_high_key = "mc_throughput_ci_upper" if metric == "throughput" else ("mc_eff_ci_upper" if metric == "efficiency" else "mc_f_ci_upper")
         mc_vals = np.asarray(series.get(mc_key, []), dtype=float) if series.get(mc_key) else np.array([])
         ci_low = np.asarray(series.get(ci_low_key, []), dtype=float) if series.get(ci_low_key) else np.array([])
         ci_high = np.asarray(series.get(ci_high_key, []), dtype=float) if series.get(ci_high_key) else np.array([])
@@ -363,6 +433,28 @@ def _save_diagnostics_svg(path, frame, theme_name):
     plt.close(fig)
 
 
+def _save_optimization_history_svg(path, payload, theme_name, metric_key, title, y_label):
+    optimisation = payload.get("optimization", {})
+    x_vals = np.arange(len(optimisation.get(metric_key, [])), dtype=float)
+    y_vals = np.asarray(optimisation.get(metric_key, []), dtype=float)
+    if y_vals.size == 0:
+        return False
+
+    palette = get_palette(theme_name)
+    fig, ax = plt.subplots(figsize=(10.8, 4.6), constrained_layout=False)
+    _style_axes(fig, ax, palette)
+    color = palette["series"][0] if metric_key == "objective_history" else palette["series"][1]
+    ax.plot(x_vals, y_vals, color=color, linewidth=2.0, marker="o", markersize=4)
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel(y_label)
+    ax.set_title(title, color=palette["text"], fontsize=12)
+    ax.margins(x=0.03, y=0.08)
+    fig.subplots_adjust(left=0.1, right=0.98, top=0.88, bottom=0.2)
+    fig.savefig(path, format="svg", facecolor=fig.get_facecolor())
+    plt.close(fig)
+    return True
+
+
 def _plot_masked_line(ax, x, y, mask, color, linewidth, label):
     if not np.any(mask):
         return
@@ -433,6 +525,44 @@ def _write_svg_assets(asset_dir, payload):
             "light": light_name,
         })
 
+    optimisation = payload.get("optimization")
+    if optimisation:
+        objective_written = False
+        bestf_written = False
+        for theme_name in ("dark", "light"):
+            objective_name = f"optimisation_objective_{theme_name}.svg"
+            bestf_name = f"optimisation_min_f_{theme_name}.svg"
+            objective_written = _save_optimization_history_svg(
+                asset_dir / objective_name,
+                payload,
+                theme_name,
+                "objective_history",
+                "Optimisation Objective History",
+                "Objective",
+            ) or objective_written
+            bestf_written = _save_optimization_history_svg(
+                asset_dir / bestf_name,
+                payload,
+                theme_name,
+                "min_f_history",
+                "Optimisation Minimum F History",
+                "Minimum F",
+            ) or bestf_written
+        if objective_written:
+            images.append({
+                "group": "optimisation",
+                "title": "Optimisation Objective History",
+                "dark": "optimisation_objective_dark.svg",
+                "light": "optimisation_objective_light.svg",
+            })
+        if bestf_written:
+            images.append({
+                "group": "optimisation",
+                "title": "Optimisation Minimum F History",
+                "dark": "optimisation_min_f_dark.svg",
+                "light": "optimisation_min_f_light.svg",
+            })
+
     return images + diagnostics_entries
 
 
@@ -467,10 +597,26 @@ def _describe_column(header, x_label):
         return f"{header}: swept x-axis value used for this precision run."
     if header == "time_ns":
         return "time_ns: time sample in nanoseconds for the diagnostics waveform export."
+    if header == "iteration":
+        return "iteration: optimisation iteration index used for the progress-history export."
+    if header == "objective":
+        return "objective: optimisation objective value recorded for that iteration or retained state."
+    if header == "minimum_f":
+        return "minimum_f: minimum F value across the swept x-axis for that optimisation state."
+    if header == "gate_count":
+        return "gate_count: number of detection gates used by that retained optimisation state."
+    if header == "label":
+        return "label: human-readable name for the retained optimisation state."
+    if header == "gate_edges_ns":
+        return "gate_edges_ns: comma-separated gate-edge positions in nanoseconds for the retained optimisation state."
+    if header.startswith("optimization_") or header.startswith("optimize_") or header.startswith("detection_opt_") or header.startswith("excitation_"):
+        return f"{header}: optimisation option captured from the controller configuration."
     if header == "ideal_f":
         return "ideal_f: ideal Fisher metric F for the same x-axis coordinate."
     if header == "ideal_eff":
-        return "ideal_eff: ideal photon efficiency, computed as 1/F^2."
+        return "ideal_eff: ideal photon efficiency, computed as min(1, 1/F^2). The physical ceiling is 1."
+    if header == "ideal_throughput":
+        return "ideal_throughput: ideal Fisher throughput, computed here as ideal photon efficiency scaled by the normalized throughput factor."
     if header == "irf":
         return "irf: normalized excitation or instrument response function samples."
     if header == "pdf":
@@ -483,13 +629,19 @@ def _describe_column(header, x_label):
         return f"{header}: numerical-theory F values for sweep series '{label}'."
     if header.endswith("_theory_eff"):
         label = header[: -len("_theory_eff")]
-        return f"{header}: numerical-theory photon efficiency values for sweep series '{label}', computed as 1/F^2."
+        return f"{header}: numerical-theory photon efficiency values for sweep series '{label}', computed as min(1, 1/F^2)."
+    if header.endswith("_theory_throughput"):
+        label = header[: -len("_theory_throughput")]
+        return f"{header}: numerical-theory Fisher throughput values for sweep series '{label}', computed as photon efficiency multiplied by the series throughput factor."
     if header.endswith("_mc_f"):
         label = header[: -len("_mc_f")]
         return f"{header}: Monte Carlo validation F values for sweep series '{label}'."
     if header.endswith("_mc_eff"):
         label = header[: -len("_mc_eff")]
-        return f"{header}: Monte Carlo validation photon efficiency values for sweep series '{label}', computed as 1/F^2."
+        return f"{header}: Monte Carlo validation photon efficiency values for sweep series '{label}', computed as min(1, 1/F^2)."
+    if header.endswith("_mc_throughput"):
+        label = header[: -len("_mc_throughput")]
+        return f"{header}: Monte Carlo validation Fisher throughput values for sweep series '{label}', computed as photon efficiency multiplied by the series throughput factor."
     if header.endswith("_mean_tau"):
         label = header[: -len("_mean_tau")]
         return f"{header}: mean estimated lifetime or parameter from Monte Carlo repeats for sweep series '{label}'."
@@ -504,10 +656,16 @@ def _describe_column(header, x_label):
         return f"{header}: upper 95% bootstrap confidence bound on Monte Carlo F for sweep series '{label}'."
     if header.endswith("_mc_eff_ci_lower"):
         label = header[: -len("_mc_eff_ci_lower")]
-        return f"{header}: lower 95% bootstrap confidence bound on Monte Carlo photon efficiency for sweep series '{label}'."
+        return f"{header}: lower bootstrap confidence bound on Monte Carlo photon efficiency for sweep series '{label}'."
     if header.endswith("_mc_eff_ci_upper"):
         label = header[: -len("_mc_eff_ci_upper")]
-        return f"{header}: upper 95% bootstrap confidence bound on Monte Carlo photon efficiency for sweep series '{label}'."
+        return f"{header}: upper bootstrap confidence bound on Monte Carlo photon efficiency for sweep series '{label}'."
+    if header.endswith("_mc_throughput_ci_lower"):
+        label = header[: -len("_mc_throughput_ci_lower")]
+        return f"{header}: lower bootstrap confidence bound on Monte Carlo Fisher throughput for sweep series '{label}'."
+    if header.endswith("_mc_throughput_ci_upper"):
+        label = header[: -len("_mc_throughput_ci_upper")]
+        return f"{header}: upper bootstrap confidence bound on Monte Carlo Fisher throughput for sweep series '{label}'."
     if header.endswith("_mean"):
         label = header[: -len("_mean")]
         return f"{header}: mean estimated parameter shown in the MLE accuracy panel for sweep series '{label}'."
@@ -536,13 +694,43 @@ def _build_report_html(payload, asset_dir_name, table_entries, image_entries):
         )
     images_html = "".join(image_blocks)
     config_text = html.escape(str(payload.get("config", {})))
+    optimisation = payload.get("optimization", {})
+    optimisation_items = ""
+    if optimisation.get("options"):
+        optimisation_items = "".join(
+            f"<li><strong>{html.escape(str(key))}</strong>: {html.escape(str(value))}</li>"
+            for key, value in optimisation["options"].items()
+        )
+    optimisation_html = ""
+    if optimisation:
+        objective_points = len(optimisation.get("objective_history", []))
+        snapshot_points = len(optimisation.get("snapshots", []))
+        excitation_summary = optimisation.get("final_excitation_summary", {})
+        excitation_summary_html = ""
+        if excitation_summary:
+            excitation_summary_html = (
+                "<h3>Best Excitation Profile</h3><ul>"
+                + "".join(
+                    f"<li><strong>{html.escape(str(key))}</strong>: {html.escape(str(value))}</li>"
+                    for key, value in excitation_summary.items()
+                )
+                + "</ul>"
+            )
+        optimisation_html = (
+            "<section class='panel'>"
+            "<h2>Optimisation Run</h2>"
+            f"<p class='meta'>Objective samples: {objective_points}<br>Retained displayed states: {snapshot_points}</p>"
+            f"<ul>{optimisation_items}</ul>"
+            f"{excitation_summary_html}"
+            "</section>"
+        )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HILIGHTer Precision Report</title>
+  <title>HILIGHTer Precision and Optimisation Report</title>
   <style>
     :root {{
       --page-bg: #07111f;
@@ -685,13 +873,23 @@ def _build_report_html(payload, asset_dir_name, table_entries, image_entries):
       color: var(--muted);
       margin: 0;
     }}
+    .math-block {{
+      margin: 12px 0;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(127, 127, 127, 0.06);
+    }}
+    math {{
+      font-size: 1.1rem;
+    }}
   </style>
 </head>
 <body data-theme="dark">
   <main>
     <section class="panel hero">
       <div>
-        <h1>HILIGHTer Precision Report</h1>
+        <h1>HILIGHTer Precision and Optimisation Report</h1>
         <div class="meta">Generated: {html.escape(payload['timestamp'])}<br>X-Axis: {html.escape(payload['x_label'])}</div>
       </div>
       <button id="themeToggle" type="button">Switch to Light Theme</button>
@@ -702,8 +900,70 @@ def _build_report_html(payload, asset_dir_name, table_entries, image_entries):
       <pre>{config_text}</pre>
     </section>
 
+    <section class="panel">
+      <h2>Metric Definitions</h2>
+      <p>This report uses the same precision definitions as the desktop workspace and backend service layer.</p>
+      <div class="math-block">
+        <div><strong>Relative precision metric</strong></div>
+        <math display="block">
+          <mrow>
+            <mi>F</mi>
+            <mo>=</mo>
+            <mfrac>
+              <msub><mi>&sigma;</mi><mi>&theta;</mi></msub>
+              <mrow><mo>|</mo><mi>&theta;</mi><mo>|</mo></mrow>
+            </mfrac>
+            <msqrt><mi>N</mi></msqrt>
+          </mrow>
+        </math>
+      </div>
+      <div class="math-block">
+        <div><strong>Photon efficiency</strong></div>
+        <math display="block">
+          <mrow>
+            <mi>&eta;</mi>
+            <mo>=</mo>
+            <mtext>min</mtext>
+            <mo>(</mo>
+            <mn>1</mn>
+            <mo>,</mo>
+            <mfrac><mn>1</mn><msup><mi>F</mi><mn>2</mn></msup></mfrac>
+            <mo>)</mo>
+          </mrow>
+        </math>
+      </div>
+      <div class="math-block">
+        <div><strong>Fisher scaling used in theory curves</strong></div>
+        <math display="block">
+          <mrow>
+            <mi>I</mi><mo>(</mo><mi>&theta;</mi><mo>)</mo>
+            <mo>=</mo>
+            <mi>N</mi>
+            <munderover><mo>&sum;</mo><mi>j</mi><mrow><mi>gates</mi></mrow></munderover>
+            <mfrac>
+              <msup>
+                <mrow><mo>(</mo><mfrac><mrow><mi>d</mi><msub><mi>P</mi><mi>j</mi></msub></mrow><mrow><mi>d</mi><mi>&theta;</mi></mrow></mfrac><mo>)</mo></mrow>
+                <mn>2</mn>
+              </msup>
+              <msub><mi>P</mi><mi>j</mi></msub>
+            </mfrac>
+          </mrow>
+        </math>
+      </div>
+      <p class="meta">The ideal reference is always computed as an ideal histogram-bin ceiling. It does not inherit sequential-gating penalties or non-ideal overlap modes from the live configuration.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Gating Semantics</h2>
+      <p>Equal gates are generated from the selected start and end anchors. Custom gates use the explicit edge list. Diagnostics plots show the raw geometric gate shapes, while overlap exclusivity is applied later in the statistical counting model.</p>
+      <p class="meta">Sequential collection, explicit overlap, duplicate events, and independent duplicates are still under active development and should be interpreted cautiously.</p>
+    </section>
+
+    {optimisation_html}
+
     <section>
       <h2>SVG Plot Assets</h2>
+      <p class="meta">Each figure is saved as a dark-theme and light-theme SVG in the asset folder. The light theme is intended for paper, poster, and slide reuse with a white background.</p>
       <div class="image-grid">
         {images_html}
       </div>
@@ -711,6 +971,7 @@ def _build_report_html(payload, asset_dir_name, table_entries, image_entries):
 
     <section>
       <h2>Simulation Data</h2>
+      <p class="meta">CSV tables are stored in the asset folder beside the HTML file. They contain the exact exported values used in the figures above.</p>
       {tables_html}
     </section>
   </main>

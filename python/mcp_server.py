@@ -12,7 +12,7 @@ from mcp_prompts import get_prompts
 
 SERVICE = DigitalTwinService()
 PROMPTS = get_prompts()
-SERVER_INFO = {"name": "hilighter-digital-twin-mcp", "version": "1.1.0"}
+SERVER_INFO = {"name": "hilighter-digital-twin-mcp", "version": "1.4.0"}
 
 
 def _read_message():
@@ -73,6 +73,14 @@ def _tool_definitions():
         {
             "name": "run_precision",
             "description": "Run theory and optional Monte Carlo precision analysis.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"config_patch": {"type": "object"}},
+            },
+        },
+        {
+            "name": "run_optimisation",
+            "description": "Run the integrated optimisation workflow across detection gates, excitation profile, or both, with Fisher Information or Fisher-throughput objectives.",
             "inputSchema": {
                 "type": "object",
                 "properties": {"config_patch": {"type": "object"}},
@@ -191,6 +199,8 @@ def _call_tool(name: str, arguments: Dict[str, Any]):
         return SERVICE.update_config(arguments.get("config_patch", {}))
     if name == "run_precision":
         return SERVICE.run_precision(arguments.get("config_patch", {}))
+    if name == "run_optimisation":
+        return SERVICE.run_optimization(arguments.get("config_patch", {}))
     if name == "simulate_basic":
         return SERVICE.simulate_basic(arguments)
     if name == "simulate_advanced":

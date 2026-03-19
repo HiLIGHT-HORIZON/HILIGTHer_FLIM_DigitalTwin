@@ -190,3 +190,124 @@ def test_refined_gridded_mle_handles_log_grid_extremes():
         assert np.isclose(estimate, tau_true, rtol=1.5e-2), (
             f"Expected refined estimate near {tau_true}, got {estimate:.6f}"
         )
+
+
+def test_resolve_gate_edges_applies_equal_and_custom_anchors():
+    cfg = PhysicsConfig(
+        gate_type="equal",
+        gate_edges=[0.0, 1.0, 2.0, 3.0, 4.0],
+        gate_start_mode="free",
+        gate_first_start=0.6,
+        gate_end_mode="free",
+        gate_last_end=8.6,
+    )
+    engine = TwinEngine(cfg)
+
+    equal_edges = engine.resolve_gate_edges()
+    assert np.allclose(equal_edges, np.linspace(0.6, 8.6, 5))
+
+    cfg.gate_type = "custom"
+    cfg.gate_start_mode = "start"
+    cfg.gate_end_mode = "period"
+    cfg.period = 12.5
+    cfg.gate_edges = [0.7, 2.0, 4.5, 9.0, 11.8]
+    custom_edges = engine.resolve_gate_edges()
+    assert np.isclose(custom_edges[0], 0.0)
+    assert np.isclose(custom_edges[-1], 12.5)
+    assert np.all(np.diff(custom_edges) > 0)
+
+
+def test_independent_duplicate_overlap_can_count_same_photon_in_adjacent_gates():
+    cfg = PhysicsConfig(
+        gate_collection_mode="histogram",
+        gate_overlap_mode="allow",
+        gate_overlap_ns=1.0,
+        gate_overlap_effect="independent_duplicates",
+        gate_wraparound=False,
+        gate_edges=[0.0, 1.5, 3.0],
+        gate_rise=0.0,
+        gate_fall=0.0,
+        timing_jitter=0.0,
+        b_decay_wrapping=False,
+        period=6.0,
+    )
+    engine = TwinEngine(cfg)
+    engine.distill_gates()
+
+    original_rand = np.random.rand
+    try:
+        def fake_rand(*shape):
+            if len(shape) == 3:
+                return np.zeros(shape, dtype=float)
+            return np.full(shape, 0.5, dtype=float)
+
+        np.random.rand = fake_rand
+        counts, detections = engine.simulate_gate_histograms(tau=2.0, n_photons=5, n_repeats=2)
+    finally:
+        np.random.rand = original_rand
+
+    assert counts.shape == (2, 2)
+    assert np.all(counts >= 0)
+    assert np.all(detections >= 5.0)
+
+
+def test_sequential_gate_collection_reduces_theoretical_fisher_throughput():
+    tau_grid = np.array([2.5])
+
+    hist_cfg = PhysicsConfig(
+        gate_collection_mode="histogram",
+        gate_edges=np.linspace(0.0, 12.5, 11).tolist(),
+        gate_rise=0.0,
+        gate_fall=0.0,
+        timing_jitter=0.0,
+    )
+    seq_cfg = hist_cfg.model_copy(update={"gate_collection_mode": "sequential"})
+
+    _, f_hist = TwinEngine(hist_cfg).compute_fisher_info(tau_grid, n_photons=2000)
+    _, f_seq = TwinEngine(seq_cfg).compute_fisher_info(tau_grid, n_photons=2000)
+
+    eff_hist = 1.0 / (f_hist[0] ** 2)
+    eff_seq = 1.0 / (f_seq[0] ** 2)
+
+    assert np.isclose(eff_seq / eff_hist, 0.1, rtol=0.25)
+    assert f_seq[0] > f_hist[0]
+
+
+def test_sequential_gate_collection_reduces_mc_detected_photons():
+    hist_cfg = PhysicsConfig(
+        gate_collection_mode="histogram",
+        gate_edges=np.linspace(0.0, 12.5, 11).tolist(),
+        gate_rise=0.0,
+        gate_fall=0.0,
+        timing_jitter=0.0,
+    )
+    seq_cfg = hist_cfg.model_copy(update={"gate_collection_mode": "sequential"})
+
+    hist_engine = TwinEngine(hist_cfg)
+    seq_engine = TwinEngine(seq_cfg)
+
+    hist_counts, hist_detected = hist_engine.simulate_gate_histograms(tau=2.5, n_photons=2000, n_repeats=200)
+    seq_counts, seq_detected = seq_engine.simulate_gate_histograms(tau=2.5, n_photons=2000, n_repeats=200)
+
+    assert hist_counts.shape == seq_counts.shape
+    assert np.mean(seq_detected) < np.mean(hist_detected) * 0.2
+
+
+def test_sequential_gate_collection_reduces_mc_efficiency_metric():
+    tau_grid = np.array([2.5])
+    hist_cfg = PhysicsConfig(
+        gate_collection_mode="histogram",
+        gate_edges=np.linspace(0.0, 12.5, 11).tolist(),
+        gate_rise=0.0,
+        gate_fall=0.0,
+        timing_jitter=0.0,
+        precision_mc_repeats=200,
+        precision_photons=2000,
+    )
+    seq_cfg = hist_cfg.model_copy(update={"gate_collection_mode": "sequential"})
+
+    hist_payload = TwinEngine(hist_cfg).monte_carlo_precision_curve(tau_grid, n_photons=2000, n_repeats=200)
+    seq_payload = TwinEngine(seq_cfg).monte_carlo_precision_curve(tau_grid, n_photons=2000, n_repeats=200)
+
+    assert seq_payload["f_value"][0] > hist_payload["f_value"][0]
+    assert seq_payload["efficiency"][0] < hist_payload["efficiency"][0] * 0.2
