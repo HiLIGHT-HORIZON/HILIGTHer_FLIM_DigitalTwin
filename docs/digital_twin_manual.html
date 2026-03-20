@@ -101,7 +101,7 @@
 <body>
 <main>
   <h1 id="intro">HILIGHTer Digital Twin Manual, API Reference, and MCP Guide</h1>
-  <p>This manual documents the Python Digital Twin as a simulation-first, precision-first FLIM engineering platform. It covers the architecture, APIs, MCP surface, LLM setup, and HTML export package.</p>
+  <p>This manual documents the sanitized Python-first HILIGHTer Digital Twin workspace. It covers the repository layout, desktop workflows, APIs, MCP surface, launch/test commands, and export/persistence features used by the active application.</p>
 
   <div class="card" id="controller">
     <h2>1. Product Scope</h2>
@@ -129,6 +129,37 @@
       <div><h3>MCP Server</h3><p><span class="badge">Module</span><code>python/mcp_server.py</code></p><p>Stdio MCP server exposing tools, resources, and prompts to LLM hosts.</p></div>
       <div><h3>HTML Export</h3><p><span class="badge">Module</span><code>python/gui/report_export.py</code></p><p>Generates an HTML report and a sibling asset folder with SVGs and CSVs.</p></div>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>2A. Workspace Layout</h2>
+    <table>
+      <tr><th>Path</th><th>Role</th></tr>
+      <tr><td><code>python/</code></td><td>Application root for the active desktop product.</td></tr>
+      <tr><td><code>python/backend/</code></td><td>Physics engine, storage, importers, schemas, and service orchestration.</td></tr>
+      <tr><td><code>python/gui/</code></td><td>Qt desktop workspace, automation API, and all operator-facing widgets.</td></tr>
+      <tr><td><code>python/profiles/instruments/</code></td><td>Versioned JSON instrument profiles and generation helpers.</td></tr>
+      <tr><td><code>python/tools/</code></td><td>Developer utilities, MCP smoke checks, and benchmark-report scripts.</td></tr>
+      <tr><td><code>python/tests/</code></td><td>Automated Python validation for backend and GUI-adjacent workflows.</td></tr>
+      <tr><td><code>docs/</code></td><td>Manual, architecture notes, and engineering documentation.</td></tr>
+      <tr><td><code>resources/</code></td><td>Static supporting assets retained for reporting and project context.</td></tr>
+    </table>
+    <div class="note">The active workspace is now Python-only. There should be no MATLAB source trees or MATLAB launchers in normal day-to-day use.</div>
+  </div>
+
+  <div class="card">
+    <h2>2B. Desktop Startup</h2>
+    <p>Launch the desktop workspace from the repository root with:</p>
+    <pre>python\run_desktop.bat</pre>
+    <p>This launcher checks desktop dependencies, updates them when needed, shows startup status in the terminal and splash screen, and then opens the Qt workspace.</p>
+    <p>Desktop workflows are centered around:</p>
+    <ul>
+      <li><code>RUN</code> for precision, Monte Carlo, diagnostics, and report generation.</li>
+      <li><code>TEST</code> for validation-image generation plus image fitting.</li>
+      <li><code>FIT IMAGE</code> for re-running only the image fitting stage.</li>
+      <li><code>File &gt; Save Workspace</code>, <code>Load Workspace</code>, and <code>Clear Workspace</code> for state persistence.</li>
+      <li><code>View &gt; Simulation Workspace</code> and <code>Image Validation Workspace</code> for focused dock layouts.</li>
+    </ul>
   </div>
 
   <div class="card" id="math">
@@ -366,27 +397,27 @@ precision = service.run_precision({"precision_compute_ci": True})</pre>
     <p>All hosts need the same core server command.</p>
     <pre>python python/mcp_server.py</pre>
     <p>Recommended working directory:</p>
-    <pre>C:\Users\ae275\OneDrive - Brunel University London\Documents\HILIGHT_DigitalTwin\DigitalTwin_Matlab</pre>
+    <pre>&lt;repo-root&gt;</pre>
     <p>Representative host setup snippets:</p>
     <pre>Codex CLI
 command = "python"
 args = ["python/mcp_server.py"]
-cwd = "C:\\Users\\ae275\\OneDrive - Brunel University London\\Documents\\HILIGHT_DigitalTwin\\DigitalTwin_Matlab"
+cwd = "&lt;repo-root&gt;"
 
 Claude Desktop / Claude CLI
 command = "python"
 args = ["python/mcp_server.py"]
-cwd = "C:\\Users\\ae275\\OneDrive - Brunel University London\\Documents\\HILIGHT_DigitalTwin\\DigitalTwin_Matlab"
+cwd = "&lt;repo-root&gt;"
 
 Gemini CLI
 command = "python"
 args = ["python/mcp_server.py"]
-cwd = "C:\\Users\\ae275\\OneDrive - Brunel University London\\Documents\\HILIGHT_DigitalTwin\\DigitalTwin_Matlab"
+cwd = "&lt;repo-root&gt;"
 
 Antigravity IDE (Gemini desktop host)
 command = "python"
 args = ["python/mcp_server.py"]
-cwd = "C:\\Users\\ae275\\OneDrive - Brunel University London\\Documents\\HILIGHT_DigitalTwin\\DigitalTwin_Matlab"</pre>
+cwd = "&lt;repo-root&gt;"</pre>
     <div class="note">The MCP server itself is the same across Codex, Claude, Gemini CLI, and Antigravity IDE. Only the host-specific settings file or MCP UI differs.</div>
   </div>
 
@@ -418,7 +449,7 @@ cwd = "C:\\Users\\ae275\\OneDrive - Brunel University London\\Documents\\HILIGHT
 
   <div class="card">
     <h2>14. MCP Smoke Test</h2>
-    <pre>python python/mcp_smoke_test.py</pre>
+    <pre>python python/tools/mcp_smoke_test.py</pre>
     <p>The smoke test initializes the MCP server, lists tools/resources/prompts, runs representative operations, and verifies that the returned surfaces are usable.</p>
   </div>
 
@@ -430,6 +461,14 @@ cwd = "C:\\Users\\ae275\\OneDrive - Brunel University London\\Documents\\HILIGHT
       <li>Experimental import endpoints remain compatibility paths and are not the product center of gravity.</li>
       <li>Sequential gating, explicit overlap, duplicate events, and independent duplicates remain under active development and should be treated as provisional engineering features rather than final validated modes.</li>
     </ul>
+  </div>
+
+  <div class="card">
+    <h2>16. Verification Commands</h2>
+    <pre>python -m py_compile python\desktop_app.py python\backend\*.py python\gui\main_window.py
+pytest python/tests
+python python/tools/mcp_smoke_test.py</pre>
+    <p>Use these commands after substantial edits to validate backend importability, automated test coverage, and MCP surface health.</p>
   </div>
 
   <footer style="margin-top: 42px; text-align: center; color: var(--muted); font-size: 0.85em;">

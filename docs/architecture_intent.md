@@ -1,211 +1,140 @@
 # Architecture Intent Map: HILIGHTer Digital Twin
 
 ## Product Intent
-The Python Digital Twin is the main engineering platform for the project. It is no longer framed as a full experimental-data analysis clone of the MATLAB application. Its primary purpose is to model and benchmark virtual FLIM instruments, quantify estimator performance, and expose that capability through stable software interfaces.
+HILIGHTer is now a Python-first desktop engineering workspace for virtual FLIM instrument design, precision benchmarking, synthetic-image validation, and automation. The repository no longer carries active MATLAB application code. The desktop Qt workspace, backend service layer, HTTP API, MCP server, and export/reporting features all share one computational engine.
 
 The core product goals are:
 
-- Numerical Fisher Information and CRLB estimation.
-- Monte Carlo validation of those precision estimates.
-- Bootstrap-based estimator-accuracy testing and confidence intervals.
-- Rich virtual-instrument configuration across excitation, detection, gating, and acquisition parameters.
-- Synthetic image generation and testing workflows.
-- Validation-image workspaces with synthetic banded images driven by the same X-axis parameter used for precision sweeps.
-- Controller-driven optimisation integrated directly into the desktop workspace, with live objective history, retained intermediate states, optional post-run Monte Carlo validation, excitation-profile optimisation, Fisher-throughput selection, joint detection-plus-excitation workflows, and four selectable detection-gate strategies with Fisher Compression as the default.
-- API-first interoperability for other software and LLM agents through Python APIs, HTTP APIs, and MCP.
-- Exportable, publication-oriented HTML reports with SVG plot assets, CSV data assets, and theme-aware presentation.
+- configure virtual excitation, decay, detection, and gating models,
+- compute numerical Fisher-information and relative-precision curves,
+- validate those predictions with Monte Carlo simulation,
+- generate synthetic validation images tied to the active sweep axis,
+- fit and inspect those images through pixel, map, and phasor views,
+- support optimisation workflows for detection gates and excitation profiles,
+- preserve and restore complete workspaces and instrument profiles,
+- expose the same functionality through Python, HTTP, desktop automation, and MCP surfaces.
+
+## Sanitised Workspace Layout
+The repository is organised around the active Python application:
+
+- `python/`
+  The application root. Contains the backend, GUI, launchers, profiles, tests, and utility scripts.
+- `python/backend/`
+  Shared numerical engine, storage, importers, schemas, and service orchestration.
+- `python/gui/`
+  Desktop Qt workspace and widgets.
+- `python/profiles/instruments/`
+  Versioned JSON instrument definitions and generators.
+- `python/tools/`
+  Developer and reporting utilities such as MCP smoke tests and benchmark-report replication helpers.
+- `python/tests/`
+  Automated Python validation for physics, controls, optimisation, and image-validation flows.
+- `docs/`
+  Architecture, manual, and engineering documentation.
+- `resources/`
+  Static supporting assets retained for reporting and project context.
+- `tests/`
+  Reserved top-level test area. After cleanup it should only contain non-MATLAB content.
+
+There should be no active MATLAB source trees, `.m` launchers, or MATLAB project metadata in the main workspace.
 
 ## Architectural Principles
 
-### 1. Simulation-First
-The Digital Twin is built around synthetic acquisition, not experimental import. Simulation, precision analysis, and diagnostics are the primary workflows.
+### 1. One Core Engine
+All physics, fitting, phasor, optimisation, and storage logic should live in the Python backend once and be reused everywhere else.
 
-Experimental import endpoints may still exist as compatibility utilities, but they are not the central product scope and should not drive the architecture.
+### 2. Simulation-First
+The main workflows are synthetic precision studies, validation-image studies, and instrument optimisation. File import remains a compatibility utility, not the product center.
 
-### 2. Precision-First
-The main benchmark is estimator quality under a configurable virtual instrument.
+### 3. Desktop-First, API-Complete
+The Qt workspace is the primary operator experience, but every major workflow must remain scriptable through the service API, HTTP API, desktop automation API, and MCP server.
 
-This means the platform must support:
-
-- ideal-reference precision curves,
-- numerical Fisher / F-value curves under non-ideal instrumentation,
-- Monte Carlo validation against the same sweep,
-- bootstrap p-value testing for estimator accuracy,
-- bootstrap confidence intervals for Monte Carlo precision metrics.
-
-### 3. API-First
-All major functionality should be reachable without manual GUI interaction.
-
-The intended control surfaces are:
-
-- shared Python service API for application and workflow integration,
-- FastAPI HTTP surface for remote or web-driven use,
-- desktop automation API for in-process control of the live Qt workspace,
-- MCP server for LLM tooling, data access, and prompt injection.
-
-### 4. One Core Engine, Many Frontends
-Physics logic should live once in the backend engine and be reused by every interface. The GUI, HTTP API, reports, tests, and MCP server should all depend on the same computational implementation rather than duplicating model logic.
+### 4. Workspace Persistence
+Users should be able to save and load full workspaces, not only export plots. Instrument profiles, controller state, generated data, and derived maps must persist in a forward-compatible format.
 
 ## Layered Architecture
 
 | Layer | Main Module | Intent |
 | :--- | :--- | :--- |
-| Physics Engine | `python/backend/twin_engine.py` | Time-domain excitation, decay PDFs, gate distillation, Fisher estimation, gridded MLE, Monte Carlo workflows, bootstrap statistics, diagnostics, synthetic image generation, validation-image sizing, pixel fitting payloads, and phasor fallback/calibration support. |
-| Shared State Models | `python/backend/models.py` | Validated configuration and state objects used across the backend and desktop. |
-| Service Layer | `python/backend/service_api.py` | Stable orchestration surface for workflows, data access, configuration changes, diagnostics, validation-image fitting, and sessions. |
-| Profile Store | `python/backend/profile_store.py` | Versioned instrument-profile storage, migration, and import/export helpers. |
-| HTTP API | `python/backend/main.py` | Remote programmatic access to the shared service layer. |
-| Desktop Workspace | `python/gui/main_window.py` and widgets | Interactive engineering environment for precision, diagnostics, validation-image testing, integrated optimisation mode, view presets, workspace save/load, and plot inspection. |
-| Desktop Automation | `python/gui/automation_api.py` | In-process control of the live desktop, including controller state, optimisation state, and plot payload access. |
-| MCP Server | `python/mcp_server.py` | Stdio MCP bridge exposing tools, resources, and prompts to LLM hosts. |
-| Documentation and Reports | `docs/` and HTML exporters | Human-readable manuals, parity reports, and precision-session outputs with SVG/CSV asset packages. |
-
-## State Model Intent
-The validated configuration object is the single source of truth for simulation and precision workflows.
-
-Important state categories include:
-
-- decay model and component parameters,
-- excitation model, width, timing, rise/fall behaviour, burst settings,
-- detection and gate geometry, including backend-resolved equal/custom edge definition, start/end anchoring, collection mode, overlap policy, overlap effect, and gate-tail wraparound,
-- sweep definitions for parameter studies,
-- precision execution settings such as photon budget, Monte Carlo repeats, bootstrap samples, CI level, and estimator-accuracy threshold,
-- plotting and reporting options used by the desktop workspace and exports, including light/dark theming and asset generation.
-- optimisation-execution options such as graphical real-time updates, retained intermediate states, and optional post-run Monte Carlo validation.
-- validation-image execution options such as photon budget, target repeats, fitting backend, and workspace persistence metadata.
-
-The GUI must synchronize to this model rather than holding independent hidden state.
-
-The backend engine must also be able to resolve the effective gate geometry from that state without relying on GUI-side preprocessing. That is especially important for API, HTTP, and MCP-driven use where the controller may not be present.
-
-Sequential gate collection is also a backend concern, not just a label. Under a fixed total acquisition budget, sequential collection reduces the effective detected-photon throughput by the number of sequential gate acquisitions, which must feed through both Fisher and Monte Carlo precision calculations.
-
-Explicit overlap is split into two layers:
-
-- geometric gate definition used for diagnostics and gate visualization,
-- statistical overlap handling used for Fisher and Monte Carlo counting rules.
-
-That separation is intentional so the diagnostics view shows the physical gate geometry, while the estimator math applies exclusivity or duplicate-event semantics separately.
+| Physics Engine | `python/backend/twin_engine.py` | Excitation modelling, decay PDFs, gate distillation, Fisher estimation, Monte Carlo, validation-image generation, fitting, pixel payloads, and phasor products. |
+| Shared Models | `python/backend/models.py` | Configuration and lightweight application state objects shared across the stack. |
+| Service Layer | `python/backend/service_api.py` | Stable workflow orchestration for scripts, tests, APIs, and automation. |
+| Storage Layer | `python/backend/storage.py` | Workspace persistence and restoration. |
+| Profile Store | `python/backend/profile_store.py` | Instrument profile load/save/import/export/migration helpers. |
+| HTTP API | `python/backend/main.py` | Remote REST access to backend workflows and data products. |
+| Desktop Workspace | `python/gui/main_window.py` and widgets | Controller-driven Qt application for simulation, validation, optimisation, and export. |
+| Desktop Automation | `python/gui/automation_api.py` | Programmatic control of the live Qt workspace. |
+| MCP Server | `python/mcp_server.py` | Tool/resource/prompt bridge for LLM hosts. |
+| Documentation | `docs/` | Architecture, operator manual, API guidance, and benchmark notes. |
 
 ## Workflow Intent
 
 ### Precision Workflow
-The precision workflow is the main engineering benchmark loop.
+The precision workflow produces:
 
-Expected outputs:
-
-- ideal Fisher reference,
-- theory curve for the configured instrument,
+- ideal-reference precision curves,
+- configured-instrument theory curves,
 - optional Monte Carlo validation,
-- optional bootstrap confidence intervals,
-- compatibility statistics for estimator-accuracy checks,
-- diagnostics frames for the swept configurations,
-- PDF ensembles corresponding to the swept X-axis parameter,
-- exportable HTML report with SVG figures, CSV tables, and theme toggle support.
+- optional bootstrap confidence intervals and estimator checks,
+- diagnostics payloads aligned to the same sweep axis,
+- exportable HTML reports and CSV/SVG assets.
+
+### Validation-Image Workflow
+The validation-image workflow produces:
+
+- synthetic gated images driven by the active sweep parameter,
+- image geometry sized from sweep length and requested repeats,
+- intensity and fitted-parameter maps,
+- pixel-inspector payloads with decay, fit, residuals, IRF, and statistics,
+- phasor products suitable for image-level inspection.
+
+The desktop view preset for this workflow is:
+
+- controller on the left,
+- image validation, pixel inspector, and phasor space on the right.
 
 ### Optimisation Workflow
-The optimisation workflow is now part of the main desktop workspace, not a separate legacy optimiser dialog.
-
-Expected behaviour:
-
-- entering optimisation mode whenever detection-gate or excitation optimisation is enabled,
-- red visual emphasis on the optimisation workspace docks,
-- live use of Precision, MLE Accuracy, and Instrument Diagnostics as the optimisation display surfaces,
-- numerical-theory-only updates during the optimisation loop,
-- retained intermediate states including start and finish,
-- optional post-run Monte Carlo validation for those retained states,
-- export of optimisation options, history curves, retained states, and final instrument definitions.
-
-The currently implemented optimisation workspace supports:
+The optimisation workflow is integrated into the main desktop workspace. It should support:
 
 - detection-gate optimisation,
 - excitation-profile optimisation,
-- Fisher Information and Fisher-throughput objectives,
-- joint sequential alternating detection-plus-excitation optimisation with a configurable maximum number of alternating rounds.
+- sequential joint optimisation,
+- live objective/minimum-F displays,
+- retained intermediate states,
+- optional post-run Monte Carlo validation,
+- export of optimisation settings and outcomes.
 
-The implemented detection-gate strategies are:
+## State Intent
+The backend configuration object is the single source of truth for:
 
-- Fisher Compression: dynamic-programming compression of a fine contiguous histogram into an optimal gate partition, with an optional nuisance-aware Schur-complement score and optional automatic gate-count reduction until a user-defined peak photon-efficiency loss is reached.
-- Direct Mean F Minimisation: continuous SLSQP edge optimisation over the current design grid.
-- Partition Theorem Bottom-Up: constructive split-based partition growth on a fine reference histogram.
-- Partition Theorem Top-Down: merge-based compression on a fine reference histogram.
+- decay-model settings,
+- excitation settings,
+- gate geometry and overlap semantics,
+- sweep definitions,
+- Monte Carlo and fitting settings,
+- validation-image settings,
+- optimisation settings,
+- persistence metadata.
 
-The Fisher Compression auto-compression loss test is referenced to the initial finer optimised partition, not to the unoptimised equal-gate starting point. When auto-compress is enabled, the optimisation start state is therefore the configured finer equal-width partition rather than the main GUI gate count.
+The GUI must mirror this state rather than maintaining a separate hidden model.
 
-The implemented excitation-profile strategies are:
+## Testing Intent
+The cleaned repository should be validated with:
 
-- Gaussian width optimisation over the configured width range,
-- square / rectangular width optimisation over the configured width range,
-- free-form optimisation over a configurable number of non-negative control points.
+- Python compile checks,
+- backend and widget smoke tests,
+- `pytest` coverage for physics, controls, optimisation, and validation images,
+- MCP smoke testing from `python/tools/mcp_smoke_test.py`,
+- offscreen Qt startup testing for the desktop workspace.
 
-The implemented optimisation objectives are:
-
-- Fisher Information: choose the candidate with the best mean F-value over the active X-axis sweep,
-- Fisher Throughput: first enforce the configured peak F^-2 loss budget against the appropriate Dirac-based reference design, then choose the candidate with the best throughput metric. The configured percentage is interpreted as an absolute photon-efficiency loss in percentage points at the efficiency peak. For excitation, fixed-dose mode assumes no photon-budget gain from pulse area, so throughput changes are driven by the achieved information efficiency of the excitation and detection shapes. Under fixed-peak mode, the throughput metric also scales with the relative excitation area because photon count is assumed to grow proportionally to pulse area. For detection it is most meaningful for strategies that can change gate count, especially Fisher Compression auto-compress.
-
-Optimisation outputs should explicitly report the final gate count and, when excitation optimisation is active, the final excitation-profile summary including profile family, constraint, equivalent width, and either width or free-form control points.
-
-### Synthetic Image Workflow
-The synthetic image workflow exists to test estimators and visualization paths on simulated datasets produced by the same instrument model.
-
-Expected outputs:
-
-- synthetic gated data,
-- parameter-band validation images derived from the active precision X-axis sweep,
-- fit maps,
-- phasor products,
-- pixel-level inspection payloads,
-- data summaries for software integration.
-
-The desktop workspace should expose two focused view presets:
-
-- simulation workspace: controller plus precision, accuracy, and diagnostics,
-- image validation workspace: controller plus image validation, pixel inspector, and phasor space.
-
-## MCP and LLM Intent
-The MCP server is intended to let external LLM systems use the Digital Twin as a structured reasoning backend.
-
-MCP should expose:
-
-- configuration inspection and mutation,
-- workflow execution,
-- optimisation workflow execution,
-- detection-optimisation strategy selection and strategy-specific settings,
-- precision and diagnostics access,
-- data and result snapshots,
-- GUI schema metadata so an LLM can reference the desktop consistently,
-- reusable prompts that encode good operating patterns.
-
-The MCP layer currently targets backend and workspace-schema access. Live Qt widget driving remains the responsibility of the in-process desktop automation API unless a future dedicated desktop MCP bridge is introduced.
-
-Because some gating modes are still being stabilized, LLM-facing guidance should treat these options cautiously:
-
-- sequential gate collection,
-- explicit overlap mode,
-- duplicate-event overlap effects.
-
-These can be inspected and configured through APIs and MCP, but they should currently be surfaced to users as under development.
+Benchmark comparisons against legacy reports can still exist as documentation or optional utility scripts, but they are not a separate application tier.
 
 ## Documentation Intent
-The HTML manual must stay synchronized with the actual implementation and cover:
+The HTML manual should always describe the current Python workspace, including:
 
-- product scope,
-- architecture,
-- shared service API,
-- HTTP API,
-- desktop automation API,
-- MCP tools, resources, and prompts,
-- integrated optimisation-mode behaviour and current scope limits,
-- setup instructions for supported LLM hosts,
-- mathematical definitions of F, photon efficiency, Fisher scaling, and bootstrap outputs,
-- current scope limits and compatibility notes.
-
-## Validation Intent
-The Python Digital Twin should be validated against:
-
-- focused backend tests,
-- parity checks against known MATLAB or report benchmarks where applicable,
-- smoke tests of the MCP server,
-- interactive validation in the Qt workspace for plotting, legends, and diagnostics.
-
-Parity with MATLAB is important for core physics and benchmark trends, but the Python product is intentionally narrower in scope and more integration-oriented.
+- repo layout and launch paths,
+- desktop workflow usage,
+- workspace persistence,
+- service, HTTP, automation, and MCP interfaces,
+- optimisation scope and current limitations,
+- test and smoke-check commands.

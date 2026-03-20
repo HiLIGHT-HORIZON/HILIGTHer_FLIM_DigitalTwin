@@ -1,12 +1,20 @@
-import numpy as np
-from sdtfile import SdtFile
 import os
+
+import numpy as np
 
 def import_sdt(file_path: str):
     """
     Imports Becker & Hickl SDT files.
-    Maps into a [Y, X, T, C] hypercube consistent with read_SDT.m
+    Maps data into a [Y, X, T, C]-style structure for the Python backend.
     """
+    try:
+        from sdtfile import SdtFile
+    except ImportError as exc:
+        raise RuntimeError(
+            "SDT import requires the optional 'sdtfile' package. "
+            "Install it to enable Becker & Hickl file import."
+        ) from exc
+
     sdt = SdtFile(file_path)
     
     # sdt.data is a list of arrays (one per channel/series)

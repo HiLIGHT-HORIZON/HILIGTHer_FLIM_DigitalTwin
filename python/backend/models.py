@@ -17,8 +17,8 @@ class ConditionGroup(BaseModel):
 
 class UnifiedState(BaseModel):
     """
-    Python equivalent of d.Conditions structure in MATLAB.
-    Manages the overall app state and data hierarchy.
+    Unified application state for the Python desktop and service surfaces.
+    Manages the current data hierarchy, active selection, and configuration.
     """
     conditions: List[ConditionGroup] = []
     current_group_idx: int = 0

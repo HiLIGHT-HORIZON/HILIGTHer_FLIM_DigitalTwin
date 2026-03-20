@@ -8,6 +8,11 @@ AppProperties/settings.mat
 *.mat
 *.sdt
 *.csv
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+dist/
 
 # --- Deep Learning Weights (Files > 100MB) ---
 # Note: SAM weights currently tracked via LFS; other pth files will be ignored.

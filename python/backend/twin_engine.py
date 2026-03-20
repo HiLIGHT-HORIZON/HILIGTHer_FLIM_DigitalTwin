@@ -1334,11 +1334,11 @@ class TwinEngine:
 
     def compute_ideal_reference(self, tau_grid: np.ndarray, n_photons: int = 1) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Calculates the truly 'Ideal Case' (Theoretical Ceiling):
-        - Infinite Time Window (No Truncation / No Wrapping)
+        Calculates the 'Ideal Case' reference benchmark:
         - Dirac excitation (Zero Timing Jitter)
-        - 256 High-resolution linear bins
+        - 256 High-resolution linear bins over the active period
         - Zero Background & No Parameter Coupling
+        - Inherits 'period' and 'b_decay_wrapping' from the active configuration
         """
         import copy
         ideal_cfg = copy.deepcopy(self.config)
@@ -1350,8 +1350,7 @@ class TwinEngine:
         ideal_cfg.detector_deadtime = 0
         ideal_cfg.b_multihit_mode = True
         ideal_cfg.background_level = 0
-        ideal_cfg.b_decay_wrapping = False # Establishing the absolute limit without pile-up
-        ideal_cfg.period = 100.0 # Use a very wide measurement window to reach F=1.0 limit
+        # ideal_cfg.b_decay_wrapping and ideal_cfg.period are inherited from the active configuration
         ideal_cfg.gate_collection_mode = "histogram"
         ideal_cfg.gate_overlap_mode = "jitter_only"
         ideal_cfg.gate_overlap_effect = "exclusive"
@@ -1362,8 +1361,9 @@ class TwinEngine:
         for p in ["tau1", "tau2", "alpha", "background", "beta"]:
             ideal_cfg.fixed_params[p] = True
         
-        # Continuous-limit bins
-        edges = np.linspace(0, 100.0, 257)
+        # Continuous-limit bins over the active period
+        p_val = float(ideal_cfg.period)
+        edges = np.linspace(0, p_val, 257)
         ideal_cfg.gate_edges = edges.tolist()
         ideal_cfg.dt_input = 0.05
         

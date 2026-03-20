@@ -1,7 +1,9 @@
 
 import json
-import numpy as np
 import os
+from pathlib import Path
+
+import numpy as np
 
 def generate_profile(legacy_data):
     mapping = {
@@ -62,10 +64,10 @@ hilight = {"T": 50, "fwhm": 5, "profile": "Rectangular", "toff": 18, "rise_time"
 tcspc = {"T": 12.5, "fwhm": 0.01, "profile": "Rectangular", "toff": 12.5, "rise_time": 0, "fall_time": 0, "bPulseTrain": False, "PT_Trep": 0.1, "PT_sigma": 0.05, "gate_type": "Equal", "N_gates": 128, "r": 0.0001, "gate_widths": [], "name": "TCSPC (12.5ns - 128 bins)"}
 optimized = {"T": 12.5, "fwhm": 0.01, "profile": "Rectangular", "toff": 12.5, "rise_time": 0, "fall_time": 0, "bPulseTrain": False, "PT_Trep": 0.1, "PT_sigma": 0.05, "gate_type": "Custom (max 8)", "N_gates": 4, "r": 0.0001, "gate_widths": [1.2022312357422731, 1.5704123307679585, 6.6405861563017554, 2.5452524188534049], "name": "TimeGating 4 bins - optimized"}
 
-target_dir = r"c:\Users\ae275\OneDrive - Brunel University London\Documents\HILIGHT_DigitalTwin\DigitalTwin_Matlab\python\profiles\instruments"
+target_dir = Path(__file__).resolve().parent
 
 for name, data in [("HiLIGHT.json", hilight), ("TCSPC (12.5ns - 128 bins).json", tcspc), ("TimeGating 4 bins - optimized.json", optimized)]:
     translated = generate_profile(data)
-    with open(os.path.join(target_dir, name), 'w') as f:
+    with open(target_dir / name, 'w') as f:
         json.dump(translated, f, indent=4)
     print(f"Generated: {name}")

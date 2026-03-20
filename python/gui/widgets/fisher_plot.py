@@ -288,6 +288,10 @@ class FisherWidget(QWidget):
         self.series_groups = {}
         self.ideal_curve.setData([], [])
 
+    def clear_data(self):
+        self.clear_curves()
+        self.plot_widget.enableAutoRange()
+
     def _clear_rendered_items(self):
         for item in self.rendered_items:
             self.plot_widget.removeItem(item)
