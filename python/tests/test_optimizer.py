@@ -113,3 +113,49 @@ def test_additional_detection_algorithms_honor_custom_window():
     assert np.isfinite(best_j)
     assert np.isclose(info["window_start"], 1.5)
     assert np.isclose(info["window_end"], 10.0)
+
+
+def test_direct_gate_optimization_responds_to_photon_basis_mode():
+    all_cfg = PhysicsConfig(
+        period=12.5,
+        gate_type="custom",
+        gate_start_mode="free",
+        gate_first_start=6.0,
+        gate_end_mode="free",
+        gate_last_end=12.5,
+        optimization_f_photon_basis="all",
+        detection_opt_restarts=2,
+        detection_opt_maxiter=20,
+        detection_opt_ftol=1e-3,
+    )
+    collected_cfg = all_cfg.model_copy(update={"optimization_f_photon_basis": "collected"})
+
+    all_edges, all_j, _ = TwinEngine(all_cfg).optimize_gates(
+        n_gates=3,
+        t_max=12.5,
+        tau_range=(0.5, 7.5),
+        n_tau=10,
+        n_restarts=2,
+        algorithm="direct_slsqp",
+        start_anchor="custom",
+        start_time=6.0,
+        end_anchor="custom",
+        end_time=12.5,
+    )
+    collected_edges, collected_j, _ = TwinEngine(collected_cfg).optimize_gates(
+        n_gates=3,
+        t_max=12.5,
+        tau_range=(0.5, 7.5),
+        n_tau=10,
+        n_restarts=2,
+        algorithm="direct_slsqp",
+        start_anchor="custom",
+        start_time=6.0,
+        end_anchor="custom",
+        end_time=12.5,
+    )
+
+    assert np.isfinite(all_j)
+    assert np.isfinite(collected_j)
+    assert not np.allclose(all_edges, collected_edges, atol=1e-3)
+    assert not np.isclose(all_j, collected_j, rtol=1e-2)

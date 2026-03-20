@@ -311,3 +311,68 @@ def test_sequential_gate_collection_reduces_mc_efficiency_metric():
 
     assert seq_payload["f_value"][0] > hist_payload["f_value"][0]
     assert seq_payload["efficiency"][0] < hist_payload["efficiency"][0] * 0.2
+
+
+def test_histogram_fisher_supports_all_vs_collected_photon_basis():
+    """Lossy histogram gating should distinguish full-budget and collected-only Fisher metrics."""
+    tau_grid = np.array([2.5])
+
+    all_cfg = PhysicsConfig(
+        gate_type="custom",
+        gate_edges=[8.0, 10.0, 11.0, 12.5],
+        gate_start_mode="free",
+        gate_first_start=8.0,
+        gate_end_mode="free",
+        gate_last_end=12.5,
+        gate_collection_mode="histogram",
+        gate_rise=0.0,
+        gate_fall=0.0,
+        timing_jitter=0.0,
+        optimization_f_photon_basis="all",
+        period=12.5,
+    )
+    collected_cfg = all_cfg.model_copy(update={"optimization_f_photon_basis": "collected"})
+
+    _, f_all = TwinEngine(all_cfg).compute_fisher_info(
+        tau_grid,
+        n_photons=2000,
+        photon_basis_mode="all",
+    )
+    _, f_collected = TwinEngine(collected_cfg).compute_fisher_info(
+        tau_grid,
+        n_photons=2000,
+        photon_basis_mode="collected",
+    )
+
+    assert np.isfinite(f_all[0])
+    assert np.isfinite(f_collected[0])
+    assert not np.isclose(f_all[0], f_collected[0], rtol=1e-2)
+
+
+def test_monte_carlo_precision_respects_photon_basis_selection():
+    """MC precision should use the selected photon budget basis when reporting F."""
+    tau_grid = np.array([2.5])
+    base_cfg = PhysicsConfig(
+        gate_type="custom",
+        gate_edges=[8.0, 10.0, 11.0, 12.5],
+        gate_start_mode="free",
+        gate_first_start=8.0,
+        gate_end_mode="free",
+        gate_last_end=12.5,
+        gate_collection_mode="histogram",
+        gate_rise=0.0,
+        gate_fall=0.0,
+        timing_jitter=0.0,
+        precision_mc_repeats=120,
+        precision_photons=2000,
+        period=12.5,
+    )
+    all_cfg = base_cfg.model_copy(update={"optimization_f_photon_basis": "all"})
+    collected_cfg = base_cfg.model_copy(update={"optimization_f_photon_basis": "collected"})
+
+    payload_all = TwinEngine(all_cfg).monte_carlo_precision_curve(tau_grid, n_photons=2000, n_repeats=120)
+    payload_collected = TwinEngine(collected_cfg).monte_carlo_precision_curve(tau_grid, n_photons=2000, n_repeats=120)
+
+    assert np.isfinite(payload_all["f_value"][0])
+    assert np.isfinite(payload_collected["f_value"][0])
+    assert not np.isclose(payload_all["f_value"][0], payload_collected["f_value"][0], rtol=5e-2)

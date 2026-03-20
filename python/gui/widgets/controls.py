@@ -3,20 +3,32 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                              QComboBox, QLabel, QGroupBox, QTabWidget,
                              QCheckBox, QLineEdit, QRadioButton, QButtonGroup,
                              QStackedWidget, QTextEdit, QToolButton, QDialog,
-                             QScrollArea,
+                             QScrollArea, QSizePolicy,
                              QDialogButtonBox)
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QGuiApplication, QColor
 import numpy as np
 import pyqtgraph as pg
+from .freeform_irf_editor import FreeFormIRFEditor
 
 class ControlWidget(QWidget):
     context_changed = pyqtSignal(str) # Emits section ID for manual
+    OPT_HISTORY_COLORS = {
+        "objective": "#ef4444",
+        "min_f": "#22c55e",
+        "min_eff": "#38bdf8",
+        "auc_eff": "#f59e0b",
+        "throughput": "#a855f7",
+        "throughput_auc": "#e879f9",
+        "gate_count": "#94a3b8",
+    }
 
     def __init__(self):
         super().__init__()
         self.current_theme = "dark"
         self.optimization_running_state = False
+        self._anchor_syncing = False
+        self._f_photon_basis_syncing = False
         layout = QVBoxLayout(self)
         
         # Main Tab Container
@@ -27,9 +39,9 @@ class ControlWidget(QWidget):
             row = QWidget()
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(6)
             row_layout.addWidget(QLabel(left_label))
             row_layout.addWidget(left_widget, 1)
-            row_layout.addSpacing(8)
             row_layout.addWidget(QLabel(right_label))
             row_layout.addWidget(right_widget, 1)
             return row
@@ -263,14 +275,13 @@ class ControlWidget(QWidget):
         # --- TAB 2: LASER / IRF (REFACTORED) ---
         laser_tab = QWidget()
         laser_layout = QFormLayout(laser_tab)
+        laser_layout.setHorizontalSpacing(6)
+        laser_layout.setVerticalSpacing(6)
+        laser_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
         
         self.spin_period = QDoubleSpinBox(); self.spin_period.setRange(0.1, 1000); self.spin_period.setValue(12.5)
         laser_layout.addRow("Period (ns):", self.spin_period)
         
-        self.chk_decay_wrap = QCheckBox("Decay wrapping")
-        self.chk_decay_wrap.setChecked(True)
-        laser_layout.addRow(self.chk_decay_wrap)
-
         self.combo_profile = QComboBox()
         self.combo_profile.addItems(["Gaussian", "Rectangular", "Free Form", "Ideal (Dirac)"])
         laser_layout.addRow("IRF Profile:", self.combo_profile)
@@ -289,12 +300,41 @@ class ControlWidget(QWidget):
         self.spin_fall = QDoubleSpinBox(); self.spin_fall.setValue(0.05)
         self.label_fall = QLabel("Fall Time (ns):")
         laser_layout.addRow(self.label_fall, self.spin_fall)
+
+        self.btn_freeform_mode = QPushButton("Edit free-form")
+        self.btn_freeform_mode.setCheckable(True)
+        self.btn_freeform_mode.setChecked(True)
+        self.freeform_editor = FreeFormIRFEditor()
+        self.freeform_editor.setMinimumHeight(150)
+        self.freeform_editor.setMaximumHeight(210)
+        self.freeform_editor.setMaximumWidth(420)
+        self.freeform_editor.btn_reset.clicked.disconnect()
+        self.freeform_editor.btn_reset.clicked.connect(self._reset_freeform_from_current_inputs)
+        freeform_header = QWidget()
+        freeform_header_layout = QHBoxLayout(freeform_header)
+        freeform_header_layout.setContentsMargins(0, 0, 0, 0)
+        freeform_header_layout.setSpacing(6)
+        self.lbl_freeform_editor = QLabel("Free-form editor:")
+        freeform_header_layout.addWidget(self.lbl_freeform_editor)
+        freeform_header_layout.addStretch()
+        freeform_header_layout.addWidget(self.btn_freeform_mode)
+        laser_layout.addRow(freeform_header)
+        freeform_container = QWidget()
+        freeform_container_layout = QVBoxLayout(freeform_container)
+        freeform_container_layout.setContentsMargins(0, 0, 0, 0)
+        freeform_container_layout.setSpacing(2)
+        freeform_container_layout.setAlignment(Qt.AlignmentFlag.AlignRight)
+        freeform_container_layout.addWidget(self.freeform_editor)
+        laser_layout.addRow("", freeform_container)
         
         # Burst Excitation Sub-group
         self.group_burst = QGroupBox("Burst Excitation")
         self.group_burst.setCheckable(True)
         self.group_burst.setChecked(False)
+        self.group_burst.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         burst_l = QFormLayout(self.group_burst)
+        burst_l.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+        burst_l.setVerticalSpacing(4)
         
         self.spin_burst_period = QDoubleSpinBox()
         self.spin_burst_period.setRange(1.0, 100000.0)
@@ -314,6 +354,10 @@ class ControlWidget(QWidget):
         
         # Connect IRF profile changes for the excitation-specific controls
         self.combo_profile.currentIndexChanged.connect(self._update_irf_ui)
+        self.btn_freeform_mode.toggled.connect(self._on_freeform_mode_toggled)
+        self.spin_period.valueChanged.connect(self._on_excitation_geometry_changed)
+        self.spin_fwhm.valueChanged.connect(self._on_excitation_geometry_changed)
+        self.spin_irf_pos.valueChanged.connect(self._on_excitation_geometry_changed)
         self._update_irf_ui()
 
         # Detection
@@ -407,6 +451,18 @@ class ControlWidget(QWidget):
         collection_layout.addWidget(self.radio_gate_collection_seq)
         gate_layout.addRow(collection_group)
 
+        f_basis_group = QGroupBox("F-Value Photon Basis")
+        f_basis_layout = QVBoxLayout(f_basis_group)
+        self.radio_f_basis_all = QRadioButton("All photons")
+        self.radio_f_basis_collected = QRadioButton("Collected photons")
+        self.radio_f_basis_all.setChecked(True)
+        self.f_photon_basis_bg = QButtonGroup()
+        self.f_photon_basis_bg.addButton(self.radio_f_basis_all)
+        self.f_photon_basis_bg.addButton(self.radio_f_basis_collected)
+        f_basis_layout.addWidget(self.radio_f_basis_all)
+        f_basis_layout.addWidget(self.radio_f_basis_collected)
+        gate_layout.addRow(f_basis_group)
+
         overlap_group = QGroupBox("Gate Overlap")
         overlap_layout = QVBoxLayout(overlap_group)
         self.radio_overlap_jitter = QRadioButton("Only for jittering/skewness")
@@ -491,12 +547,20 @@ class ControlWidget(QWidget):
         self.spin_optimization_iterations.setRange(1, 50)
         self.spin_optimization_iterations.setValue(20)
         optimization_scope_form.addRow(two_column_row("Run Order:", self.combo_optimization_first, "Max iterations:", self.spin_optimization_iterations))
+        self.combo_optimization_f_basis = QComboBox()
+        self.combo_optimization_f_basis.addItems(["All photons", "Collected photons"])
+        optimization_scope_form.addRow("F basis:", self.combo_optimization_f_basis)
         optimization_layout.addWidget(optimization_scope_group)
 
         optimization_view_group = QGroupBox("Optimisation Visualisation")
         optimization_view_form = QFormLayout(optimization_view_group)
         self.chk_optimization_realtime = QCheckBox("Real-time display")
         self.chk_optimization_realtime.setChecked(False)
+        self.spin_optimization_realtime_interval = QDoubleSpinBox()
+        self.spin_optimization_realtime_interval.setRange(0.2, 3600.0)
+        self.spin_optimization_realtime_interval.setDecimals(1)
+        self.spin_optimization_realtime_interval.setSingleStep(0.5)
+        self.spin_optimization_realtime_interval.setValue(5.0)
         self.spin_optimization_steps_to_show = QSpinBox()
         self.spin_optimization_steps_to_show.setRange(2, 24)
         self.spin_optimization_steps_to_show.setValue(6)
@@ -506,6 +570,9 @@ class ControlWidget(QWidget):
         optimization_view_row_layout = QHBoxLayout(optimization_view_row)
         optimization_view_row_layout.setContentsMargins(0, 0, 0, 0)
         optimization_view_row_layout.addWidget(self.chk_optimization_realtime)
+        optimization_view_row_layout.addSpacing(10)
+        optimization_view_row_layout.addWidget(QLabel("Refresh (s):"))
+        optimization_view_row_layout.addWidget(self.spin_optimization_realtime_interval)
         optimization_view_row_layout.addSpacing(10)
         optimization_view_row_layout.addWidget(QLabel("Stored steps:"))
         optimization_view_row_layout.addWidget(self.spin_optimization_steps_to_show)
@@ -569,7 +636,12 @@ class ControlWidget(QWidget):
         self.combo_excitation_constraint = QComboBox()
         self.combo_excitation_constraint.addItems(["Fixed dose (area)", "Fixed peak"])
         self.combo_optimization_objective = QComboBox()
-        self.combo_optimization_objective.addItems(["Fisher Information", "Fisher Throughput"])
+        self.combo_optimization_objective.addItems([
+            "Fisher Information",
+            "Fisher Throughput",
+            "Photon Efficiency AUC",
+            "Throughput AUC",
+        ])
         self.combo_optimization_objective.setCurrentText("Fisher Throughput")
         self.spin_optimization_fi_loss = QDoubleSpinBox()
         self.spin_optimization_fi_loss.setRange(0.0, 100.0)
@@ -609,6 +681,7 @@ class ControlWidget(QWidget):
         excitation_row_layout.addWidget(self.spin_excitation_control_points, 1)
         excitation_opt_form.addRow(excitation_row)
         optimization_layout.addWidget(excitation_opt_group)
+        self.opt_groups = [optimization_scope_group, optimization_view_group, detection_opt_group, excitation_opt_group]
 
         self.lbl_optimization_current = QLabel("Current simulated value: baseline configuration")
         self.lbl_optimization_current.setWordWrap(True)
@@ -624,53 +697,43 @@ class ControlWidget(QWidget):
         )
         optimization_layout.addWidget(self.txt_optimization_hint)
 
-        button_row = QWidget()
-        button_row_layout = QHBoxLayout(button_row)
-        button_row_layout.setContentsMargins(0, 0, 0, 0)
-        self.btn_run_optimization = QPushButton("RUN OPTIMISATION")
-        self.btn_run_optimization.setStyleSheet("background-color: #166534; color: white; font-weight: bold;")
-        button_row_layout.addWidget(self.btn_run_optimization)
-        self.btn_exit_optimization = QPushButton("EXIT OPTIMISATION MODE")
-        self.btn_exit_optimization.setStyleSheet("background-color: #991b1b; color: white; font-weight: bold;")
-        self.btn_exit_optimization.setEnabled(False)
-        button_row_layout.addWidget(self.btn_exit_optimization)
-        optimization_layout.addWidget(button_row)
-
         objective_header = QWidget()
         objective_header_layout = QHBoxLayout(objective_header)
         objective_header_layout.setContentsMargins(0, 0, 0, 0)
-        objective_header_layout.addWidget(QLabel("Objective History"))
+        objective_header.setMaximumHeight(0)
+        objective_header.setVisible(False)
+        objective_header_layout.addWidget(QLabel("Optimisation History"))
         objective_header_layout.addStretch()
         self.btn_copy_optimization_objective = QPushButton("📋")
-        self.btn_copy_optimization_objective.setToolTip("Copy objective-history plot to clipboard")
+        self.btn_copy_optimization_objective.setToolTip("Copy optimisation-history plot to clipboard")
         self.btn_copy_optimization_objective.setMaximumWidth(30)
         self.btn_copy_optimization_objective.setStyleSheet("padding: 2px; font-size: 14px;")
         self.btn_copy_optimization_objective.clicked.connect(
-            lambda: self._copy_widget_to_clipboard(self.optimization_objective_plot)
+            lambda: self._copy_widget_to_clipboard(self.optimization_best_f_plot)
         )
         objective_header_layout.addWidget(self.btn_copy_optimization_objective)
         optimization_layout.addWidget(objective_header)
 
         self.optimization_objective_plot = pg.PlotWidget()
-        self.optimization_objective_plot.setMinimumHeight(180)
+        self.optimization_objective_plot.setMinimumHeight(0)
+        self.optimization_objective_plot.setMaximumHeight(0)
+        self.optimization_objective_plot.setMaximumWidth(0)
         self.optimization_objective_plot.showGrid(x=True, y=True, alpha=0.25)
         self.optimization_objective_plot.setLabel("left", "Objective")
         self.optimization_objective_plot.setLabel("bottom", "Iteration")
         self.optimization_objective_plot.setLogMode(x=False, y=True)
-        self.optimization_objective_curve = self.optimization_objective_plot.plot(
-            pen=pg.mkPen("#ef4444", width=2),
-            symbol="o",
-            symbolSize=5,
-            symbolBrush=pg.mkBrush("#ef4444"),
-            symbolPen=pg.mkPen("#ef4444"),
-        )
         optimization_layout.addWidget(self.optimization_objective_plot)
 
         best_f_header = QWidget()
         best_f_header_layout = QHBoxLayout(best_f_header)
         best_f_header_layout.setContentsMargins(0, 0, 0, 0)
-        best_f_header_layout.addWidget(QLabel("Minimum F History"))
-        best_f_header_layout.addStretch()
+        best_f_header_layout.addWidget(QLabel("Optimisation History"))
+        self.chk_opt_hist_log_x = QCheckBox("Log X")
+        self.chk_opt_hist_log_x.setChecked(False)
+        self.chk_opt_hist_log_y = QCheckBox("Log Y")
+        self.chk_opt_hist_log_y.setChecked(True)
+        best_f_header_layout.addWidget(self.chk_opt_hist_log_x)
+        best_f_header_layout.addWidget(self.chk_opt_hist_log_y)
         self.btn_copy_optimization_best_f = QPushButton("📋")
         self.btn_copy_optimization_best_f.setToolTip("Copy minimum-F plot to clipboard")
         self.btn_copy_optimization_best_f.setMaximumWidth(30)
@@ -679,35 +742,171 @@ class ControlWidget(QWidget):
             lambda: self._copy_widget_to_clipboard(self.optimization_best_f_plot)
         )
         best_f_header_layout.addWidget(self.btn_copy_optimization_best_f)
+        best_f_header_layout.addStretch()
         optimization_layout.addWidget(best_f_header)
 
         self.optimization_best_f_plot = pg.PlotWidget()
         self.optimization_best_f_plot.setMinimumHeight(180)
+        self.optimization_best_f_plot.setMaximumHeight(220)
+        self.optimization_best_f_plot.setMaximumWidth(640)
         self.optimization_best_f_plot.showGrid(x=True, y=True, alpha=0.25)
-        self.optimization_best_f_plot.setLabel("left", "Minimum F")
+        self.optimization_best_f_plot.setLabel("left", "")
         self.optimization_best_f_plot.setLabel("bottom", "Iteration")
         self.optimization_best_f_plot.setLogMode(x=False, y=True)
-        self.optimization_best_f_curve = self.optimization_best_f_plot.plot(
-            pen=pg.mkPen("#22c55e", width=2),
+        self.optimization_best_f_plot.showAxis("right")
+        self.optimization_best_f_plot.setLabel("right", "")
+        self.optimization_objective_curve = self.optimization_best_f_plot.plot(
+            pen=pg.mkPen(self.OPT_HISTORY_COLORS["objective"], width=2),
             symbol="o",
             symbolSize=5,
-            symbolBrush=pg.mkBrush("#22c55e"),
-            symbolPen=pg.mkPen("#22c55e"),
+            symbolBrush=pg.mkBrush(self.OPT_HISTORY_COLORS["objective"]),
+            symbolPen=pg.mkPen(self.OPT_HISTORY_COLORS["objective"]),
         )
+        self.optimization_aux_axes = {}
+        self.optimization_aux_vbs = {}
+        self.optimization_best_f_curve = pg.PlotDataItem(
+            pen=pg.mkPen(self.OPT_HISTORY_COLORS["min_f"], width=2),
+            symbol="o",
+            symbolSize=5,
+            symbolBrush=pg.mkBrush(self.OPT_HISTORY_COLORS["min_f"]),
+            symbolPen=pg.mkPen(self.OPT_HISTORY_COLORS["min_f"]),
+        )
+        self.optimization_best_eff_curve = pg.PlotDataItem(
+            pen=pg.mkPen(self.OPT_HISTORY_COLORS["min_eff"], width=2),
+            symbol="o",
+            symbolSize=4,
+            symbolBrush=pg.mkBrush(self.OPT_HISTORY_COLORS["min_eff"]),
+            symbolPen=pg.mkPen(self.OPT_HISTORY_COLORS["min_eff"]),
+        )
+        self.optimization_auc_eff_curve = pg.PlotDataItem(
+            pen=pg.mkPen(self.OPT_HISTORY_COLORS["auc_eff"], width=2),
+            symbol="o",
+            symbolSize=4,
+            symbolBrush=pg.mkBrush(self.OPT_HISTORY_COLORS["auc_eff"]),
+            symbolPen=pg.mkPen(self.OPT_HISTORY_COLORS["auc_eff"]),
+        )
+        self.optimization_throughput_curve = pg.PlotDataItem(
+            pen=pg.mkPen(self.OPT_HISTORY_COLORS["throughput"], width=2),
+            symbol="o",
+            symbolSize=4,
+            symbolBrush=pg.mkBrush(self.OPT_HISTORY_COLORS["throughput"]),
+            symbolPen=pg.mkPen(self.OPT_HISTORY_COLORS["throughput"]),
+        )
+        self.optimization_throughput_auc_curve = pg.PlotDataItem(
+            pen=pg.mkPen("#e879f9", width=2),
+            symbol="o",
+            symbolSize=4,
+            symbolBrush=pg.mkBrush("#e879f9"),
+            symbolPen=pg.mkPen("#e879f9"),
+        )
+        self.optimization_gate_count_curve = pg.PlotDataItem(
+            pen=pg.mkPen(self.OPT_HISTORY_COLORS["gate_count"], width=2),
+            symbol="o",
+            symbolSize=4,
+            symbolBrush=pg.mkBrush(self.OPT_HISTORY_COLORS["gate_count"]),
+            symbolPen=pg.mkPen(self.OPT_HISTORY_COLORS["gate_count"]),
+        )
+        self._add_optimization_aux_axis("min_f", "Min F", self.optimization_best_f_curve)
+        self._add_optimization_aux_axis("min_eff", "Min F^-2", self.optimization_best_eff_curve)
+        self._add_optimization_aux_axis("auc_eff", "AUC F^-2", self.optimization_auc_eff_curve)
+        self._add_optimization_aux_axis("throughput", "Throughput", self.optimization_throughput_curve)
+        self._add_optimization_aux_axis("throughput_auc", "Throughput AUC", self.optimization_throughput_auc_curve)
+        self._add_optimization_aux_axis("gate_count", "Gate count", self.optimization_gate_count_curve)
+        self.optimization_right_vb = self.optimization_aux_vbs["min_f"]
+        self.optimization_right_axis = self.optimization_aux_axes["min_f"]
+        for key in ("min_eff", "auc_eff", "throughput", "throughput_auc", "gate_count"):
+            self.optimization_aux_axes[key].setVisible(False)
+            self.optimization_aux_vbs[key].setVisible(False)
+        self.optimization_best_f_plot.getViewBox().sigResized.connect(self._sync_optimization_history_viewboxes)
         optimization_layout.addWidget(self.optimization_best_f_plot)
+
+        metrics_legend = QWidget()
+        metrics_legend_layout = QHBoxLayout(metrics_legend)
+        metrics_legend_layout.setContentsMargins(0, 0, 0, 0)
+        metrics_legend_layout.setSpacing(8)
+        self.chk_opt_hist_objective = QCheckBox("Objective")
+        self.chk_opt_hist_f = QCheckBox("Min F")
+        self.chk_opt_hist_eff = QCheckBox("Min F^-2")
+        self.chk_opt_hist_auc = QCheckBox("AUC F^-2")
+        self.chk_opt_hist_throughput = QCheckBox("Throughput")
+        self.chk_opt_hist_throughput_auc = QCheckBox("Throughput AUC")
+        self.chk_opt_hist_gates = QCheckBox("Gate count")
+        metrics_legend.setVisible(False)
+        metrics_legend.setMaximumHeight(0)
+        self.chk_opt_hist_log_x.toggled.connect(self._apply_optimization_history_axes)
+        self.chk_opt_hist_log_y.toggled.connect(self._apply_optimization_history_axes)
+        metrics_legend_layout.addStretch()
+        optimization_layout.addWidget(metrics_legend)
+        self.optimization_history_metric_defs = [
+            ("objective", "Objective"),
+            ("min_f", "Min F"),
+            ("min_eff", "Min F^-2"),
+            ("auc_eff", "AUC F^-2"),
+            ("throughput", "Throughput"),
+            ("throughput_auc", "Throughput AUC"),
+            ("gate_count", "Gate count"),
+        ]
+        axis_selector = QWidget()
+        axis_selector_layout = QVBoxLayout(axis_selector)
+        axis_selector_layout.setContentsMargins(0, 0, 0, 0)
+        axis_selector_layout.setSpacing(16)
+        left_axis_widget = QWidget()
+        left_axis_layout = QHBoxLayout(left_axis_widget)
+        left_axis_layout.setContentsMargins(0, 0, 0, 0)
+        left_axis_layout.setSpacing(8)
+        left_axis_layout.addWidget(QLabel("Left axis:"))
+        right_axis_widget = QWidget()
+        right_axis_layout = QHBoxLayout(right_axis_widget)
+        right_axis_layout.setContentsMargins(0, 0, 0, 0)
+        right_axis_layout.setSpacing(8)
+        right_axis_layout.addWidget(QLabel("Right axis:"))
+        self.opt_hist_left_group = QButtonGroup(self)
+        self.opt_hist_left_group.setExclusive(True)
+        self.opt_hist_right_group = QButtonGroup(self)
+        self.opt_hist_right_group.setExclusive(True)
+        self.opt_hist_left_buttons = {}
+        self.opt_hist_right_buttons = {}
+        for key, label in self.optimization_history_metric_defs:
+            left_btn = QRadioButton(label)
+            right_btn = QRadioButton(label)
+            self.opt_hist_left_group.addButton(left_btn)
+            self.opt_hist_right_group.addButton(right_btn)
+            self.opt_hist_left_buttons[key] = left_btn
+            self.opt_hist_right_buttons[key] = right_btn
+            left_axis_layout.addWidget(left_btn)
+            right_axis_layout.addWidget(right_btn)
+            left_btn.toggled.connect(self._on_optimization_axis_selection_changed)
+            right_btn.toggled.connect(self._on_optimization_axis_selection_changed)
+        self.opt_hist_left_buttons["objective"].setChecked(True)
+        self.opt_hist_right_buttons["min_f"].setChecked(True)
+        axis_selector_layout.addWidget(left_axis_widget, 1)
+        axis_selector_layout.addWidget(right_axis_widget, 1)
+        axis_selector_layout.addStretch()
+        optimization_layout.addWidget(axis_selector)
+        self._style_optimization_history_controls()
+        self._apply_optimization_history_axes()
 
         optimization_layout.addStretch()
         self.tabs.addTab(optimization_tab, "Optimisation")
 
         self.combo_detection_start_anchor.currentIndexChanged.connect(self._sync_optimization_ui)
+        self.combo_detection_start_anchor.currentIndexChanged.connect(self._sync_main_gate_controls_from_optimization)
         self.combo_detection_end_anchor.currentIndexChanged.connect(self._sync_optimization_ui)
+        self.combo_detection_end_anchor.currentIndexChanged.connect(self._sync_main_gate_controls_from_optimization)
+        self.spin_detection_start_anchor.valueChanged.connect(self._sync_main_gate_controls_from_optimization)
+        self.spin_detection_end_anchor.valueChanged.connect(self._sync_main_gate_controls_from_optimization)
         self.combo_detection_algorithm.currentIndexChanged.connect(self._sync_optimization_ui)
         self.combo_optimization_mode.currentIndexChanged.connect(self._sync_optimization_ui)
         self.combo_optimization_objective.currentIndexChanged.connect(self._sync_optimization_ui)
         self.combo_excitation_optimization_profile.currentIndexChanged.connect(self._sync_optimization_ui)
         self.chk_opt_detection.toggled.connect(self._sync_optimization_ui)
         self.chk_opt_excitation.toggled.connect(self._sync_optimization_ui)
+        self.chk_optimization_realtime.toggled.connect(self._sync_optimization_ui)
+        self.combo_optimization_f_basis.currentIndexChanged.connect(self._sync_f_photon_basis_controls)
+        self.radio_f_basis_all.toggled.connect(self._sync_f_photon_basis_controls)
+        self.radio_f_basis_collected.toggled.connect(self._sync_f_photon_basis_controls)
         self._sync_optimization_ui()
+        self._sync_f_photon_basis_controls()
 
         # --- TAB 6: BATCH SWEEP ---
         instr_tab = QWidget()
@@ -808,7 +1007,7 @@ class ControlWidget(QWidget):
             "QPushButton:disabled { background-color: #1f2937; color: #6b7280; }"
         )
         
-        self.btn_precision = QPushButton("RUN")
+        self.btn_precision = QPushButton("Run Analysis")
         self.btn_precision.setStyleSheet(
             "QPushButton { background-color: #1e3a8a; color: white; font-weight: bold; }"
             "QPushButton:disabled { background-color: #1f2937; color: #6b7280; }"
@@ -819,7 +1018,7 @@ class ControlWidget(QWidget):
         self.btn_export.setStyleSheet("background-color: #334155; color: white; font-weight: bold;")
         self.btn_export.setMinimumHeight(btn_height)
 
-        self.btn_simulate = QPushButton("TEST")
+        self.btn_simulate = QPushButton("2D MC tests")
         self.btn_simulate.setStyleSheet(
             "QPushButton { background-color: #0d9488; color: white; font-weight: bold; }"
             "QPushButton:disabled { background-color: #1f2937; color: #6b7280; }"
@@ -860,6 +1059,7 @@ class ControlWidget(QWidget):
         self.radio_overlap_never.toggled.connect(self._sync_gate_controls)
         self.radio_overlap_yes.toggled.connect(self._sync_gate_controls)
         self._sync_gate_controls()
+        self._render_optimization_history()
 
     def _compute_gate_anchor_start(self):
         t_start = 0.0
@@ -928,6 +1128,8 @@ class ControlWidget(QWidget):
         return adjusted, ""
 
     def _sync_gate_controls(self):
+        if self._anchor_syncing:
+            return
         gate_type = self.combo_gate_type.currentText().lower()
         edges, error = self.validate_gate_definition()
         self.lbl_gate_error.setText(error)
@@ -961,6 +1163,70 @@ class ControlWidget(QWidget):
             widget.setEnabled(allow_overlap)
         if not allow_overlap:
             self.radio_overlap_effect_exclusive.setChecked(True)
+        self._sync_optimization_controls_from_main_gate()
+
+    def _sync_optimization_controls_from_main_gate(self):
+        self._anchor_syncing = True
+        try:
+            if self.radio_gate_irf.isChecked():
+                self.combo_detection_start_anchor.setCurrentText("Start after IRF")
+            elif self.radio_gate_free.isChecked():
+                self.combo_detection_start_anchor.setCurrentText("Custom")
+            else:
+                self.combo_detection_start_anchor.setCurrentText("Stick to 0")
+            self.spin_detection_start_anchor.setValue(float(self.spin_gate_first.value()))
+
+            if self.radio_gate_end_free.isChecked():
+                self.combo_detection_end_anchor.setCurrentText("Custom")
+            else:
+                self.combo_detection_end_anchor.setCurrentText("Stick to period")
+            self.spin_detection_end_anchor.setValue(float(self.spin_gate_last.value()))
+        finally:
+            self._anchor_syncing = False
+
+    def _sync_main_gate_controls_from_optimization(self, *_args):
+        if self._anchor_syncing:
+            return
+        self._anchor_syncing = True
+        try:
+            start_mode = self.combo_detection_start_anchor.currentText().lower()
+            if start_mode == "start after irf":
+                self.radio_gate_irf.setChecked(True)
+            elif start_mode == "custom":
+                self.radio_gate_free.setChecked(True)
+                self.spin_gate_first.setValue(float(self.spin_detection_start_anchor.value()))
+            else:
+                self.radio_gate_start.setChecked(True)
+            if start_mode != "custom":
+                self.spin_gate_first.setValue(float(self.spin_detection_start_anchor.value()))
+
+            end_mode = self.combo_detection_end_anchor.currentText().lower()
+            if end_mode == "custom":
+                self.radio_gate_end_free.setChecked(True)
+                self.spin_gate_last.setValue(float(self.spin_detection_end_anchor.value()))
+            else:
+                self.radio_gate_end_period.setChecked(True)
+            if end_mode != "custom":
+                self.spin_gate_last.setValue(float(self.spin_detection_end_anchor.value()))
+        finally:
+            self._anchor_syncing = False
+        self._sync_gate_controls()
+
+    def _sync_f_photon_basis_controls(self, *_args):
+        if self._f_photon_basis_syncing:
+            return
+        self._f_photon_basis_syncing = True
+        try:
+            sender = self.sender()
+            if sender is self.combo_optimization_f_basis:
+                collected = self.combo_optimization_f_basis.currentText().lower() == "collected photons"
+                self.radio_f_basis_collected.setChecked(collected)
+                self.radio_f_basis_all.setChecked(not collected)
+            else:
+                collected = self.radio_f_basis_collected.isChecked()
+                self.combo_optimization_f_basis.setCurrentText("Collected photons" if collected else "All photons")
+        finally:
+            self._f_photon_basis_syncing = False
 
     def _handle_x_selection(self):
         """Ensures exclusive selection (Radio button behavior)."""
@@ -1019,12 +1285,13 @@ class ControlWidget(QWidget):
             self.combo_image_fit_method: "Lifetime-fitting backend for the validation image.",
             self.btn_fit_image: "Fit the generated validation image using the selected algorithm.",
             self.spin_period: "Measurement repetition period in nanoseconds.",
-            self.chk_decay_wrap: "Include decay wrapping from previous periods in the model.",
             self.combo_profile: "Excitation or IRF profile used in the forward model.",
             self.spin_fwhm: "IRF width for Gaussian mode or pulse duration for rectangular mode.",
             self.spin_irf_pos: "IRF temporal position within the period.",
             self.spin_rise: "Rising edge time for rectangular excitation profiles.",
             self.spin_fall: "Falling edge time for rectangular excitation profiles.",
+            self.btn_freeform_mode: "Toggle between editing the free-form waveform and locking it for use in the current IRF model.",
+            self.freeform_editor: "Visual editor for free-form excitation. Drag points to reshape the waveform, click empty space then Add Point to insert a new breakpoint, or delete the selected breakpoint.",
             self.group_burst: "Enable and configure burst excitation sub-pulses.",
             self.spin_burst_period: "Peak-to-peak distance between sub-pulses in the burst (ps).",
             self.spin_burst_fwhm: "Pulse-width (FWHM) of each sub-pulse in the burst (ps).",
@@ -1046,6 +1313,8 @@ class ControlWidget(QWidget):
             self.spin_gate_last: "Manual end time for the last gate when Free is selected.",
             self.radio_gate_collection_hist: "Histogram-style gating: photons are binned into gates without being discarded.",
             self.radio_gate_collection_seq: "Sequential gating: each gate is acquired in a separate pass and photons outside the active gate are lost in that pass.",
+            self.radio_f_basis_all: "Evaluate F against the full photon budget, including photons that miss all gates as lost counts.",
+            self.radio_f_basis_collected: "Evaluate F using only the photons collected by the measurement gates.",
             self.radio_overlap_jitter: "Allow only the natural overlap caused by jittered or skewed gate tails.",
             self.radio_overlap_never: "Do not allow gate overlap. Overlapping tails are clipped and can create photon-loss gaps between gates.",
             self.radio_overlap_yes: "Allow user-specified geometric overlap between adjacent gates.",
@@ -1059,9 +1328,11 @@ class ControlWidget(QWidget):
             self.combo_optimization_mode: "Joint optimisation now alternates sequentially; this hidden compatibility control remains fixed to Sequential.",
             self.combo_optimization_first: "When both optimisations are enabled, choose which one runs first in the alternating sequential loop.",
             self.spin_optimization_iterations: "Maximum number of alternating detection/excitation rounds when both optimisation targets are enabled.",
+            self.combo_optimization_f_basis: "Choose whether optimisation F-values are computed against all emitted photons, including gated-out losses, or only the photons collected by the gates.",
             self.combo_optimization_objective: "Excitation optimisation objective. Fisher Throughput is the default and combines peak photon efficiency with throughput scaling.",
             self.spin_optimization_fi_loss: "Maximum absolute peak photon-efficiency loss allowed in throughput mode, expressed as F^-2 percentage points relative to the Dirac-reference design.",
             self.chk_optimization_realtime: "When enabled, update the main analysis widgets during optimisation. Disable this for a faster run.",
+            self.spin_optimization_realtime_interval: "Minimum number of seconds between live Precision, Accuracy, and Diagnostics refreshes during optimisation.",
             self.spin_optimization_steps_to_show: "Number of optimisation states to retain for the final Precision, Accuracy, and Diagnostics displays, including start and finish.",
             self.chk_optimization_validate_mc: "Run Monte Carlo validation for the retained optimisation states after the numerical optimisation has finished.",
             self.combo_detection_algorithm: "Detection-gate optimisation algorithm family. Fisher Compression is the default strategy.",
@@ -1076,14 +1347,14 @@ class ControlWidget(QWidget):
             self.spin_excitation_width_max: "Upper width bound in nanoseconds for Gaussian or square excitation optimisation. Supports values down to 0.0001 ns (100 fs).",
             self.spin_excitation_control_points: "Number of control points for free-form excitation optimisation.",
             self.txt_optimization_hint: "Execution note for the current optimisation implementation status.",
-            self.btn_run_optimization: "Run the currently supported optimisation workflow from the Optimisation tab.",
-            self.btn_exit_optimization: "Exit optimisation mode by clearing the optimisation targets.",
+            self.chk_opt_hist_log_x: "Show the optimisation-history x axis in logarithmic scale.",
+            self.chk_opt_hist_log_y: "Show the optimisation-history y axes in logarithmic scale.",
             self.radio_sweep_off: "Disable instrument batch sweeping.",
             self.btn_manage_inst: "Open the instrument-profile manager.",
-            self.btn_precision: "Run the theory and optional Monte Carlo precision workflow.",
+            self.btn_precision: "Run the current analysis workflow, including precision calculations and active result views.",
             self.btn_interrupt: "Request interruption of the current run.",
             self.btn_export: "Preview the latest precision report and save it as an HTML package with SVG and CSV assets.",
-            self.btn_simulate: "Generate a synthetic validation image using the swept x-axis parameter.",
+            self.btn_simulate: "Generate and analyse synthetic 2D Monte Carlo validation images using the swept x-axis parameter.",
         }
         for widget, text in tooltips.items():
             widget.setToolTip(text)
@@ -1299,7 +1570,8 @@ class ControlWidget(QWidget):
         excitation_enabled = self.chk_opt_excitation.isChecked()
         optimisation_active = detection_enabled or excitation_enabled
         multi_target = detection_enabled and excitation_enabled
-        throughput_mode = self.combo_optimization_objective.currentText().lower().startswith("fisher throughput")
+        objective_text = self.combo_optimization_objective.currentText().lower()
+        throughput_mode = objective_text in {"fisher throughput", "throughput auc"}
         free_form = self.combo_excitation_optimization_profile.currentText().lower() == "free form"
         selected_algorithm = self.combo_detection_algorithm.currentText().lower()
         self.combo_optimization_mode.setEnabled(False)
@@ -1332,25 +1604,66 @@ class ControlWidget(QWidget):
         self.spin_excitation_width_max.setEnabled(excitation_enabled and not free_form)
         self.spin_excitation_control_points.setEnabled(excitation_enabled and free_form)
         self.chk_optimization_realtime.setEnabled(optimisation_active)
+        self.spin_optimization_realtime_interval.setEnabled(optimisation_active and self.chk_optimization_realtime.isChecked())
         self.spin_optimization_steps_to_show.setEnabled(optimisation_active)
         self.chk_optimization_validate_mc.setEnabled(optimisation_active)
-        self.btn_run_optimization.setEnabled(optimisation_active and not self.optimization_running_state)
-        self.btn_exit_optimization.setEnabled(optimisation_active and not self.optimization_running_state)
         self._update_detection_algorithm_settings_tooltip()
         self.set_optimization_mode_active(optimisation_active, running=self.optimization_running_state)
+
+    def _default_freeform_points(self):
+        period = max(self.spin_period.value(), 1e-6)
+        start = float(np.clip(self.spin_irf_pos.value(), 0.0, period))
+        width = max(float(self.spin_fwhm.value()), 0.0)
+        end = float(np.clip(start + width, start, period))
+        times = [0.0, start, start, end, end, period]
+        amps = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0]
+        return times, amps
+
+    def _reset_freeform_from_current_inputs(self):
+        times, amps = self._default_freeform_points()
+        self.freeform_editor.reset_rectangular(self.spin_irf_pos.value(), self.spin_fwhm.value(), self.spin_period.value())
+        return times, amps
+
+    def _on_excitation_geometry_changed(self, *_args):
+        self.freeform_editor.set_period(self.spin_period.value())
+        if "free form" in self.combo_profile.currentText().lower():
+            times, amps = self.freeform_editor.get_points()
+            if len(times) < 2:
+                self.freeform_editor.set_points(*self._default_freeform_points())
+
+    def _on_freeform_mode_toggled(self, checked):
+        edit_mode = bool(checked)
+        self.btn_freeform_mode.setText("Edit free-form" if edit_mode else "Use free-form")
+        self.freeform_editor.set_edit_mode(edit_mode)
 
     def _update_irf_ui(self, index=0):
         """Toggles visibility based on profile (Gaussian vs Rectangular)."""
         mode = self.combo_profile.currentText().lower()
         is_rect = "rectangular" in mode
         is_free_form = "free form" in mode
+        is_dirac = "ideal (dirac)" in mode
         self.label_rise.setVisible(is_rect); self.spin_rise.setVisible(is_rect)
         self.label_fall.setVisible(is_rect); self.spin_fall.setVisible(is_rect)
+        self.lbl_freeform_editor.setVisible(is_free_form)
+        self.btn_freeform_mode.setVisible(is_free_form)
+        self.freeform_editor.setVisible(is_free_form)
+        self.spin_fwhm.setEnabled(not is_dirac)
+        if is_dirac:
+            self.spin_fwhm.blockSignals(True)
+            self.spin_fwhm.setValue(0.0)
+            self.spin_fwhm.blockSignals(False)
+        elif self.spin_fwhm.value() <= 0.0 and not is_free_form:
+            self.spin_fwhm.setValue(0.25)
         
         if is_rect or is_free_form:
             self.label_irf_pos.setText("Position (Start ns):")
         else:
             self.label_irf_pos.setText("Position (Center ns):")
+        if is_free_form:
+            self._on_freeform_mode_toggled(self.btn_freeform_mode.isChecked())
+            times, amps = self.freeform_editor.get_points()
+            if len(times) < 2 or np.allclose(amps, 0.0):
+                self._reset_freeform_from_current_inputs()
 
     def update_gridded_mle_summary(self):
         use_log_grid = (
@@ -1464,7 +1777,6 @@ class ControlWidget(QWidget):
 
             # Laser / Physics
             self.spin_period.setValue(cfg.period)
-            self.chk_decay_wrap.setChecked(cfg.b_decay_wrapping)
             profile_map = {
                 "gaussian": "Gaussian",
                 "rectangular": "Rectangular",
@@ -1476,6 +1788,13 @@ class ControlWidget(QWidget):
             self.spin_irf_pos.setValue(cfg.irf_position)
             self.spin_rise.setValue(cfg.irf_rise_time)
             self.spin_fall.setValue(cfg.irf_fall_time)
+            freeform_times = list(getattr(cfg, "irf_freeform_times", []) or [])
+            freeform_points = list(getattr(cfg, "irf_freeform_points", []) or [])
+            if freeform_times and len(freeform_times) == len(freeform_points):
+                self.freeform_editor.set_points(freeform_times, freeform_points)
+            else:
+                self.freeform_editor.reset_rectangular(cfg.irf_position, cfg.irf_fwhm, cfg.period)
+            self.btn_freeform_mode.setChecked(bool(getattr(cfg, "irf_freeform_edit_mode", True)))
             
             # Burst Excitation
             self.group_burst.setChecked(cfg.burst_enabled)
@@ -1540,15 +1859,28 @@ class ControlWidget(QWidget):
                 optimization_first_map.get(getattr(cfg, "optimization_first", "detection"), "Detection First")
             )
             self.spin_optimization_iterations.setValue(getattr(cfg, "optimization_iterations", 20))
+            optimization_basis_map = {
+                "all": "All photons",
+                "collected": "Collected photons",
+            }
+            self.combo_optimization_f_basis.setCurrentText(
+                optimization_basis_map.get(getattr(cfg, "optimization_f_photon_basis", "all"), "All photons")
+            )
+            collected_basis = getattr(cfg, "optimization_f_photon_basis", "all") == "collected"
+            self.radio_f_basis_collected.setChecked(collected_basis)
+            self.radio_f_basis_all.setChecked(not collected_basis)
             optimization_objective_map = {
                 "fisher_information": "Fisher Information",
                 "fisher_throughput": "Fisher Throughput",
+                "photon_efficiency_auc": "Photon Efficiency AUC",
+                "throughput_auc": "Throughput AUC",
             }
             self.combo_optimization_objective.setCurrentText(
                 optimization_objective_map.get(getattr(cfg, "optimization_objective", "fisher_throughput"), "Fisher Throughput")
             )
             self.spin_optimization_fi_loss.setValue(getattr(cfg, "optimization_max_fi_loss_pct", 5.0))
             self.chk_optimization_realtime.setChecked(getattr(cfg, "optimization_realtime_visualization", False))
+            self.spin_optimization_realtime_interval.setValue(float(getattr(cfg, "optimization_realtime_interval_s", 5.0)))
             self.spin_optimization_steps_to_show.setValue(getattr(cfg, "optimization_intermediate_steps", 6))
             self.chk_optimization_validate_mc.setChecked(getattr(cfg, "optimization_validate_mc_intermediates", False))
 
@@ -1601,6 +1933,7 @@ class ControlWidget(QWidget):
             self.spin_excitation_width_min.setValue(getattr(cfg, "excitation_optimization_width_min", 0.05))
             self.spin_excitation_width_max.setValue(getattr(cfg, "excitation_optimization_width_max", 10.0))
             self.spin_excitation_control_points.setValue(getattr(cfg, "excitation_optimization_control_points", 8))
+            self._update_irf_ui()
 
             # Instrument params
             self.spin_photons.setValue(int(round(cfg.a_photons)))
@@ -1662,21 +1995,29 @@ class ControlWidget(QWidget):
         bg = "#0a0a0a" if dark else "#ffffff"
         text = "#e5eefb" if dark else "#0f172a"
         grid = "#334155" if dark else "#d7dee8"
+        self.freeform_editor.set_theme(theme_name)
         for plot in (self.optimization_objective_plot, self.optimization_best_f_plot):
             plot.setBackground(bg)
-            for axis_name in ("bottom", "left"):
+            for axis_name in ("bottom", "left", "right"):
                 axis = plot.getAxis(axis_name)
                 axis.setTextPen(pg.mkPen(text))
                 axis.setPen(pg.mkPen(text))
             plot.showGrid(x=True, y=True, alpha=0.25)
-        self.optimization_objective_curve.setPen(pg.mkPen("#ef4444", width=2))
-        self.optimization_objective_curve.setSymbolBrush(pg.mkBrush("#ef4444"))
-        self.optimization_objective_curve.setSymbolPen(pg.mkPen("#ef4444"))
-        self.optimization_best_f_curve.setPen(pg.mkPen("#22c55e", width=2))
-        self.optimization_best_f_curve.setSymbolBrush(pg.mkBrush("#22c55e"))
-        self.optimization_best_f_curve.setSymbolPen(pg.mkPen("#22c55e"))
+        if getattr(self, "optimization_right_vb", None) is not None:
+            self.optimization_right_vb.setBackgroundColor(bg)
+        if getattr(self, "optimization_right_axis", None) is not None:
+            self.optimization_right_axis.setTextPen(pg.mkPen(text))
+            self.optimization_right_axis.setPen(pg.mkPen(text))
         self.optimization_objective_plot.getPlotItem().getViewBox().setBorder(pg.mkPen(grid))
         self.optimization_best_f_plot.getPlotItem().getViewBox().setBorder(pg.mkPen(grid))
+        self._style_optimization_history_controls()
+        self._update_optimization_history_curve_styles()
+        
+        # Reset tab and group color, will be re-applied if active in set_optimization_mode_active
+        default_color = QColor(text)
+        self.tabs.tabBar().setTabTextColor(4, default_color)
+        for group in getattr(self, "opt_groups", []):
+            group.setStyleSheet("")
 
     def set_optimization_mode_active(self, active, running=False):
         self.optimization_running_state = bool(running)
@@ -1695,8 +2036,20 @@ class ControlWidget(QWidget):
             self.lbl_optimization_banner.setStyleSheet(
                 "padding: 8px 10px; border-radius: 8px; background: #334155; color: white; font-weight: bold;"
             )
-        self.btn_exit_optimization.setEnabled(bool(active) and not bool(running))
-        self.btn_run_optimization.setEnabled(bool(active) and not bool(running))
+        
+        # Update tab color and groupbox titles to red if active
+        dark = self.current_theme == "dark"
+        if active:
+            color = QColor("#ef4444") if dark else QColor("#b91c1c")
+            style = f"QGroupBox::title {{ color: {color.name()}; font-weight: bold; }}"
+            self.tabs.tabBar().setTabTextColor(4, color)
+            for group in getattr(self, "opt_groups", []):
+                group.setStyleSheet(style)
+        else:
+            color = QColor("#e5eefb") if dark else QColor("#0f172a")
+            self.tabs.tabBar().setTabTextColor(4, color)
+            for group in getattr(self, "opt_groups", []):
+                group.setStyleSheet("")
 
     def set_optimization_status(self, text):
         self.txt_optimization_hint.setPlainText(str(text))
@@ -1704,21 +2057,191 @@ class ControlWidget(QWidget):
     def set_optimization_current_value(self, text):
         self.lbl_optimization_current.setText(str(text))
 
+    def _add_optimization_aux_axis(self, key, label, curve):
+        plot_item = self.optimization_best_f_plot.getPlotItem()
+        axis = pg.AxisItem("right")
+        vb = pg.ViewBox()
+        plot_item.layout.addItem(axis, 2, 3 + len(self.optimization_aux_axes))
+        axis.linkToView(vb)
+        vb.setXLink(plot_item.vb)
+        self.optimization_best_f_plot.scene().addItem(vb)
+        vb.addItem(curve)
+        axis.setLabel("")
+        self.optimization_aux_axes[key] = axis
+        self.optimization_aux_vbs[key] = vb
+
+    def _apply_optimization_history_axes(self):
+        log_x = self.chk_opt_hist_log_x.isChecked()
+        log_y = self.chk_opt_hist_log_y.isChecked()
+        self.optimization_best_f_plot.setLogMode(x=log_x, y=log_y)
+        try:
+            self.optimization_best_f_plot.getAxis("bottom").setLogMode(log_x)
+            self.optimization_best_f_plot.getAxis("left").setLogMode(log_y)
+        except Exception:
+            pass
+        try:
+            self.optimization_right_axis.setLogMode(log_y)
+        except Exception:
+            pass
+        for curve in (self.optimization_objective_curve, self.optimization_best_f_curve):
+            if hasattr(curve, "setLogMode"):
+                curve.setLogMode(log_x, log_y)
+        self.optimization_best_f_plot.getAxis("left").setLabel("")
+        if getattr(self, "optimization_right_axis", None) is not None:
+            self.optimization_right_axis.setLabel("")
+        self._update_optimization_history_curve_styles()
+        self._update_optimization_history_ranges()
+        self._sync_optimization_history_viewboxes()
+
+    def _style_optimization_history_controls(self):
+        for key, _label in getattr(self, "optimization_history_metric_defs", []):
+            color = self.OPT_HISTORY_COLORS.get(key, "#e5eefb")
+            for widget in (self.opt_hist_left_buttons.get(key), self.opt_hist_right_buttons.get(key)):
+                if widget is not None:
+                    widget.setStyleSheet(
+                        f"QRadioButton {{ color: {color}; font-weight: bold; }}"
+                        f"QRadioButton::indicator {{ width: 14px; height: 14px; }}"
+                    )
+
+    def _get_selected_optimization_axis_metric(self, side):
+        buttons = self.opt_hist_left_buttons if side == "left" else self.opt_hist_right_buttons
+        for key, widget in buttons.items():
+            if widget.isChecked():
+                return key
+        return "objective" if side == "left" else "min_f"
+
+    def _get_optimization_history_series(self, key):
+        cache = getattr(self, "optimization_history_cache", None) or {}
+        return np.asarray(cache.get(key, []), dtype=float)
+
+    def _set_optimization_metric_enabled(self, key, enabled):
+        for buttons in (getattr(self, "opt_hist_left_buttons", {}), getattr(self, "opt_hist_right_buttons", {})):
+            widget = buttons.get(key)
+            if widget is not None:
+                widget.setEnabled(enabled)
+
+    def _on_optimization_axis_selection_changed(self, _checked):
+        self._render_optimization_history()
+
+    def _update_optimization_history_curve_styles(self):
+        left_key = self._get_selected_optimization_axis_metric("left")
+        right_key = self._get_selected_optimization_axis_metric("right")
+        left_color = self.OPT_HISTORY_COLORS.get(left_key, "#ef4444")
+        right_color = self.OPT_HISTORY_COLORS.get(right_key, "#22c55e")
+        self.optimization_objective_curve.setPen(pg.mkPen(left_color, width=2))
+        self.optimization_objective_curve.setSymbolBrush(pg.mkBrush(left_color))
+        self.optimization_objective_curve.setSymbolPen(pg.mkPen(left_color))
+        self.optimization_best_f_curve.setPen(pg.mkPen(right_color, width=2))
+        self.optimization_best_f_curve.setSymbolBrush(pg.mkBrush(right_color))
+        self.optimization_best_f_curve.setSymbolPen(pg.mkPen(right_color))
+        self.optimization_best_f_plot.getAxis("left").setTextPen(pg.mkPen(left_color))
+        self.optimization_best_f_plot.getAxis("left").setPen(pg.mkPen(left_color))
+        if getattr(self, "optimization_right_axis", None) is not None:
+            self.optimization_right_axis.setTextPen(pg.mkPen(right_color))
+            self.optimization_right_axis.setPen(pg.mkPen(right_color))
+
     def _copy_widget_to_clipboard(self, widget):
         pixmap = widget.grab()
         QGuiApplication.clipboard().setPixmap(pixmap)
 
     def clear_optimization_progress(self):
-        self.optimization_objective_curve.setData([], [])
-        self.optimization_best_f_curve.setData([], [])
+        self.optimization_history_cache = {
+            "iterations": np.asarray([], dtype=float),
+            "objective": np.asarray([], dtype=float),
+            "min_f": np.asarray([], dtype=float),
+            "min_eff": np.asarray([], dtype=float),
+            "auc_eff": np.asarray([], dtype=float),
+            "throughput": np.asarray([], dtype=float),
+            "throughput_auc": np.asarray([], dtype=float),
+            "gate_count": np.asarray([], dtype=float),
+        }
+        self._render_optimization_history()
 
-    def update_optimization_progress(self, iterations, objective_values, best_f_values):
-        x_obj = np.asarray(iterations, dtype=float)
-        y_obj = np.asarray(objective_values, dtype=float)
-        x_best = np.asarray(iterations, dtype=float)
-        y_best = np.asarray(best_f_values, dtype=float)
-        self.optimization_objective_curve.setData(x_obj, y_obj)
-        self.optimization_best_f_curve.setData(x_best, y_best)
-        if x_obj.size:
-            self.optimization_objective_plot.enableAutoRange()
-            self.optimization_best_f_plot.enableAutoRange()
+    def _render_optimization_history(self):
+        cache = getattr(self, "optimization_history_cache", None) or {}
+        x_vals = np.asarray(cache.get("iterations", []), dtype=float)
+        x_plot = x_vals + 1.0 if self.chk_opt_hist_log_x.isChecked() else x_vals
+        left_key = self._get_selected_optimization_axis_metric("left")
+        right_key = self._get_selected_optimization_axis_metric("right")
+        left_y = self._get_optimization_history_series(left_key)
+        right_y = self._get_optimization_history_series(right_key)
+        self.optimization_objective_curve.setVisible(left_y.size > 0)
+        self.optimization_best_f_curve.setVisible(right_y.size > 0)
+        self.optimization_objective_curve.setData(x_plot, left_y)
+        self.optimization_best_f_curve.setData(x_plot, right_y)
+        self._update_optimization_history_curve_styles()
+        self._apply_optimization_history_axes()
+
+    def _sync_optimization_history_viewboxes(self):
+        main_vb = self.optimization_best_f_plot.getViewBox()
+        rect = main_vb.sceneBoundingRect()
+        right_vb = getattr(self, "optimization_right_vb", None)
+        if right_vb is not None:
+            right_vb.setGeometry(rect)
+            right_vb.linkedViewChanged(main_vb, right_vb.XAxis)
+
+    @staticmethod
+    def _finite_range(values, positive_only=False):
+        arr = np.asarray(values, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        if positive_only:
+            arr = arr[arr > 0]
+        if arr.size == 0:
+            return None
+        lo = float(np.min(arr))
+        hi = float(np.max(arr))
+        if hi <= lo:
+            pad = max(abs(lo) * 0.05, 1e-6)
+            lo_out = max(lo - pad, 1e-12) if positive_only else (lo - pad)
+            hi_out = max(hi + pad, lo_out * 1.05) if positive_only else (hi + pad)
+            return lo_out, hi_out
+        pad = max((hi - lo) * 0.08, 1e-6)
+        lo_out = max(lo - pad, 1e-12) if positive_only else (lo - pad)
+        hi_out = hi + pad
+        return lo_out, hi_out
+
+    def _update_optimization_history_ranges(self):
+        cache = getattr(self, "optimization_history_cache", None) or {}
+        x_vals = np.asarray(cache.get("iterations", []), dtype=float)
+        log_x = self.chk_opt_hist_log_x.isChecked()
+        log_y = self.chk_opt_hist_log_y.isChecked()
+        x_plot = x_vals + 1.0 if log_x else x_vals
+        x_range = self._finite_range(x_plot, positive_only=log_x)
+        main_vb = self.optimization_best_f_plot.getViewBox()
+        if x_range is not None:
+            main_vb.setXRange(*x_range, padding=0.0)
+        left_key = self._get_selected_optimization_axis_metric("left")
+        right_key = self._get_selected_optimization_axis_metric("right")
+        left_range = self._finite_range(cache.get(left_key, []), positive_only=log_y)
+        if left_range is not None:
+            main_vb.setYRange(*left_range, padding=0.0)
+        right_vb = getattr(self, "optimization_right_vb", None)
+        if right_vb is not None:
+            right_range = self._finite_range(cache.get(right_key, []), positive_only=log_y)
+            if right_range is not None:
+                right_vb.setYRange(*right_range, padding=0.0)
+            if x_range is not None:
+                right_vb.setXRange(*x_range, padding=0.0)
+        self._sync_optimization_history_viewboxes()
+
+    def update_optimization_progress(self, iterations, objective_values, metrics=None):
+        metrics = metrics or {}
+        self.optimization_history_cache = {
+            "iterations": np.asarray(iterations, dtype=float),
+            "objective": np.asarray(objective_values, dtype=float),
+            "min_f": np.asarray(metrics.get("min_f", []), dtype=float),
+            "min_eff": np.asarray(metrics.get("min_eff", []), dtype=float),
+            "auc_eff": np.asarray(metrics.get("auc_eff", []), dtype=float),
+            "throughput": np.asarray(metrics.get("throughput", []), dtype=float),
+            "throughput_auc": np.asarray(metrics.get("throughput_auc", []), dtype=float),
+            "gate_count": np.asarray(metrics.get("gate_count", []), dtype=float),
+        }
+        gate_count = np.asarray(metrics.get("gate_count", []), dtype=float)
+        show_gate_count = gate_count.size > 0 and np.any(np.isfinite(gate_count)) and np.unique(gate_count[np.isfinite(gate_count)]).size > 1
+        self._set_optimization_metric_enabled("gate_count", show_gate_count)
+        if not show_gate_count:
+            if self._get_selected_optimization_axis_metric("left") == "gate_count":
+                self.opt_hist_left_buttons["objective"].setChecked(True)
+            if self._get_selected_optimization_axis_metric("right") == "gate_count":
+                self.opt_hist_right_buttons["min_f"].setChecked(True)
+        self._render_optimization_history()

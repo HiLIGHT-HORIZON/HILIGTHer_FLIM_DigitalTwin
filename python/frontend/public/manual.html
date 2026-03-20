@@ -154,8 +154,8 @@
     <p>This launcher checks desktop dependencies, updates them when needed, shows startup status in the terminal and splash screen, and then opens the Qt workspace.</p>
     <p>Desktop workflows are centered around:</p>
     <ul>
-      <li><code>RUN</code> for precision, Monte Carlo, diagnostics, and report generation.</li>
-      <li><code>TEST</code> for validation-image generation plus image fitting.</li>
+      <li><code>Run Analysis</code> for precision, Monte Carlo, diagnostics, and report generation.</li>
+      <li><code>2D MC tests</code> for validation-image generation plus image fitting.</li>
       <li><code>FIT IMAGE</code> for re-running only the image fitting stage.</li>
       <li><code>File &gt; Save Workspace</code>, <code>Load Workspace</code>, and <code>Clear Workspace</code> for state persistence.</li>
       <li><code>View &gt; Simulation Workspace</code> and <code>Image Validation Workspace</code> for focused dock layouts.</li>
@@ -181,6 +181,17 @@
       <p><strong>Sequential gating throughput penalty</strong></p>
       <math display="block"><mrow><msub><mi>P</mi><mi>j,seq</mi></msub><mo>=</mo><mfrac><mn>1</mn><mi>G</mi></mfrac><msub><mi>P</mi><mi>j,hist</mi></msub></mrow></math>
       <p>where <span class="mono">G</span> is the number of sequential gate acquisitions under a fixed total photon budget.</p>
+    </div>
+    <div class="math-block">
+      <p><strong>Photon-basis modes for histogram gating</strong></p>
+      <p>The controller and optimisation workspace now expose a shared <span class="mono">F-Value Photon Basis</span> setting. This determines which photon budget is used when converting per-photon Fisher information into <span class="mono">F</span> and <span class="mono">F^-2</span>.</p>
+      <p><strong>Collected photons</strong> conditions the Fisher calculation on the photons that enter the active gates:</p>
+      <math display="block"><mrow><msub><mi>q</mi><mi>j</mi></msub><mo>=</mo><mfrac><msub><mi>p</mi><mi>j</mi></msub><mrow><munderover><mo>&sum;</mo><mi>g</mi><mi>G</mi></munderover><msub><mi>p</mi><mi>g</mi></msub></mrow></mfrac></mrow></math>
+      <math display="block"><mrow><msub><mi>I</mi><mtext>collected</mtext></msub><mo>=</mo><msub><mi>N</mi><mtext>measured</mtext></msub><munderover><mo>&sum;</mo><mi>j</mi><mi>G</mi></munderover><mfrac><msup><mrow><mo>(</mo><mfrac><mrow><mo>&part;</mo><msub><mi>q</mi><mi>j</mi></msub></mrow><mrow><mo>&part;</mo><mi>&psi;</mi></mrow></mfrac><mo>)</mo></mrow><mn>2</mn></msup><msub><mi>q</mi><mi>j</mi></msub></mfrac></mrow></math>
+      <p><strong>All photons</strong> evaluates the same design against the full photon budget and adds an explicit lost-photon complement category:</p>
+      <math display="block"><mrow><msub><mi>p</mi><mtext>lost</mtext></msub><mo>=</mo><mn>1</mn><mo>-</mo><munderover><mo>&sum;</mo><mi>g</mi><mi>G</mi></munderover><msub><mi>p</mi><mi>g</mi></msub></mrow></math>
+      <math display="block"><mrow><msub><mi>I</mi><mtext>all</mtext></msub><mo>=</mo><msub><mi>N</mi><mtext>total</mtext></msub><mo>(</mo><munderover><mo>&sum;</mo><mi>j</mi><mi>G</mi></munderover><mfrac><msup><mrow><mo>(</mo><mfrac><mrow><mo>&part;</mo><msub><mi>p</mi><mi>j</mi></msub></mrow><mrow><mo>&part;</mo><mi>&psi;</mi></mrow></mfrac><mo>)</mo></mrow><mn>2</mn></msup><msub><mi>p</mi><mi>j</mi></msub></mfrac><mo>+</mo><mfrac><msup><mrow><mo>(</mo><mfrac><mrow><mo>&part;</mo><msub><mi>p</mi><mtext>lost</mtext></msub></mrow><mrow><mo>&part;</mo><mi>&psi;</mi></mrow></mfrac><mo>)</mo></mrow><mn>2</mn></msup><msub><mi>p</mi><mtext>lost</mtext></msub></mfrac><mo>)</mo></mrow></math>
+      <p>These two modes answer different questions. <span class="mono">Collected photons</span> reports conditional efficiency given the measured photons only. <span class="mono">All photons</span> treats gated-out photons as a real loss channel against the full photon budget. Because the lost fraction can itself depend on the fitted parameter, the <span class="mono">All photons</span> metric is not guaranteed to be numerically worse than the collected-only metric for every design. It is, however, the correct choice when optimisation must penalise missed photons explicitly.</p>
     </div>
     <div class="math-block">
       <p><strong>Bootstrap outputs</strong></p>
@@ -214,6 +225,7 @@
       <tr><td><code>Gate Start Alignment</code></td><td>The first edge can be fixed to the IRF 3 sigma tail, fixed to 0, or left free.</td><td>When fixed, the custom edge editor keeps the first edge locked.</td></tr>
       <tr><td><code>Gate End Alignment</code></td><td>The last edge can be fixed to the end of the period or left free.</td><td>When fixed, the custom edge editor keeps the last edge locked.</td></tr>
       <tr><td><code>Gate Collection</code></td><td><code>Histogram bin</code> models TCSPC/direct-to-histogram style acquisition. <code>Sequential</code> models one gate per pass.</td><td><code>Sequential</code> is <span class="warn">under development</span>.</td></tr>
+      <tr><td><code>F-Value Photon Basis</code></td><td><code>All photons</code> evaluates F against the full photon budget, including photons that miss all active gates. <code>Collected photons</code> evaluates F only on the photons that are collected by the active gates.</td><td>This control is linked to the same setting in the Optimisation tab so analysis and optimisation use the same Fisher convention.</td></tr>
       <tr><td><code>Gate Overlap</code></td><td><code>Only for jittering/skewness</code> keeps natural tail overlap only. <code>Never</code> clips overlapping tails. <code>Yes</code> adds an explicit overlap by shifting the leading edge of gates 2..N.</td><td>Explicit overlap is <span class="warn">under development</span>.</td></tr>
       <tr><td><code>Overlap Effect</code></td><td><code>Exclusive</code> allows at most one gate count per photon. <code>Duplicate events</code> and <code>Independent duplicates</code> are available as advanced options.</td><td><code>Duplicate events</code> and <code>Independent duplicates</code> are <span class="warn">under development</span>.</td></tr>
       <tr><td><code>Wrap around</code></td><td>When enabled, gate tails wrap around the repetition period. When disabled, tails are clipped at the period boundaries.</td><td>This is separate from decay wrapping.</td></tr>
@@ -244,12 +256,13 @@
     <table>
       <tr><th>Element</th><th>Implemented Behaviour</th><th>Notes</th></tr>
       <tr><td><code>Optimisation</code> tab</td><td>Entering either detection-gate or excitation optimisation activates optimisation mode.</td><td>Both checkboxes are off by default.</td></tr>
-      <tr><td><code>RUN OPTIMISATION</code></td><td>Starts the integrated optimisation workflow.</td><td>Supports detection-only, excitation-only, and joint detection+excitation runs. Fisher Compression is the default detection strategy.</td></tr>
-      <tr><td><code>EXIT OPTIMISATION MODE</code></td><td>Clears the optimisation targets and exits optimisation mode.</td><td>Manual unchecking of the optimisation targets also exits the mode.</td></tr>
+      <tr><td><code>Run Analysis</code> / <code>Run Optimisation</code></td><td>The main analysis button is rewired automatically when optimisation mode is active. In optimisation mode it becomes <code>Run Optimisation</code>; outside optimisation mode it reverts to <code>Run Analysis</code>.</td><td>Exiting optimisation mode restores the standard analysis workflow.</td></tr>
+      <tr><td><code>Exit optimisation mode</code></td><td>Clears the optimisation targets and exits optimisation mode.</td><td>Manual unchecking of the optimisation targets also exits the mode.</td></tr>
       <tr><td>Workspace emphasis</td><td>The controller, Precision, Gridded MLE Accuracy, and Instrument Diagnostics docks are highlighted while optimisation mode is active.</td><td>The dock title bars turn red to make the mode explicit.</td></tr>
       <tr><td>Live optimisation plots</td><td>The Optimisation tab includes objective-history and minimum-F-history plots beneath the main actions.</td><td>These are exported with the HTML report.</td></tr>
       <tr><td>Displayed optimisation states</td><td>The user can choose how many intermediate optimisation states to retain, including start and finish.</td><td>The default is 6 retained states.</td></tr>
       <tr><td>Post-run MC validation</td><td>Optional Monte Carlo validation can be run after optimisation for the retained displayed states.</td><td>Disabled by default.</td></tr>
+      <tr><td><code>F basis</code></td><td>The optimisation workspace uses the same shared photon-basis setting as the Detection tab.</td><td><code>All photons</code> is the default and is recommended when missed photons must count against the optimisation objective.</td></tr>
     </table>
     <h3>Detection-Gate Strategies</h3>
     <table>
@@ -284,6 +297,8 @@
       <tr><th>Objective</th><th>Meaning</th><th>Current Behaviour</th></tr>
       <tr><td><code>Fisher Information</code></td><td>Minimise the mean <code>F</code> value over the active design grid.</td><td>Used directly by detection and excitation optimisers.</td></tr>
       <tr><td><code>Fisher Throughput</code></td><td>Prefer faster or simpler acquisition while constraining photon-efficiency loss.</td><td>Detection favours lower-complexity solutions when the selected algorithm can change gate count. Excitation now defaults to this mode and reports the best resulting excitation profile.</td></tr>
+      <tr><td><code>Photon Efficiency AUC</code></td><td>Optimise the area under the <code>F^-2</code> curve across the active design grid.</td><td>Available for excitation optimisation.</td></tr>
+      <tr><td><code>Throughput AUC</code></td><td>Optimise the area under the throughput curve across the active design grid.</td><td>Available for excitation optimisation.</td></tr>
     </table>
     <p>In practice, the throughput workflow keeps only candidates whose peak photon efficiency <code>F^-2</code> remains within <code>Max F^-2 Loss (%)</code> of the applicable reference design, then chooses the candidate with the highest throughput metric. The percentage is interpreted as an absolute efficiency loss in percentage points. For example, a setting of <code>5%</code> permits the peak efficiency to drop by at most <code>0.05</code>. For excitation-only optimisation, the reference is the same instrument evaluated with an ideal Dirac excitation. For joint detection-plus-excitation optimisation, the excitation stage uses the first detection-optimised Dirac-excitation design as its reference. In <code>Fixed dose (area)</code>, no extra photon-budget gain is assumed from pulse area, so throughput changes come only from the information efficiency delivered by the excitation and detection shapes. In <code>Fixed peak</code>, photon count is assumed to increase proportionally to the area under the excitation profile, so the throughput metric also scales by the relative excitation area. For detection, the throughput objective is most informative for strategies that can reduce gate count, especially Fisher Compression with auto-compress enabled. The optimiser reports the final excitation profile explicitly so the selected throughput trade-off can be reviewed after the run.</p>
     <h3>Auto-Compression Behaviour</h3>
@@ -314,8 +329,8 @@ precision = service.run_precision({"precision_compute_ci": True})</pre>
       <tr><td><code>get_diagnostics_snapshot(tau_ref=None)</code></td><td>Return time vector, raw geometric gates, IRF, and one reference PDF.</td><td>The swept PDF ensemble is currently assembled in the desktop/export path.</td></tr>
       <tr><td><code>simulate_basic(params)</code></td><td>Basic synthetic dataset workflow.</td><td>Generates and fits a synthetic image stack.</td></tr>
       <tr><td><code>simulate_advanced(params)</code></td><td>Advanced instrument simulation workflow.</td><td>Useful for lifetime-gradient studies.</td></tr>
-      <tr><td><code>run_precision(params=None)</code></td><td>Ideal, theory, and optional MC precision workflow.</td><td>MC payloads can include compatibility flags and bootstrap CI arrays.</td></tr>
-      <tr><td><code>run_optimization(params=None)</code></td><td>Run the integrated optimisation workflow.</td><td>Supports detection-only, excitation-only, Fisher-throughput selection, and joint sequential alternating coordination. Returns objective history, minimum-F history, intermediate retained states, the final optimised configuration, and the final excitation-profile summary when applicable.</td></tr>
+      <tr><td><code>run_precision(params=None)</code></td><td>Ideal, theory, and optional MC precision workflow.</td><td>Respects the shared photon-basis setting. MC payloads can include compatibility flags and bootstrap CI arrays.</td></tr>
+      <tr><td><code>run_optimization(params=None)</code></td><td>Run the integrated optimisation workflow.</td><td>Supports detection-only, excitation-only, Fisher-throughput selection, and joint sequential alternating coordination. Respects the shared photon-basis setting and returns objective history, minimum-F history, intermediate retained states, the final optimised configuration, and the final excitation-profile summary when applicable.</td></tr>
       <tr><td><code>get_tau_map()</code></td><td>Return only the current tau map.</td><td>Useful for lightweight polling.</td></tr>
       <tr><td><code>get_phasor_map(harmonic=1)</code></td><td>Return current phasor map.</td><td>Uses current raw data state.</td></tr>
       <tr><td><code>get_theoretical_locus()</code></td><td>Return theoretical phasor locus.</td><td>Independent of live phasor map state.</td></tr>

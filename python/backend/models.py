@@ -51,6 +51,8 @@ class PhysicsConfig(BaseModel):
     irf_rise_time: float = 0.05
     irf_fall_time: float = 0.05
     irf_freeform_points: List[float] = []
+    irf_freeform_times: List[float] = []
+    irf_freeform_edit_mode: bool = True
     
     # Burst Excitation (Sub-pulses within the IRF envelope)
     burst_enabled: bool = False
@@ -140,9 +142,11 @@ class PhysicsConfig(BaseModel):
     optimization_mode: str = "sequential"  # legacy compatibility field; joint optimisation now alternates sequentially
     optimization_first: str = "detection"  # detection, excitation
     optimization_iterations: int = 20
-    optimization_objective: str = "fisher_throughput"  # fisher_information, fisher_throughput
+    optimization_f_photon_basis: str = "all"  # all, collected
+    optimization_objective: str = "fisher_throughput"  # fisher_information, fisher_throughput, photon_efficiency_auc, throughput_auc
     optimization_max_fi_loss_pct: float = 5.0
     optimization_realtime_visualization: bool = False
+    optimization_realtime_interval_s: float = 5.0
     optimization_intermediate_steps: int = 6
     optimization_validate_mc_intermediates: bool = False
 

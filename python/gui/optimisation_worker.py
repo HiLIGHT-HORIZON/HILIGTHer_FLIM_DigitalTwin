@@ -1,4 +1,5 @@
 import copy
+import time
 from typing import Any, Dict, List
 
 import numpy as np
@@ -106,14 +107,24 @@ class DetectionOptimisationWorker(QThread):
 
     @staticmethod
     def _build_progress_record(payload: Dict[str, Any], step: int) -> Dict[str, Any]:
+        theory_f = np.asarray(payload["f_val"], dtype=float).copy()
+        eff = np.minimum(1.0, 1.0 / np.maximum(np.square(theory_f), 1e-12))
+        gate_count = int(max(0, len(np.asarray(payload["edges"], dtype=float)) - 1))
+        throughput = float(payload.get("throughput_metric", (float(np.nanmax(eff)) if np.any(np.isfinite(eff)) else np.nan) / max(gate_count, 1)))
+        throughput_auc = float(payload.get("throughput_auc", np.nan))
         return {
             "label": f"Iteration {int(step)}",
             "step": int(step),
             "objective": float(payload["objective"]),
             "min_f": float(payload["min_f"]),
+            "min_eff": float(np.nanmax(eff)) if np.any(np.isfinite(eff)) else np.nan,
+            "auc_eff": float(np.trapezoid(eff) if hasattr(np, "trapezoid") else np.trapz(eff)),
+            "throughput": throughput,
+            "throughput_auc": throughput_auc,
+            "gate_count": gate_count,
             "note": str(payload.get("note", "")),
             "edges": np.asarray(payload["edges"], dtype=float).copy(),
-            "theory_f": np.asarray(payload["f_val"], dtype=float).copy(),
+            "theory_f": theory_f,
             "theory_fisher": np.asarray(payload["fisher_info"], dtype=float).copy(),
             "config": copy.deepcopy(payload.get("config", {})),
             "excitation_summary": copy.deepcopy(payload.get("excitation_summary", {})),
@@ -253,7 +264,11 @@ class DetectionOptimisationWorker(QThread):
 
             baseline_cfg = self._resolve_start_partition_cfg(cfg)
             baseline_engine = TwinEngine(copy.deepcopy(baseline_cfg))
-            baseline_fi, baseline_f = baseline_engine.compute_fisher_info(x_range, int(baseline_cfg.precision_photons))
+            baseline_fi, baseline_f = baseline_engine.compute_fisher_info(
+                x_range,
+                int(baseline_cfg.precision_photons),
+                photon_basis_mode=getattr(baseline_cfg, "optimization_f_photon_basis", "all"),
+            )
             baseline_objective = (
                 float(np.nanmean(baseline_f)) if np.any(np.isfinite(baseline_f)) else np.inf
             )
@@ -285,16 +300,30 @@ class DetectionOptimisationWorker(QThread):
             progress_records: List[Dict[str, Any]] = []
             objective_history = [baseline_snapshot["objective"]]
             min_f_history = [baseline_snapshot["min_f"]]
+            min_eff_history = [float(np.nanmax(np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(baseline_snapshot["theory_f"], dtype=float)), 1e-12))))]
+            auc_eff_history = [float(np.trapezoid(np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(baseline_snapshot["theory_f"], dtype=float)), 1e-12))) if hasattr(np, "trapezoid") else np.trapz(np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(baseline_snapshot["theory_f"], dtype=float)), 1e-12))))]
+            throughput_history = [float(np.nanmax(np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(baseline_snapshot["theory_f"], dtype=float)), 1e-12))))]
+            throughput_auc_history = [float(np.trapezoid(np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(baseline_snapshot["theory_f"], dtype=float)), 1e-12))) if hasattr(np, "trapezoid") else np.trapz(np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(baseline_snapshot["theory_f"], dtype=float)), 1e-12))))]
+            gate_count_history = [int(baseline_snapshot.get("gate_count", 0))]
             realtime_enabled = bool(getattr(cfg, "optimization_realtime_visualization", False))
+            realtime_interval_s = max(float(getattr(cfg, "optimization_realtime_interval_s", 5.0)), 0.2)
+            last_realtime_emit = -np.inf
 
             def on_progress(payload: Dict[str, Any]):
+                nonlocal last_realtime_emit
                 step_number = len(progress_records) + 1
                 record = self._build_progress_record(payload, step_number)
                 progress_records.append(record)
                 objective_history.append(record["objective"])
                 min_f_history.append(record["min_f"])
+                min_eff_history.append(record["min_eff"])
+                auc_eff_history.append(record["auc_eff"])
+                throughput_history.append(record["throughput"])
+                throughput_auc_history.append(record.get("throughput_auc", np.nan))
+                gate_count_history.append(record["gate_count"])
                 current_snapshot = None
-                if realtime_enabled:
+                now = time.monotonic()
+                if realtime_enabled and (now - last_realtime_emit >= realtime_interval_s):
                     current_snapshot = self._build_snapshot(
                         preview_engine,
                         PhysicsConfig(**record["config"]) if record.get("config") else cfg,
@@ -309,10 +338,16 @@ class DetectionOptimisationWorker(QThread):
                         note=record["note"],
                         include_background_curves=False,
                     )
+                    last_realtime_emit = now
                 self.progress_ready.emit({
                     "iterations": np.arange(0, len(objective_history), dtype=int),
                     "objective_history": np.array(objective_history, copy=True),
                     "min_f_history": np.array(min_f_history, copy=True),
+                    "min_eff_history": np.array(min_eff_history, copy=True),
+                    "auc_eff_history": np.array(auc_eff_history, copy=True),
+                    "throughput_history": np.array(throughput_history, copy=True),
+                    "throughput_auc_history": np.array(throughput_auc_history, copy=True),
+                    "gate_count_history": np.array(gate_count_history, copy=True),
                     "current": self._clone_snapshot(current_snapshot) if current_snapshot is not None else None,
                 })
 
@@ -321,7 +356,11 @@ class DetectionOptimisationWorker(QThread):
             best_edges = np.asarray(final_cfg.gate_edges, dtype=float)
             best_j = float(workflow_result["best_objective"])
             final_engine = TwinEngine(copy.deepcopy(final_cfg))
-            final_fi, final_f = final_engine.compute_fisher_info(x_range, int(final_cfg.precision_photons))
+            final_fi, final_f = final_engine.compute_fisher_info(
+                x_range,
+                int(final_cfg.precision_photons),
+                photon_basis_mode=getattr(final_cfg, "optimization_f_photon_basis", "all"),
+            )
             final_snapshot = self._build_snapshot(
                 preview_engine,
                 final_cfg,
@@ -371,15 +410,31 @@ class DetectionOptimisationWorker(QThread):
 
             objective_series = list(objective_history)
             min_f_series = list(min_f_history)
+            min_eff_series = list(min_eff_history)
+            auc_eff_series = list(auc_eff_history)
+            throughput_series = list(throughput_history)
+            throughput_auc_series = list(throughput_auc_history)
+            gate_count_series = list(gate_count_history)
             if not progress_records or not np.allclose(np.asarray(progress_records[-1]["edges"], dtype=float), np.asarray(best_edges, dtype=float), rtol=1e-9, atol=1e-9):
                 objective_series.append(final_snapshot["objective"])
                 min_f_series.append(final_snapshot["min_f"])
+                final_eff = np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(final_snapshot["theory_f"], dtype=float)), 1e-12))
+                min_eff_series.append(float(np.nanmax(final_eff)) if np.any(np.isfinite(final_eff)) else np.nan)
+                auc_eff_series.append(float(np.trapezoid(final_eff) if hasattr(np, "trapezoid") else np.trapz(final_eff)))
+                throughput_series.append(float(np.nanmax(final_eff)))
+                throughput_auc_series.append(float(np.trapezoid(final_eff) if hasattr(np, "trapezoid") else np.trapz(final_eff)))
+                gate_count_series.append(int(final_snapshot.get("gate_count", max(0, len(np.asarray(best_edges, dtype=float)) - 1))))
 
             self.result_ready.emit({
                 "x_range": np.array(x_range, copy=True),
                 "ideal_f": np.array(ideal_f, copy=True),
                 "objective_history": np.array(objective_series, copy=True),
                 "min_f_history": np.array(min_f_series, copy=True),
+                "min_eff_history": np.array(min_eff_series, copy=True),
+                "auc_eff_history": np.array(auc_eff_series, copy=True),
+                "throughput_history": np.array(throughput_series, copy=True),
+                "throughput_auc_history": np.array(throughput_auc_series, copy=True),
+                "gate_count_history": np.array(gate_count_series, copy=True),
                 "snapshots": [self._clone_snapshot(item) for item in selected],
                 "final_snapshot": self._clone_snapshot(final_snapshot),
                 "final_config": copy.deepcopy(final_cfg.model_dump() if hasattr(final_cfg, "model_dump") else final_cfg.dict()),

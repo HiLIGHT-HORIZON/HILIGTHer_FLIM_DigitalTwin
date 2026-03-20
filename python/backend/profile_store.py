@@ -28,6 +28,46 @@ class InstrumentProfileStore:
             raise ValueError("Profile name cannot be empty.")
         return os.path.join(self.profiles_dir, f"{safe_name}.json")
 
+    def _find_profile_path_by_name(self, name: str) -> Optional[str]:
+        wanted = str(name).strip()
+        if not wanted:
+            return None
+        for entry in self.list_profiles():
+            if str(entry.get("name", "")).strip() == wanted:
+                return entry.get("path")
+        candidate = self._profile_path(wanted)
+        return candidate if os.path.exists(candidate) else None
+
+    @staticmethod
+    def _model_field_names() -> set[str]:
+        fields = getattr(PhysicsConfig, "model_fields", None)
+        if isinstance(fields, dict):
+            return set(fields.keys())
+        legacy_fields = getattr(PhysicsConfig, "__fields__", {})
+        return set(legacy_fields.keys())
+
+    def inspect_config_dict(self, config_dict: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        config_dict = dict(config_dict or {})
+        field_names = self._model_field_names()
+        keys = set(config_dict.keys())
+        missing = sorted(field_names - keys)
+        extra = sorted(keys - field_names)
+        return {
+            "missing": missing,
+            "extra": extra,
+            "has_issues": bool(missing or extra),
+        }
+
+    def sanitize_config_dict(self, config_dict: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        config_dict = dict(config_dict or {})
+        defaults = PhysicsConfig()
+        default_dict = defaults.model_dump() if hasattr(defaults, "model_dump") else defaults.dict()
+        sanitized = {k: copy.deepcopy(v) for k, v in default_dict.items()}
+        for key in self._model_field_names():
+            if key in config_dict:
+                sanitized[key] = copy.deepcopy(config_dict[key])
+        return sanitized
+
     def _config_to_payload(self, name: str, config: PhysicsConfig, description: str = "", metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         config_dict = config.model_dump() if hasattr(config, "model_dump") else config.dict()
         timestamp = _utc_now()
@@ -140,7 +180,13 @@ class InstrumentProfileStore:
             ),
         ]
 
-        existing = {entry["name"] for entry in self.list_profiles()}
+        # Bootstrap defaults only when there are no profile JSON files at all.
+        # This prevents deleted defaults from reappearing on every app restart.
+        existing_profiles = self.list_profiles()
+        if existing_profiles:
+            return
+
+        existing = {entry["name"] for entry in existing_profiles}
         for name, cfg, description in defaults:
             if name in existing:
                 continue
@@ -168,7 +214,10 @@ class InstrumentProfileStore:
         return items
 
     def load_profile_payload(self, path_or_name: str) -> Dict[str, Any]:
-        path = path_or_name if os.path.isfile(path_or_name) else self._profile_path(path_or_name)
+        if os.path.isfile(path_or_name):
+            path = path_or_name
+        else:
+            path = self._find_profile_path_by_name(path_or_name) or self._profile_path(path_or_name)
         with open(path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
 
@@ -177,10 +226,13 @@ class InstrumentProfileStore:
             payload = self._translate_legacy_payload(payload, fallback_name)
         return payload
 
-    def load_profile(self, path_or_name: str) -> Dict[str, Any]:
+    def load_profile(self, path_or_name: str, sanitize: bool = True) -> Dict[str, Any]:
         payload = self.load_profile_payload(path_or_name)
-        cfg = PhysicsConfig(**payload["config"])
-        return {"payload": payload, "config": cfg}
+        raw_config = dict(payload.get("config") or {})
+        inspection = self.inspect_config_dict(raw_config)
+        effective_config = self.sanitize_config_dict(raw_config) if sanitize else raw_config
+        cfg = PhysicsConfig(**effective_config)
+        return {"payload": payload, "config": cfg, "inspection": inspection}
 
     def save_profile(self, name: str, config: PhysicsConfig, description: str = "", metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         path = self._profile_path(name)
@@ -194,7 +246,7 @@ class InstrumentProfileStore:
         return payload
 
     def rename_profile(self, old_name: str, new_name: str) -> Dict[str, Any]:
-        source = self._profile_path(old_name)
+        source = self._find_profile_path_by_name(old_name) or self._profile_path(old_name)
         payload = self.load_profile_payload(source)
         payload["name"] = str(new_name)
         payload["updated_at"] = _utc_now()
@@ -206,7 +258,7 @@ class InstrumentProfileStore:
         return payload
 
     def delete_profile(self, name: str) -> None:
-        path = self._profile_path(name)
+        path = self._find_profile_path_by_name(name) or self._profile_path(name)
         if os.path.exists(path):
             os.remove(path)
 
@@ -216,8 +268,15 @@ class InstrumentProfileStore:
             json.dump(payload, handle, indent=2)
         return payload
 
+    def repair_profile(self, path_or_name: str, destination_name: Optional[str] = None) -> Dict[str, Any]:
+        payload = self.load_profile_payload(path_or_name)
+        name = destination_name or payload.get("name") or os.path.splitext(os.path.basename(str(path_or_name)))[0]
+        sanitized = self.sanitize_config_dict(payload.get("config"))
+        cfg = PhysicsConfig(**sanitized)
+        return self.save_profile(name, cfg, description=payload.get("description", ""), metadata=payload.get("metadata", {}))
+
     def import_profile(self, source_path: str, rename_to: Optional[str] = None) -> Dict[str, Any]:
         payload = self.load_profile_payload(source_path)
         name = rename_to or payload.get("name") or os.path.splitext(os.path.basename(source_path))[0]
-        config = PhysicsConfig(**payload["config"])
+        config = PhysicsConfig(**self.sanitize_config_dict(payload.get("config")))
         return self.save_profile(name, config, description=payload.get("description", ""), metadata=payload.get("metadata", {}))

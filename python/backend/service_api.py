@@ -172,7 +172,11 @@ class DigitalTwinService:
         self.engine.invalidate_grid()
         try:
             ideal_fi, ideal_f = self.engine.compute_ideal_reference(x_range, int(cfg.precision_photons))
-            theory_fi, theory_f = self.engine.compute_fisher_info(x_range, int(cfg.precision_photons))
+            theory_fi, theory_f = self.engine.compute_fisher_info(
+                x_range,
+                int(cfg.precision_photons),
+                photon_basis_mode=getattr(cfg, "optimization_f_photon_basis", "all"),
+            )
             payload = {
                 "x_range": x_range.tolist(),
                 "ideal": {
@@ -220,10 +224,18 @@ class DigitalTwinService:
         try:
             objective_history = []
             min_f_history = []
+            min_eff_history = []
+            auc_eff_history = []
+            throughput_history = []
+            throughput_auc_history = []
 
             def on_progress(progress):
                 objective_history.append(float(progress["objective"]))
                 min_f_history.append(float(progress["min_f"]))
+                min_eff_history.append(float(progress.get("peak_efficiency", np.nan)))
+                auc_eff_history.append(float(progress.get("auc_efficiency", np.nan)))
+                throughput_history.append(float(progress.get("throughput_metric", np.nan)))
+                throughput_auc_history.append(float(progress.get("throughput_auc", np.nan)))
 
             info = self.engine.run_optimization_workflow(progress_callback=on_progress)
             final_cfg = PhysicsConfig(**info["final_config"])
@@ -231,7 +243,11 @@ class DigitalTwinService:
             best_j = float(info["best_objective"])
             self.engine.config = copy.deepcopy(final_cfg)
             self.engine.invalidate_grid()
-            theory_fi, theory_f = self.engine.compute_fisher_info(x_range, int(cfg.precision_photons))
+            theory_fi, theory_f = self.engine.compute_fisher_info(
+                x_range,
+                int(cfg.precision_photons),
+                photon_basis_mode=getattr(cfg, "optimization_f_photon_basis", "all"),
+            )
             return {
                 "status": "success",
                 "algorithm": str(
@@ -252,6 +268,10 @@ class DigitalTwinService:
                 "best_objective": float(best_j),
                 "objective_history": objective_history,
                 "min_f_history": min_f_history,
+                "min_eff_history": min_eff_history,
+                "auc_eff_history": auc_eff_history,
+                "throughput_history": throughput_history,
+                "throughput_auc_history": throughput_auc_history,
                 "final_theory": {
                     "fisher_info": np.asarray(theory_fi, dtype=float).tolist(),
                     "f_value": np.asarray(theory_f, dtype=float).tolist(),

@@ -174,6 +174,7 @@ class TwinEngine:
             cfg.irf_rise_time,
             cfg.irf_fall_time,
             tuple(getattr(cfg, "irf_freeform_points", [])),
+            tuple(getattr(cfg, "irf_freeform_times", [])),
             cfg.burst_enabled,
             cfg.burst_sub_period,
             cfg.burst_sub_fwhm,
@@ -212,6 +213,11 @@ class TwinEngine:
                 n_gates = max(len(getattr(cfg, "gate_edges", [])) - 1, 1)
             return 1.0 / max(int(n_gates), 1)
         return 1.0
+
+    def _should_normalize_gate_probabilities(self, photon_basis_mode: Optional[str] = None) -> bool:
+        if photon_basis_mode is not None:
+            return str(photon_basis_mode).lower() == "collected"
+        return not self._use_raw_gate_statistics()
 
     def _exclusive_overlap_weights(self, values: np.ndarray, axis: int = 0) -> np.ndarray:
         values = np.asarray(values, dtype=float)
@@ -975,12 +981,12 @@ class TwinEngine:
         """
         Calculates G and S phasor coordinates using PhasorPy.
         """
-        model_g, model_s = self._phasor_from_validation_model(harmonic=harmonic)
-        if model_g is not None and model_s is not None:
-            return model_g, model_s
-
         if data is None:
             data = self.raw_data
+        if data is None:
+            model_g, model_s = self._phasor_from_validation_model(harmonic=harmonic)
+            if model_g is not None and model_s is not None:
+                return model_g, model_s
         if data is None:
             return None, None
 
@@ -1043,17 +1049,23 @@ class TwinEngine:
             sigma = max(sigma, 1e-6)
             excitation = np.exp(-((t - mu)**2) / (2.0 * sigma**2))
         elif profile == "free_form":
-            width = max(float(cfg.irf_fwhm), dt)
             control = np.asarray(getattr(cfg, "irf_freeform_points", []) or [], dtype=float)
-            if control.size < 2:
-                control = np.ones(max(int(getattr(cfg, "excitation_optimization_control_points", 8)), 3), dtype=float)
-            control = np.maximum(control, 0.0)
-            rel_t = t - mu
-            knots = np.linspace(0.0, width, control.size)
+            knot_times = np.asarray(getattr(cfg, "irf_freeform_times", []) or [], dtype=float)
+            if control.size >= 2 and knot_times.size == control.size:
+                knots = np.clip(knot_times, 0.0, float(cfg.period))
+            else:
+                width = max(float(cfg.irf_fwhm), dt)
+                if control.size < 2:
+                    control = np.ones(max(int(getattr(cfg, "excitation_optimization_control_points", 8)), 3), dtype=float)
+                knots = mu + np.linspace(0.0, width, control.size)
             excitation = np.zeros_like(t, dtype=float)
-            mask = (rel_t >= 0.0) & (rel_t <= width)
+            control = np.maximum(control, 0.0)
+            order = np.argsort(knots, kind="mergesort")
+            knots = knots[order]
+            control = control[order]
+            mask = (t >= knots[0]) & (t <= knots[-1])
             if np.any(mask):
-                excitation[mask] = np.interp(rel_t[mask], knots, control)
+                excitation[mask] = np.interp(t[mask], knots, control)
             if jitter_ns > 1e-5:
                 excitation = self._apply_temporal_blur(excitation, jitter_ns, dt)
         elif profile == "ideal (dirac)":
@@ -1164,7 +1176,9 @@ class TwinEngine:
             
         return pdf
 
-    def compute_fisher_info(self, x_grid: np.ndarray, n_photons: int = 1, point_callback: Optional[Callable] = None) -> Tuple[np.ndarray, np.ndarray]:
+    def compute_fisher_info(self, x_grid: np.ndarray, n_photons: int = 1,
+                            point_callback: Optional[Callable] = None,
+                            photon_basis_mode: Optional[str] = None) -> Tuple[np.ndarray, np.ndarray]:
         """
         Computes the CRLB-based F-value using multi-parameter Fisher Matrix inversion.
         Evaluates precision of 'f_x_param' while respecting 'fixed_params'.
@@ -1188,6 +1202,9 @@ class TwinEngine:
         
         # Prepare gates using the exact same distillation logic as the simulation path.
         n_gates = len(cfg.gate_edges) - 1
+        collection_scale = self._collection_efficiency_scale(n_gates)
+        normalize_probs = self._should_normalize_gate_probabilities(photon_basis_mode)
+        include_lost_category = (photon_basis_mode is not None and str(photon_basis_mode).lower() == "all")
         original_dt_override = cfg.dt_override
         try:
             cfg.dt_override = dt
@@ -1235,28 +1252,33 @@ class TwinEngine:
                 self._set_cfg_param(cfg.f_x_param, param_val)
                 p_cen_pdf  = self.dt_pdf(t, irf=irf_cached)
                 p_cen_gates = gate_profiles @ p_cen_pdf
-                p_cen_gates = p_cen_gates * self._collection_efficiency_scale(n_gates)
+                p_cen_gates = p_cen_gates * collection_scale
                 p_cen_sum = np.sum(p_cen_gates)
-                if (not self._use_raw_gate_statistics()) and p_cen_sum > 0:
+                if normalize_probs and p_cen_sum > 0:
                     p_cen_gates = p_cen_gates / p_cen_sum
 
                 # Forward
                 self._set_cfg_param(cfg.f_x_param, plus_val)
                 p_plus_pdf   = self.dt_pdf(t, irf=irf_cached)
                 p_plus_gates = gate_profiles @ p_plus_pdf
-                p_plus_gates = p_plus_gates * self._collection_efficiency_scale(n_gates)
+                p_plus_gates = p_plus_gates * collection_scale
                 p_plus_sum = np.sum(p_plus_gates)
-                if (not self._use_raw_gate_statistics()) and p_plus_sum > 0:
+                if normalize_probs and p_plus_sum > 0:
                     p_plus_gates = p_plus_gates / p_plus_sum
 
                 # Backward
                 self._set_cfg_param(cfg.f_x_param, minus_val)
                 p_minus_pdf   = self.dt_pdf(t, irf=irf_cached)
                 p_minus_gates = gate_profiles @ p_minus_pdf
-                p_minus_gates = p_minus_gates * self._collection_efficiency_scale(n_gates)
+                p_minus_gates = p_minus_gates * collection_scale
                 p_minus_sum = np.sum(p_minus_gates)
-                if (not self._use_raw_gate_statistics()) and p_minus_sum > 0:
+                if normalize_probs and p_minus_sum > 0:
                     p_minus_gates = p_minus_gates / p_minus_sum
+
+                if include_lost_category:
+                    p_cen_gates = np.append(p_cen_gates, max(1.0 - float(np.sum(p_cen_gates)), 0.0))
+                    p_plus_gates = np.append(p_plus_gates, max(1.0 - float(np.sum(p_plus_gates)), 0.0))
+                    p_minus_gates = np.append(p_minus_gates, max(1.0 - float(np.sum(p_minus_gates)), 0.0))
 
                 # Central-difference derivative with respect to the currently targeted parameter.
                 dP_dparam = (p_plus_gates - p_minus_gates) / max(plus_val - minus_val, 1e-12)
@@ -1499,7 +1521,8 @@ class TwinEngine:
             mean_tau[idx] = np.nanmean(param_est)
             std_tau[idx] = np.nanstd(param_est, ddof=1) if np.sum(np.isfinite(param_est)) > 1 else 0.0
             mean_detected = float(np.nanmean(n_detections)) if len(n_detections) else 0.0
-            photon_budget = float(n_photons)
+            photon_basis_mode = str(getattr(self.config, "optimization_f_photon_basis", "all")).lower()
+            photon_budget = float(mean_detected if photon_basis_mode == "collected" else n_photons)
             denom = max(abs(param_val), 1e-12)
             if np.isfinite(std_tau[idx]) and photon_budget > 0:
                 f_values[idx] = (std_tau[idx] / denom) * np.sqrt(photon_budget)
@@ -1832,9 +1855,18 @@ class TwinEngine:
             if len(candidate_params) > 1:
                 active_params = candidate_params
         if active_params is None:
-            fi, f_val = self.compute_fisher_info(tau_grid, n_photons=1e4)
+            fi, f_val = self.compute_fisher_info(
+                tau_grid,
+                n_photons=1e4,
+                photon_basis_mode=getattr(self.config, "optimization_f_photon_basis", "all"),
+            )
         else:
-            fi, f_val = self._compute_effective_fisher_info_for_params(tau_grid, n_photons=1e4, active_params=active_params)
+            fi, f_val = self._compute_effective_fisher_info_for_params(
+                tau_grid,
+                n_photons=1e4,
+                active_params=active_params,
+                photon_basis_mode=getattr(self.config, "optimization_f_photon_basis", "all"),
+            )
         j_val = float(np.nanmean(f_val)) if np.any(np.isfinite(f_val)) else np.inf
         payload = self._build_gate_optimization_payload(edges, tau_grid, j_val, fi, f_val, algorithm, step=step, note=note)
         if emit_progress and np.isfinite(j_val):
@@ -1849,6 +1881,9 @@ class TwinEngine:
         cfg = self.config
         self.distill_gates()
         t = self.time_vector
+        photon_basis_mode = getattr(cfg, "optimization_f_photon_basis", "all")
+        collection_scale = self._collection_efficiency_scale(len(getattr(cfg, "gate_edges", [])) - 1)
+        normalize_probs = self._should_normalize_gate_probabilities(photon_basis_mode)
         target_param = cfg.f_x_param
         original_param_value = self._get_cfg_param(target_param)
         n_bins = len(fine_edges) - 1
@@ -1880,7 +1915,7 @@ class TwinEngine:
             pdf_cen = self.dt_pdf(t, irf=irf_cached)
             deriv_rows = np.zeros((len(active_params), n_bins), dtype=float)
             for bin_idx, mask in enumerate(bin_masks):
-                p_cen = float(np.sum(pdf_cen[mask]))
+                p_cen = float(np.sum(pdf_cen[mask])) * collection_scale
                 probs[design_idx, bin_idx] = max(p_cen, 0.0)
 
             for param_idx, param_name in enumerate(active_params):
@@ -1908,7 +1943,16 @@ class TwinEngine:
 
                 denom = max(plus_val - minus_val, 1e-12)
                 for bin_idx, mask in enumerate(bin_masks):
-                    deriv_rows[param_idx, bin_idx] = float(np.sum(pdf_plus[mask]) - np.sum(pdf_minus[mask])) / denom
+                    deriv_rows[param_idx, bin_idx] = (
+                        float(np.sum(pdf_plus[mask]) - np.sum(pdf_minus[mask])) * collection_scale / denom
+                    )
+
+            if normalize_probs:
+                total_prob = float(np.sum(probs[design_idx]))
+                if total_prob > 0:
+                    total_deriv = np.sum(deriv_rows, axis=1, keepdims=True)
+                    deriv_rows = (deriv_rows * total_prob - probs[design_idx][None, :] * total_deriv) / max(total_prob ** 2, 1e-15)
+                    probs[design_idx] = probs[design_idx] / total_prob
 
             p_safe = np.maximum(probs[design_idx], 1e-15)
             projected_deriv = np.array(deriv_rows[0], copy=True)
@@ -1966,7 +2010,8 @@ class TwinEngine:
         return active_params
 
     def _compute_effective_fisher_info_for_params(self, x_grid: np.ndarray, n_photons: int,
-                                                  active_params: List[str]) -> Tuple[np.ndarray, np.ndarray]:
+                                                  active_params: List[str],
+                                                  photon_basis_mode: Optional[str] = None) -> Tuple[np.ndarray, np.ndarray]:
         cfg = self.config
         target_param = active_params[0]
 
@@ -1981,6 +2026,9 @@ class TwinEngine:
             dt = max(dt, 0.005)
 
         n_gates = len(cfg.gate_edges) - 1
+        collection_scale = self._collection_efficiency_scale(n_gates)
+        normalize_probs = self._should_normalize_gate_probabilities(photon_basis_mode)
+        include_lost_category = (photon_basis_mode is not None and str(photon_basis_mode).lower() == "all")
         original_dt_override = cfg.dt_override
         try:
             cfg.dt_override = dt
@@ -2006,9 +2054,9 @@ class TwinEngine:
                 self._set_cfg_param(target_param, param_val)
                 p_cen_pdf = self.dt_pdf(t, irf=irf_cached)
                 p_cen_gates = gate_profiles @ p_cen_pdf
-                p_cen_gates = p_cen_gates * self._collection_efficiency_scale(n_gates)
+                p_cen_gates = p_cen_gates * collection_scale
                 p_cen_sum = np.sum(p_cen_gates)
-                if (not self._use_raw_gate_statistics()) and p_cen_sum > 0:
+                if normalize_probs and p_cen_sum > 0:
                     p_cen_gates = p_cen_gates / p_cen_sum
 
                 deriv_rows = np.zeros((len(active_params), len(p_cen_gates)), dtype=float)
@@ -2032,21 +2080,28 @@ class TwinEngine:
                     self._set_cfg_param(param_name, plus_val)
                     p_plus_pdf = self.dt_pdf(t, irf=irf_cached)
                     p_plus_gates = gate_profiles @ p_plus_pdf
-                    p_plus_gates = p_plus_gates * self._collection_efficiency_scale(n_gates)
+                    p_plus_gates = p_plus_gates * collection_scale
                     p_plus_sum = np.sum(p_plus_gates)
-                    if (not self._use_raw_gate_statistics()) and p_plus_sum > 0:
+                    if normalize_probs and p_plus_sum > 0:
                         p_plus_gates = p_plus_gates / p_plus_sum
 
                     self._set_cfg_param(param_name, minus_val)
                     p_minus_pdf = self.dt_pdf(t, irf=irf_cached)
                     p_minus_gates = gate_profiles @ p_minus_pdf
-                    p_minus_gates = p_minus_gates * self._collection_efficiency_scale(n_gates)
+                    p_minus_gates = p_minus_gates * collection_scale
                     p_minus_sum = np.sum(p_minus_gates)
-                    if (not self._use_raw_gate_statistics()) and p_minus_sum > 0:
+                    if normalize_probs and p_minus_sum > 0:
                         p_minus_gates = p_minus_gates / p_minus_sum
+
+                    if include_lost_category:
+                        p_plus_gates = np.append(p_plus_gates, max(1.0 - float(np.sum(p_plus_gates)), 0.0))
+                        p_minus_gates = np.append(p_minus_gates, max(1.0 - float(np.sum(p_minus_gates)), 0.0))
 
                     self._set_cfg_param(param_name, base_val)
                     deriv_rows[param_idx] = (p_plus_gates - p_minus_gates) / max(plus_val - minus_val, 1e-12)
+
+                if include_lost_category:
+                    p_cen_gates = np.append(p_cen_gates, max(1.0 - float(np.sum(p_cen_gates)), 0.0))
 
                 p_safe = np.maximum(p_cen_gates, 1e-15)
                 fim = (deriv_rows / p_safe) @ deriv_rows.T
@@ -2436,7 +2491,11 @@ class TwinEngine:
             self.config.gate_widths = np.diff(np.asarray(best_edges, dtype=float)).tolist()
             self.config.gate_type = "custom"
             self.distill_gates()
-            fi, f_val = self.compute_fisher_info(tau_grid, n_photons=1e4)
+            fi, f_val = self.compute_fisher_info(
+                tau_grid,
+                n_photons=1e4,
+                photon_basis_mode=getattr(self.config, "optimization_f_photon_basis", "all"),
+            )
             info = {
                 "algorithm": algorithm,
                 "tau_grid": tau_grid,
@@ -2501,7 +2560,11 @@ class TwinEngine:
             self.config = copy.deepcopy(cfg)
             self.invalidate_grid()
             self.distill_gates()
-            _, f_val = self.compute_fisher_info(x_range, int(n_photons))
+            _, f_val = self.compute_fisher_info(
+                x_range,
+                int(n_photons),
+                photon_basis_mode=getattr(cfg, "optimization_f_photon_basis", "all"),
+            )
             return float(np.nanmean(f_val)) if np.any(np.isfinite(f_val)) else np.inf
         finally:
             self.config = original_cfg
@@ -2521,7 +2584,11 @@ class TwinEngine:
                 self.config = copy.deepcopy(reference_cfg)
                 self.invalidate_grid()
                 self.distill_gates()
-                _, f_val = self.compute_fisher_info(x_range, int(reference_cfg.precision_photons))
+                _, f_val = self.compute_fisher_info(
+                    x_range,
+                    int(reference_cfg.precision_photons),
+                    photon_basis_mode=getattr(reference_cfg, "optimization_f_photon_basis", "all"),
+                )
                 return self._peak_efficiency_from_f_values(f_val)
             finally:
                 self.config = original_cfg
@@ -2551,7 +2618,11 @@ class TwinEngine:
         scratch.config = copy.deepcopy(reference_cfg)
         scratch.invalidate_grid()
         scratch.distill_gates()
-        _, f_val = scratch.compute_fisher_info(x_range, int(reference_cfg.precision_photons))
+        _, f_val = scratch.compute_fisher_info(
+            x_range,
+            int(reference_cfg.precision_photons),
+            photon_basis_mode=getattr(reference_cfg, "optimization_f_photon_basis", "all"),
+        )
         return scratch._peak_efficiency_from_f_values(f_val)
 
     def _summarise_excitation_profile(self, cfg: PhysicsConfig) -> Dict[str, Any]:
@@ -2591,13 +2662,27 @@ class TwinEngine:
             self.config = copy.deepcopy(candidate_cfg)
             self.invalidate_grid()
             self.distill_gates()
-            fi, f_val = self.compute_fisher_info(x_range, n_photons=1e4)
+            fi, f_val = self.compute_fisher_info(
+                x_range,
+                n_photons=1e4,
+                photon_basis_mode=getattr(candidate_cfg, "optimization_f_photon_basis", "all"),
+            )
             mean_f = float(np.nanmean(f_val)) if np.any(np.isfinite(f_val)) else np.inf
             min_f = float(np.nanmin(f_val)) if np.any(np.isfinite(f_val)) else np.nan
+            eff_curve = np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(f_val, dtype=float)), 1e-12))
             peak_efficiency = self._peak_efficiency_from_f_values(f_val)
+            auc_efficiency = float(np.trapezoid(eff_curve, x_range) if hasattr(np, "trapezoid") else np.trapz(eff_curve, x_range))
             throughput_scale = self._throughput_metric(candidate_cfg, reference_excitation_area)
             throughput_metric = peak_efficiency * throughput_scale
-            objective = mean_f if objective_mode == "fisher_information" else (1.0 / throughput_metric)
+            throughput_auc = auc_efficiency * throughput_scale
+            if objective_mode == "fisher_information":
+                objective = mean_f
+            elif objective_mode == "photon_efficiency_auc":
+                objective = 1.0 / max(auc_efficiency, 1e-12)
+            elif objective_mode == "throughput_auc":
+                objective = 1.0 / max(throughput_auc, 1e-12)
+            else:
+                objective = 1.0 / max(throughput_metric, 1e-12)
             payload = self._build_gate_optimization_payload(
                 np.asarray(candidate_cfg.gate_edges, dtype=float),
                 x_range,
@@ -2614,6 +2699,8 @@ class TwinEngine:
             payload["mean_f"] = float(mean_f)
             payload["min_f"] = float(min_f)
             payload["peak_efficiency"] = float(peak_efficiency)
+            payload["auc_efficiency"] = float(auc_efficiency)
+            payload["throughput_auc"] = float(throughput_auc)
             payload["excitation_summary"] = self._summarise_excitation_profile(candidate_cfg)
             self._emit_gate_optimization_progress(callback, progress_callback, payload)
             return payload
@@ -2665,7 +2752,7 @@ class TwinEngine:
                 payload = evaluate_candidate(candidate_cfg, step, f"width={float(width):.6g}")
                 candidates.append((candidate_cfg, payload))
                 step += 1
-            if objective_mode == "fisher_throughput":
+            if objective_mode in {"fisher_throughput", "throughput_auc"}:
                 ref_peak_eff = float(
                     throughput_reference_peak_efficiency
                     if throughput_reference_peak_efficiency is not None and np.isfinite(throughput_reference_peak_efficiency)
@@ -2720,7 +2807,7 @@ class TwinEngine:
                 payload = evaluate_candidate(candidate_cfg, step, "free_form_final")
                 eval_cache[final_key] = {"config": candidate_cfg, "payload": payload}
             candidates = [(item["config"], item["payload"]) for item in eval_cache.values()]
-            if objective_mode == "fisher_throughput":
+            if objective_mode in {"fisher_throughput", "throughput_auc"}:
                 ref_peak_eff = float(
                     throughput_reference_peak_efficiency
                     if throughput_reference_peak_efficiency is not None and np.isfinite(throughput_reference_peak_efficiency)
@@ -2824,7 +2911,11 @@ class TwinEngine:
                         raise InterruptedError("Optimisation interrupted.")
                     last_objective = run_detection_stage() if scope == "detection" else run_excitation_stage()
 
-        final_fi, final_f = self.compute_fisher_info(x_range, int(self.config.precision_photons))
+        final_fi, final_f = self.compute_fisher_info(
+            x_range,
+            int(self.config.precision_photons),
+            photon_basis_mode=getattr(self.config, "optimization_f_photon_basis", "all"),
+        )
         window_start, window_end = self._resolve_optimization_window(
             t_max=float(self.config.period),
             start_anchor=getattr(self.config, "detection_opt_start_anchor", None),

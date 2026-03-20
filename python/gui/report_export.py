@@ -68,11 +68,113 @@ def write_precision_report_package(file_path, payload):
     return str(html_path), str(asset_dir)
 
 
-def _write_csv(path, headers, rows):
+def _write_csv(path, header_rows, rows):
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(headers)
+        for header_row in header_rows:
+            writer.writerow(header_row)
         writer.writerows(rows)
+
+
+def _header_descriptor(header, x_label):
+    x_unit = "[ns]" if "tau" in str(x_label).lower() else ""
+    if header == x_label:
+        return ("X", str(x_label), f"{x_label} {x_unit}".strip())
+    if header == "ideal_f":
+        return ("Y", "Numerical F", "Ideal Reference [F]")
+    if header == "ideal_eff":
+        return ("Y", "Numerical F^-2", "Ideal Reference [F^-2]")
+    if header == "ideal_throughput":
+        return ("Y", "Numerical Throughput", "Ideal Reference [throughput]")
+    if header == "time_ns":
+        return ("X", "Time", "Time [ns]")
+    if header == "irf":
+        return ("Y", "Excitation", "IRF amplitude [a.u.]")
+    if header == "pdf":
+        return ("Y", "Reference PDF", "PDF amplitude [a.u.]")
+    if header == "iteration":
+        return ("X", "Iteration", "Iteration index")
+    if header == "objective":
+        return ("Y", "Optimisation objective", "Objective value")
+    if header == "minimum_f":
+        return ("Y", "Minimum F", "Minimum F [F]")
+    if header == "minimum_f_inv2":
+        return ("Y", "Minimum F^-2", "Minimum F^-2 [efficiency]")
+    if header == "auc_f_inv2":
+        return ("Y", "AUC F^-2", "Area under F^-2 curve")
+    if header == "throughput":
+        return ("Y", "Fisher Throughput", "Fisher throughput")
+    if header == "throughput_auc":
+        return ("Y", "Throughput AUC", "Area under throughput curve")
+    if header == "gate_count":
+        return ("Y", "Gate count", "Number of gates")
+    if header == "label":
+        return ("Y", "Snapshot label", "State label")
+    if header == "gate_edges_ns":
+        return ("Y", "Gate edges", "Gate edges [ns]")
+    if header.startswith("gate_"):
+        gate_idx = header.split("_", 1)[1]
+        return ("Y", "Gate waveform", f"Gate {gate_idx} [a.u.]")
+    if header.endswith("_theory_f"):
+        label = header[: -len("_theory_f")].replace("_", " ")
+        return ("Y", "Numerical F", f"{label} [F]")
+    if header.endswith("_theory_eff"):
+        label = header[: -len("_theory_eff")].replace("_", " ")
+        return ("Y", "Numerical F^-2", f"{label} [F^-2]")
+    if header.endswith("_theory_throughput"):
+        label = header[: -len("_theory_throughput")].replace("_", " ")
+        return ("Y", "Numerical Throughput", f"{label} [throughput]")
+    if header.endswith("_mc_f"):
+        label = header[: -len("_mc_f")].replace("_", " ")
+        return ("Y", "Monte Carlo mean F", f"{label} [F]")
+    if header.endswith("_mc_eff"):
+        label = header[: -len("_mc_eff")].replace("_", " ")
+        return ("Y", "Monte Carlo mean F^-2", f"{label} [F^-2]")
+    if header.endswith("_mc_throughput"):
+        label = header[: -len("_mc_throughput")].replace("_", " ")
+        return ("Y", "Monte Carlo mean Throughput", f"{label} [throughput]")
+    if header.endswith("_mean_tau"):
+        label = header[: -len("_mean_tau")].replace("_", " ")
+        return ("Y", "Monte Carlo mean estimate", f"{label} [estimate]")
+    if header.endswith("_std_tau"):
+        label = header[: -len("_std_tau")].replace("_", " ")
+        return ("Y", "Monte Carlo standard deviation", f"{label} [estimate]")
+    if header.endswith("_mc_f_ci_lower"):
+        label = header[: -len("_mc_f_ci_lower")].replace("_", " ")
+        return ("Y", "Lower 95% CI on F", f"{label} [F]")
+    if header.endswith("_mc_f_ci_upper"):
+        label = header[: -len("_mc_f_ci_upper")].replace("_", " ")
+        return ("Y", "Upper 95% CI on F", f"{label} [F]")
+    if header.endswith("_mc_eff_ci_lower"):
+        label = header[: -len("_mc_eff_ci_lower")].replace("_", " ")
+        return ("Y", "Lower 95% CI on F^-2", f"{label} [F^-2]")
+    if header.endswith("_mc_eff_ci_upper"):
+        label = header[: -len("_mc_eff_ci_upper")].replace("_", " ")
+        return ("Y", "Upper 95% CI on F^-2", f"{label} [F^-2]")
+    if header.endswith("_mc_throughput_ci_lower"):
+        label = header[: -len("_mc_throughput_ci_lower")].replace("_", " ")
+        return ("Y", "Lower 95% CI on Throughput", f"{label} [throughput]")
+    if header.endswith("_mc_throughput_ci_upper"):
+        label = header[: -len("_mc_throughput_ci_upper")].replace("_", " ")
+        return ("Y", "Upper 95% CI on Throughput", f"{label} [throughput]")
+    if header.endswith("_mean"):
+        label = header[: -len("_mean")].replace("_", " ")
+        return ("Y", "MLE mean estimate", f"{label} [estimate]")
+    if header.endswith("_std"):
+        label = header[: -len("_std")].replace("_", " ")
+        return ("Y", "MLE standard deviation", f"{label} [estimate]")
+    if header.startswith("optimization_") or header.startswith("optimize_") or header.startswith("detection_opt_") or header.startswith("excitation_"):
+        return ("Y", "Optimisation option", header.replace("_", " "))
+    return ("Y", "Exported value", header.replace("_", " "))
+
+
+def _header_rows(headers, x_label):
+    descriptors = [_header_descriptor(header, x_label) for header in headers]
+    return [
+        [item[0] for item in descriptors],
+        [item[1] for item in descriptors],
+        [item[2] for item in descriptors],
+    ]
 
 
 def _write_csv_assets(asset_dir, payload):
@@ -91,11 +193,13 @@ def _write_csv_assets(asset_dir, payload):
             row.extend([series["theory_f"][idx], series["theory_eff"][idx], series["theory_throughput"][idx]])
         theory_rows.append(row)
     theory_name = "precision_theory.csv"
-    _write_csv(asset_dir / theory_name, theory_headers, theory_rows)
+    theory_header_rows = _header_rows(theory_headers, x_label)
+    _write_csv(asset_dir / theory_name, theory_header_rows, theory_rows)
     entries.append({
         "title": "Precision Theory Data",
         "filename": theory_name,
         "headers": theory_headers,
+        "header_rows": theory_header_rows,
         "rows": theory_rows,
         "column_help": _describe_columns(theory_headers, x_label),
     })
@@ -137,11 +241,13 @@ def _write_csv_assets(asset_dir, payload):
                 ])
             mc_rows.append(row)
         mc_name = "precision_monte_carlo.csv"
-        _write_csv(asset_dir / mc_name, mc_headers, mc_rows)
+        mc_header_rows = _header_rows(mc_headers, x_label)
+        _write_csv(asset_dir / mc_name, mc_header_rows, mc_rows)
         entries.append({
             "title": "Precision Monte Carlo Data",
             "filename": mc_name,
             "headers": mc_headers,
+            "header_rows": mc_header_rows,
             "rows": mc_rows,
             "column_help": _describe_columns(mc_headers, x_label),
         })
@@ -160,11 +266,13 @@ def _write_csv_assets(asset_dir, payload):
                 row.extend([series["mean"][idx], series["std"][idx]])
             accuracy_rows.append(row)
         accuracy_name = "accuracy_mle_tracking.csv"
-        _write_csv(asset_dir / accuracy_name, accuracy_headers, accuracy_rows)
+        accuracy_header_rows = _header_rows(accuracy_headers, x_label)
+        _write_csv(asset_dir / accuracy_name, accuracy_header_rows, accuracy_rows)
         entries.append({
             "title": "MLE Accuracy Data",
             "filename": accuracy_name,
             "headers": accuracy_headers,
+            "header_rows": accuracy_header_rows,
             "rows": accuracy_rows,
             "column_help": _describe_columns(accuracy_headers, x_label),
         })
@@ -187,11 +295,13 @@ def _write_csv_assets(asset_dir, payload):
                 row.append(gate[idx])
             rows.append(row)
         filename = f"gates_{frame_idx:02d}_{frame_slug}.csv"
-        _write_csv(asset_dir / filename, headers, rows)
+        header_rows = _header_rows(headers, x_label)
+        _write_csv(asset_dir / filename, header_rows, rows)
         entries.append({
             "title": f"Diagnostics Gate Data: {frame['label']}",
             "filename": filename,
             "headers": headers,
+            "header_rows": header_rows,
             "rows": rows,
             "column_help": _describe_columns(headers, x_label),
         })
@@ -203,33 +313,55 @@ def _write_csv_assets(asset_dir, payload):
             opt_headers = list(options.keys())
             opt_rows = [[options.get(header) for header in opt_headers]]
             opt_name = "optimisation_options.csv"
-            _write_csv(asset_dir / opt_name, opt_headers, opt_rows)
+            opt_header_rows = _header_rows(opt_headers, x_label)
+            _write_csv(asset_dir / opt_name, opt_header_rows, opt_rows)
             entries.append({
                 "title": "Optimisation Options",
                 "filename": opt_name,
                 "headers": opt_headers,
+                "header_rows": opt_header_rows,
                 "rows": opt_rows,
                 "column_help": _describe_columns(opt_headers, x_label),
             })
 
         objective_history = optimisation.get("objective_history", [])
         min_f_history = optimisation.get("min_f_history", [])
-        if objective_history or min_f_history:
-            history_headers = ["iteration", "objective", "minimum_f"]
+        min_eff_history = optimisation.get("min_eff_history", [])
+        auc_eff_history = optimisation.get("auc_eff_history", [])
+        throughput_history = optimisation.get("throughput_history", [])
+        throughput_auc_history = optimisation.get("throughput_auc_history", [])
+        gate_count_history = optimisation.get("gate_count_history", [])
+        if objective_history or min_f_history or min_eff_history or auc_eff_history or throughput_history or throughput_auc_history or gate_count_history:
+            history_headers = ["iteration", "objective", "minimum_f", "minimum_f_inv2", "auc_f_inv2", "throughput", "throughput_auc", "gate_count"]
             history_rows = []
-            n_rows = max(len(objective_history), len(min_f_history))
+            n_rows = max(
+                len(objective_history),
+                len(min_f_history),
+                len(min_eff_history),
+                len(auc_eff_history),
+                len(throughput_history),
+                len(throughput_auc_history),
+                len(gate_count_history),
+            )
             for idx in range(n_rows):
                 history_rows.append([
                     idx,
                     objective_history[idx] if idx < len(objective_history) else np.nan,
                     min_f_history[idx] if idx < len(min_f_history) else np.nan,
+                    min_eff_history[idx] if idx < len(min_eff_history) else np.nan,
+                    auc_eff_history[idx] if idx < len(auc_eff_history) else np.nan,
+                    throughput_history[idx] if idx < len(throughput_history) else np.nan,
+                    throughput_auc_history[idx] if idx < len(throughput_auc_history) else np.nan,
+                    gate_count_history[idx] if idx < len(gate_count_history) else np.nan,
                 ])
             history_name = "optimisation_history.csv"
-            _write_csv(asset_dir / history_name, history_headers, history_rows)
+            history_header_rows = _header_rows(history_headers, x_label)
+            _write_csv(asset_dir / history_name, history_header_rows, history_rows)
             entries.append({
                 "title": "Optimisation History",
                 "filename": history_name,
                 "headers": history_headers,
+                "header_rows": history_header_rows,
                 "rows": history_rows,
                 "column_help": _describe_columns(history_headers, x_label),
             })
@@ -249,11 +381,13 @@ def _write_csv_assets(asset_dir, payload):
                     ", ".join(f"{float(edge):.6g}" for edge in edges),
                 ])
             snapshot_name = "optimisation_snapshots.csv"
-            _write_csv(asset_dir / snapshot_name, snapshot_headers, snapshot_rows)
+            snapshot_header_rows = _header_rows(snapshot_headers, x_label)
+            _write_csv(asset_dir / snapshot_name, snapshot_header_rows, snapshot_rows)
             entries.append({
                 "title": "Optimisation Snapshot Summary",
                 "filename": snapshot_name,
                 "headers": snapshot_headers,
+                "header_rows": snapshot_header_rows,
                 "rows": snapshot_rows,
                 "column_help": _describe_columns(snapshot_headers, x_label),
             })
@@ -433,23 +567,57 @@ def _save_diagnostics_svg(path, frame, theme_name):
     plt.close(fig)
 
 
-def _save_optimization_history_svg(path, payload, theme_name, metric_key, title, y_label):
+def _save_optimization_history_svg(path, payload, theme_name):
     optimisation = payload.get("optimization", {})
-    x_vals = np.arange(len(optimisation.get(metric_key, [])), dtype=float)
-    y_vals = np.asarray(optimisation.get(metric_key, []), dtype=float)
-    if y_vals.size == 0:
+    objective = np.asarray(optimisation.get("objective_history", []), dtype=float)
+    min_f = np.asarray(optimisation.get("min_f_history", []), dtype=float)
+    min_eff = np.asarray(optimisation.get("min_eff_history", []), dtype=float)
+    auc_eff = np.asarray(optimisation.get("auc_eff_history", []), dtype=float)
+    throughput = np.asarray(optimisation.get("throughput_history", []), dtype=float)
+    throughput_auc = np.asarray(optimisation.get("throughput_auc_history", []), dtype=float)
+    gate_count = np.asarray(optimisation.get("gate_count_history", []), dtype=float)
+    n = max(objective.size, min_f.size, min_eff.size, auc_eff.size, throughput.size, throughput_auc.size, gate_count.size)
+    if n == 0:
         return False
+    x_vals = np.arange(n, dtype=float)
 
     palette = get_palette(theme_name)
-    fig, ax = plt.subplots(figsize=(10.8, 4.6), constrained_layout=False)
+    fig, ax = plt.subplots(figsize=(11.0, 5.8), constrained_layout=False)
     _style_axes(fig, ax, palette)
-    color = palette["series"][0] if metric_key == "objective_history" else palette["series"][1]
-    ax.plot(x_vals, y_vals, color=color, linewidth=2.0, marker="o", markersize=4)
+    ax.set_yscale("log")
+    ax2 = ax.twinx()
+    _style_axes(fig, ax2, palette)
+    ax2.set_yscale("log")
+    ax2.grid(False)
+    if objective.size:
+        ax.plot(x_vals[: objective.size], objective, color=palette["series"][0], linewidth=2.0, marker="o", markersize=4, label="Objective")
+    if min_f.size:
+        ax2.plot(x_vals[: min_f.size], min_f, color=palette["series"][1], linewidth=1.8, marker="o", markersize=3.5, label="Min F")
+    if min_eff.size:
+        ax2.plot(x_vals[: min_eff.size], min_eff, color=palette["series"][2], linewidth=1.8, marker="o", markersize=3.5, label="Min F^-2")
+    if auc_eff.size:
+        ax2.plot(x_vals[: auc_eff.size], auc_eff, color=palette["series"][3], linewidth=1.8, marker="o", markersize=3.5, label="AUC F^-2")
+    if throughput.size:
+        ax2.plot(x_vals[: throughput.size], throughput, color=palette["series"][4], linewidth=1.8, marker="o", markersize=3.5, label="Throughput")
+    if throughput_auc.size:
+        ax2.plot(x_vals[: throughput_auc.size], throughput_auc, color=palette["series"][5], linewidth=1.8, marker="o", markersize=3.5, label="Throughput AUC")
+    if gate_count.size and np.nanmax(gate_count) != np.nanmin(gate_count):
+        ax2.plot(x_vals[: gate_count.size], gate_count, color=palette["series"][6], linewidth=1.8, marker="o", markersize=3.5, label="Gate count")
     ax.set_xlabel("Iteration")
-    ax.set_ylabel(y_label)
-    ax.set_title(title, color=palette["text"], fontsize=12)
+    ax.set_ylabel("Objective")
+    ax2.set_ylabel("F / F^-2 / Throughput / Gates")
+    ax.set_title("Optimisation History", color=palette["text"], fontsize=12)
+    handles, labels = [], []
+    for axes in (ax, ax2):
+        h, l = axes.get_legend_handles_labels()
+        handles.extend(h)
+        labels.extend(l)
+    if handles:
+        legend = ax.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=min(6, len(handles)), frameon=False)
+        for text in legend.get_texts():
+            text.set_color(palette["text"])
     ax.margins(x=0.03, y=0.08)
-    fig.subplots_adjust(left=0.1, right=0.98, top=0.88, bottom=0.2)
+    fig.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.28)
     fig.savefig(path, format="svg", facecolor=fig.get_facecolor())
     plt.close(fig)
     return True
@@ -527,47 +695,31 @@ def _write_svg_assets(asset_dir, payload):
 
     optimisation = payload.get("optimization")
     if optimisation:
-        objective_written = False
-        bestf_written = False
+        history_written = False
         for theme_name in ("dark", "light"):
-            objective_name = f"optimisation_objective_{theme_name}.svg"
-            bestf_name = f"optimisation_min_f_{theme_name}.svg"
-            objective_written = _save_optimization_history_svg(
-                asset_dir / objective_name,
+            history_name = f"optimisation_history_{theme_name}.svg"
+            history_written = _save_optimization_history_svg(
+                asset_dir / history_name,
                 payload,
                 theme_name,
-                "objective_history",
-                "Optimisation Objective History",
-                "Objective",
-            ) or objective_written
-            bestf_written = _save_optimization_history_svg(
-                asset_dir / bestf_name,
-                payload,
-                theme_name,
-                "min_f_history",
-                "Optimisation Minimum F History",
-                "Minimum F",
-            ) or bestf_written
-        if objective_written:
+            ) or history_written
+        if history_written:
             images.append({
                 "group": "optimisation",
-                "title": "Optimisation Objective History",
-                "dark": "optimisation_objective_dark.svg",
-                "light": "optimisation_objective_light.svg",
-            })
-        if bestf_written:
-            images.append({
-                "group": "optimisation",
-                "title": "Optimisation Minimum F History",
-                "dark": "optimisation_min_f_dark.svg",
-                "light": "optimisation_min_f_light.svg",
+                "title": "Optimisation History",
+                "dark": "optimisation_history_dark.svg",
+                "light": "optimisation_history_light.svg",
             })
 
     return images + diagnostics_entries
 
 
 def _table_to_html(entry, asset_dir_name):
-    headers = "".join(f"<th>{html.escape(str(value))}</th>" for value in entry["headers"])
+    header_rows = entry.get("header_rows") or [entry["headers"]]
+    headers = "".join(
+        "<tr>" + "".join(f"<th>{html.escape(str(value))}</th>" for value in row) + "</tr>"
+        for row in header_rows
+    )
     body_rows = []
     for row in entry["rows"]:
         cells = "".join(f"<td>{html.escape(_format_cell(value))}</td>" for value in row)
@@ -579,7 +731,7 @@ def _table_to_html(entry, asset_dir_name):
         f"<div class='section-head'><h3>{html.escape(entry['title'])}</h3>"
         f"<a href='{asset_dir_name}/{html.escape(entry['filename'])}' download>Download CSV</a></div>"
         f"<div class='column-help'><strong>Column guide</strong><ul>{help_items}</ul></div>"
-        f"<div class='table-wrap'><table><thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table></div>"
+        f"<div class='table-wrap'><table><thead>{headers}</thead><tbody>{body}</tbody></table></div>"
         f"</section>"
     )
 
@@ -603,6 +755,14 @@ def _describe_column(header, x_label):
         return "objective: optimisation objective value recorded for that iteration or retained state."
     if header == "minimum_f":
         return "minimum_f: minimum F value across the swept x-axis for that optimisation state."
+    if header == "minimum_f_inv2":
+        return "minimum_f_inv2: minimum photon efficiency, computed as F^-2, across the swept x-axis for that optimisation state."
+    if header == "auc_f_inv2":
+        return "auc_f_inv2: area under the F^-2 curve across the swept x-axis for that optimisation state."
+    if header == "throughput":
+        return "throughput: Fisher throughput summary tracked for that optimisation iteration."
+    if header == "throughput_auc":
+        return "throughput_auc: area under the Fisher-throughput curve across the swept x-axis for that optimisation iteration."
     if header == "gate_count":
         return "gate_count: number of detection gates used by that retained optimisation state."
     if header == "label":
