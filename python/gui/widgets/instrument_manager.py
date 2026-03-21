@@ -210,7 +210,7 @@ class InstrumentManager(QDialog):
         loaded = self.store.load_profile(name, sanitize=True)
         inspection = loaded["inspection"]
         if not inspection.get("has_issues"):
-            return loaded["config"], False
+            return loaded["config"], False, name
 
         msg = QMessageBox(self)
         msg.setWindowTitle("Profile Compatibility")
@@ -227,14 +227,14 @@ class InstrumentManager(QDialog):
         msg.exec()
         clicked = msg.clickedButton()
         if clicked == apply_btn:
-            return loaded["config"], False
+            return loaded["config"], False, name
         if clicked == repair_btn:
             repaired = self.store.repair_profile(name)
             repaired_loaded = self.store.load_profile(repaired["name"], sanitize=True)
             self.refresh_list()
             self._select_profile_by_name(repaired["name"])
-            return repaired_loaded["config"], True
-        return None, False
+            return repaired_loaded["config"], True, repaired["name"]
+        return None, False, name
 
     def _select_profile_by_name(self, name):
         for idx in range(self.list_widget.count()):
@@ -260,16 +260,20 @@ class InstrumentManager(QDialog):
             QMessageBox.warning(self, "Warning", "Please select a profile first.")
             return
         try:
-            cfg, repaired = self._resolve_profile_application(name)
+            cfg, repaired, applied_name = self._resolve_profile_application(name)
         except Exception as exc:
             QMessageBox.warning(self, "Apply Profile", str(exc))
             return
         if cfg is None:
             return
+        if repaired:
+            # Persist once more explicitly through the normal save path so the
+            # applied state is guaranteed to match the on-disk repaired JSON.
+            self.store.save_profile(applied_name, cfg, description="")
         self.applied_config = copy.deepcopy(cfg)
-        self.applied_config.active_instrument_profile = name
+        self.applied_config.active_instrument_profile = applied_name
         suffix = " after repair" if repaired else ""
-        QMessageBox.information(self, "Applied", f"Profile '{name}' applied{suffix}.")
+        QMessageBox.information(self, "Applied", f"Profile '{applied_name}' applied{suffix}.")
         self.accept()
 
     def rename_selected(self):

@@ -1,29 +1,88 @@
-# --- Legacy & Dependencies ---
-legacy/SPC-handbook-11ed-07.pdf
-legacy/bfmatlab/bioformats_package.jar
-.agent/
-AppProperties/settings.mat
-
-# --- Data & Temp Files ---
-*.mat
-*.sdt
-*.csv
+# --- Python / Development ---
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 .pytest_cache/
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.env
+.venv
+venv/
+ENV/
+
+# --- Web / Frontend (Vite/Node/JS) ---
 node_modules/
 dist/
+dist-ssr/
+*.local
+.eslintcache
+.stylelintcache
+.vite-inspect
+.next/
+out/
+build/
 
-# --- Deep Learning Weights (Files > 100MB) ---
-# Note: SAM weights currently tracked via LFS; other pth files will be ignored.
+# --- IDE / Editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# --- Deep Learning / Large Weights ---
+# (Usually handled via LFS, but explicitly ignored if not)
 *.pth
 *.pt
 *.onnx
 *.h5
 *.ckpt
 *.safetensors
+*.bin
 
-# --- MATLAB Large Data ---
-*.sim
+# --- Data & Recordings ---
+*.sdt
+*.mat
+*.csv
+*.nc
 /data/*
 !/data/.gitkeep
+python/data/sessions/*
+!python/data/sessions/.gitkeep
+
+# --- Legacy / MATLAB Specifics ---
+legacy/SPC-handbook-11ed-07.pdf
+legacy/bfmatlab/bioformats_package.jar
+AppProperties/settings.mat
+*.mlapp
+*.slx
+*.mdl
+*.mex*
+*.p
+*.sim
+*.fig
+
+# --- Project Specific ---
+.agent/
+AppProperties/

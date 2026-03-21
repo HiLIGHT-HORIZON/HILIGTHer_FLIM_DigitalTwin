@@ -3,9 +3,6 @@ import html
 import re
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -49,6 +46,13 @@ def slugify(text):
 
 def get_palette(theme_name):
     return DARK_PALETTE if str(theme_name).lower() == "dark" else LIGHT_PALETTE
+
+
+def _get_matplotlib_pyplot():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    return plt
 
 
 def write_precision_report_package(file_path, payload):
@@ -396,6 +400,7 @@ def _write_csv_assets(asset_dir, payload):
 
 
 def _save_precision_svg(path, payload, theme_name):
+    plt = _get_matplotlib_pyplot()
     palette = get_palette(theme_name)
     metric = payload["precision_display"]["metric"]
     log_x = bool(payload["precision_display"]["log_x"])
@@ -468,6 +473,7 @@ def _save_precision_svg(path, payload, theme_name):
 
 
 def _save_accuracy_svg(path, payload, theme_name):
+    plt = _get_matplotlib_pyplot()
     accuracy = payload.get("accuracy", {})
     series_list = accuracy.get("series", [])
     if not series_list:
@@ -529,6 +535,7 @@ def _save_accuracy_svg(path, payload, theme_name):
 
 
 def _save_diagnostics_svg(path, frame, theme_name):
+    plt = _get_matplotlib_pyplot()
     palette = get_palette(theme_name)
     fig, ax = plt.subplots(figsize=(10.8, 5.2), constrained_layout=False)
     _style_axes(fig, ax, palette)
@@ -568,6 +575,7 @@ def _save_diagnostics_svg(path, frame, theme_name):
 
 
 def _save_optimization_history_svg(path, payload, theme_name):
+    plt = _get_matplotlib_pyplot()
     optimisation = payload.get("optimization", {})
     objective = np.asarray(optimisation.get("objective_history", []), dtype=float)
     min_f = np.asarray(optimisation.get("min_f_history", []), dtype=float)

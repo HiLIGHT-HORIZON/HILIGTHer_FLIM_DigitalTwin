@@ -1,6 +1,7 @@
 import sys
 import os
 import subprocess
+import importlib
 import qdarkstyle
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon, QPixmap
@@ -12,6 +13,29 @@ try:
 except ImportError:
     pass # Handle in dependency check if missing
 
+REQUIRED_DESKTOP_MODULES = [
+    "PyQt6",
+    "PyQt6.QtWebEngineWidgets",
+    "pyqtgraph",
+    "qdarkstyle",
+    "numpy",
+    "scipy",
+    "pydantic",
+    "numba",
+    "h5py",
+]
+
+
+def _missing_desktop_modules():
+    missing = []
+    for module_name in REQUIRED_DESKTOP_MODULES:
+        try:
+            importlib.import_module(module_name)
+        except Exception as exc:
+            missing.append((module_name, str(exc)))
+    return missing
+
+
 def _stream_dependency_update(repo_root, splash):
     req_path = os.path.join(repo_root, "python", "desktop_requirements.txt")
     if not os.path.exists(req_path):
@@ -20,10 +44,28 @@ def _stream_dependency_update(repo_root, splash):
         splash.log(message)
         return
 
+    missing_before = _missing_desktop_modules()
+    if not missing_before:
+        message = "Desktop dependencies already available locally; skipping online update."
+        print(message, flush=True)
+        splash.log(message)
+        return
+
     commands = [
         ("Checking pip version...", [sys.executable, "-m", "pip", "--version"]),
-        ("Updating pip...", [sys.executable, "-m", "pip", "install", "--upgrade", "pip"]),
-        ("Updating desktop dependencies...", [sys.executable, "-m", "pip", "install", "--upgrade", "-r", req_path]),
+        (
+            "Installing missing desktop dependencies...",
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--upgrade",
+                "-r",
+                req_path,
+            ],
+        ),
     ]
 
     for title, command in commands:
@@ -48,7 +90,15 @@ def _stream_dependency_update(repo_root, splash):
             if process.stdout is not None:
                 process.stdout.close()
         if process.returncode != 0:
-            raise RuntimeError(f"Dependency command failed: {' '.join(command)}")
+            break
+
+    missing_after = _missing_desktop_modules()
+    if missing_after:
+        if missing_before == missing_after:
+            details = "; ".join(f"{name}: {err}" for name, err in missing_after)
+            raise RuntimeError(f"Required desktop modules are still unavailable: {details}")
+        details = "; ".join(f"{name}: {err}" for name, err in missing_after)
+        raise RuntimeError(f"Desktop dependency install did not complete successfully: {details}")
 
 # --- NEW: Splash Screen Integration ---
 def main():

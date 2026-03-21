@@ -1,11 +1,20 @@
 import numpy as np
 import copy
+import os
 from math import erfc, sqrt
 from scipy.interpolate import interp1d
 from scipy.optimize import minimize, fmin, minimize_scalar
 from scipy.signal import convolve
 from scipy.special import erf
 from typing import Optional, Tuple, List, Callable, Dict, Any
+from .event_driven import (
+    ChannelConfig,
+    EventDrivenSimulator,
+    OpticalModel,
+    ResourceGroupConfig,
+    SimulationConfig,
+    TabulatedOpticalModel,
+)
 from .models import PhysicsConfig
 
 try:
@@ -214,10 +223,376 @@ class TwinEngine:
             return 1.0 / max(int(n_gates), 1)
         return 1.0
 
+    def _simulation_mode(self) -> str:
+        preference = self._simulation_mode_preference()
+        explicit_mode = str(getattr(self.config, "simulation_mode", "ideal_poisson")).lower()
+        if preference == "event_driven":
+            return "event_driven"
+        if preference == "ideal_poisson":
+            return "ideal_poisson"
+        if explicit_mode == "event_driven":
+            return "event_driven"
+        required, _reason = self._requires_event_driven()
+        return "event_driven" if required else "ideal_poisson"
+
+    def _is_event_driven_mode(self) -> bool:
+        return self._simulation_mode() == "event_driven"
+
+    def _simulation_mode_preference(self) -> str:
+        preference = str(getattr(self.config, "simulation_mode_preference", "auto")).lower()
+        if preference not in {"auto", "ideal_poisson", "event_driven"}:
+            return "auto"
+        return preference
+
+    def _effective_event_capacity(self, cfg: Optional[PhysicsConfig] = None) -> Optional[int]:
+        cfg = cfg or self.config
+        if not bool(getattr(cfg, "b_multihit_mode", True)):
+            return 1
+        capacity_cfg = getattr(cfg, "event_multihit_capacity", None)
+        if capacity_cfg is None:
+            return None
+        try:
+            capacity = int(capacity_cfg)
+        except (TypeError, ValueError):
+            return None
+        return capacity if capacity > 0 else None
+
+    def _has_detector_event_effects(self, cfg: Optional[PhysicsConfig] = None) -> bool:
+        cfg = cfg or self.config
+        if float(getattr(cfg, "detector_deadtime", 0.0)) > 0.0:
+            return True
+        capacity = self._effective_event_capacity(cfg)
+        return capacity is not None and capacity < 1_000_000
+
+    def _detector_transfer_expected_detected(self, expected_detected: float, cfg: Optional[PhysicsConfig] = None) -> float:
+        cfg = cfg or self.config
+        expected_detected = float(max(expected_detected, 0.0))
+        if expected_detected <= 0.0:
+            return 0.0
+
+        dwell_s = float(max(getattr(cfg, "event_pixel_dwell_time_s", 1e-3), 1e-12))
+        period_ns = float(max(getattr(cfg, "period", 0.0), 1e-12))
+        n_periods = max(int(np.ceil((dwell_s * 1e9) / period_ns)), 1)
+
+        capacity = self._effective_event_capacity(cfg)
+        after_capacity = expected_detected
+        if capacity is not None:
+            mu = expected_detected / max(float(n_periods), 1.0)
+            if capacity <= 1:
+                accepted_per_period = 1.0 - np.exp(-mu)
+            else:
+                accepted_per_period = 0.0
+                poisson_prev = float(np.exp(-mu))
+                cumulative = poisson_prev
+                accepted_per_period += 0.0 * poisson_prev
+                for k in range(1, int(capacity)):
+                    poisson_prev *= mu / float(k)
+                    cumulative += poisson_prev
+                    accepted_per_period += float(k) * poisson_prev
+                accepted_per_period += float(capacity) * max(1.0 - cumulative, 0.0)
+            after_capacity = float(n_periods) * accepted_per_period
+
+        deadtime_ns = float(max(getattr(cfg, "detector_deadtime", 0.0), 0.0))
+        if deadtime_ns <= 0.0:
+            return float(min(after_capacity, expected_detected))
+
+        deadtime_s = deadtime_ns * 1e-9
+        rate_in = after_capacity / dwell_s
+        rate_out = rate_in / max(1.0 + rate_in * deadtime_s, 1.0)
+        return float(min(rate_out * dwell_s, expected_detected))
+
+    def _effective_detected_pdf(
+        self,
+        pdf: np.ndarray,
+        n_photons: float,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> np.ndarray:
+        cfg = cfg or self.config
+        pdf = np.asarray(pdf, dtype=float)
+        pdf = np.maximum(pdf, 0.0)
+        total = float(np.sum(pdf))
+        if total <= 0.0:
+            return np.array(pdf, copy=True)
+        pdf = pdf / total
+
+        if self._is_event_driven_mode() or not self._has_detector_event_effects(cfg):
+            return np.array(pdf, copy=True)
+
+        dwell_s = float(max(getattr(cfg, "event_pixel_dwell_time_s", 1e-3), 1e-12))
+        period_ns = float(max(getattr(cfg, "period", 0.0), 1e-12))
+        n_periods = max((dwell_s * 1e9) / period_ns, 1.0)
+        photons_per_period = float(max(n_photons, 0.0)) / n_periods
+        raw_period_counts = photons_per_period * pdf
+        detected_counts = np.array(raw_period_counts, copy=True)
+
+        capacity = self._effective_event_capacity(cfg)
+        if capacity == 1:
+            cumulative_before = np.concatenate(([0.0], np.cumsum(raw_period_counts[:-1])))
+            detected_counts = np.exp(-cumulative_before) * (1.0 - np.exp(-raw_period_counts))
+        else:
+            deadtime_ns = float(max(getattr(cfg, "detector_deadtime", 0.0), 0.0))
+            dt_ns = float(self.time_vector[1] - self.time_vector[0]) if len(self.time_vector) > 1 else float(period_ns)
+            dead_bins = int(np.ceil(deadtime_ns / max(dt_ns, 1e-12)))
+            if dead_bins > 0:
+                causal_detected = np.zeros_like(raw_period_counts)
+                for idx in range(raw_period_counts.size):
+                    start_idx = max(0, idx - dead_bins)
+                    blocked = float(np.sum(causal_detected[start_idx:idx]))
+                    availability = max(1.0 - min(blocked, 1.0), 0.0)
+                    causal_detected[idx] = raw_period_counts[idx] * availability
+                detected_counts = causal_detected
+
+            if capacity is not None:
+                per_period_target = min(
+                    self._detector_transfer_expected_detected(photons_per_period, cfg),
+                    float(capacity),
+                )
+                total_detected = float(np.sum(detected_counts))
+                if total_detected > 0.0 and total_detected > per_period_target:
+                    detected_counts *= per_period_target / total_detected
+
+        detected_total = float(np.sum(detected_counts))
+        if detected_total <= 0.0:
+            return np.array(pdf, copy=True)
+        return detected_counts / detected_total
+
+    def _apply_detector_transfer_to_probabilities(
+        self,
+        gate_probabilities: np.ndarray,
+        n_photons: float,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> np.ndarray:
+        gate_probabilities = np.asarray(gate_probabilities, dtype=float)
+        cfg = cfg or self.config
+        if not self._has_detector_event_effects(cfg):
+            return np.array(gate_probabilities, copy=True)
+
+        prob_sum = float(np.sum(gate_probabilities))
+        if prob_sum <= 0.0:
+            return np.array(gate_probabilities, copy=True)
+
+        expected_detected = float(max(n_photons, 0.0)) * prob_sum
+        transferred_detected = self._detector_transfer_expected_detected(expected_detected, cfg)
+        scale = transferred_detected / max(expected_detected, 1e-12)
+        return np.asarray(gate_probabilities, dtype=float) * float(np.clip(scale, 0.0, 1.0))
+
+    def _apply_detector_transfer_to_count_vector(
+        self,
+        counts: np.ndarray,
+        rng: np.random.Generator,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> np.ndarray:
+        counts = np.asarray(counts, dtype=float)
+        cfg = cfg or self.config
+        if not self._has_detector_event_effects(cfg):
+            return np.array(counts, copy=True)
+
+        total_counts = float(np.sum(counts))
+        if total_counts <= 0.0:
+            return np.array(counts, copy=True)
+
+        transferred_detected = self._detector_transfer_expected_detected(total_counts, cfg)
+        scale = float(np.clip(transferred_detected / max(total_counts, 1e-12), 0.0, 1.0))
+        return rng.binomial(np.rint(np.maximum(counts, 0.0)).astype(int), scale).astype(float)
+
+    def _requires_event_driven(self) -> Tuple[bool, str]:
+        cfg = self.config
+        if float(getattr(cfg, "detector_deadtime", 0.0)) > 0.0:
+            return True, "detector deadtime is enabled"
+
+        capacity = self._effective_event_capacity(cfg)
+        if capacity is not None and capacity < 1_000_000:
+            return True, "finite per-period detector capacity is enabled"
+
+        return False, "legacy ideal-Poisson mode is sufficient"
+
+    def get_simulation_mode_status(self) -> dict:
+        preference = self._simulation_mode_preference()
+        effective = self._simulation_mode()
+        required, reason = self._requires_event_driven()
+        approximated = bool(self._has_detector_event_effects(self.config)) and effective == "ideal_poisson"
+        forced = preference == "event_driven"
+        return {
+            "preference": preference,
+            "effective_mode": effective,
+            "requires_event_driven": required,
+            "approximated_event_effects": approximated,
+            "forced_event_driven": forced,
+            "reason": reason,
+        }
+
+    def _build_tabulated_optical_model(
+        self,
+        tau: Optional[float],
+        expected_count_per_frame: float,
+        irf_cached: Optional[np.ndarray] = None,
+    ) -> OpticalModel:
+        """
+        Adapter from the existing latent PDF backend to the OpticalModel interface.
+
+        This reuses the same dt_pdf / excitation backend as the ideal simulator,
+        so the event-driven backend changes only the detection model.
+        """
+        t = np.asarray(self.time_vector, dtype=float)
+        pdf = self.dt_pdf(t, tau=tau, irf=irf_cached) if tau is not None else self.dt_pdf(t, irf=irf_cached)
+        return TabulatedOpticalModel(
+            time_vector=t,
+            pdf=np.asarray(pdf, dtype=float),
+            lambda_per_frame=float(max(expected_count_per_frame, 0.0)),
+            period_ns=float(max(getattr(self.config, "period", 0.0), 0.0)),
+            frame_duration_ns=float(max(getattr(self.config, "event_pixel_dwell_time_s", 1e-3), 1e-12) * 1e9),
+        )
+
+    def _build_event_driven_resource_groups(self, n_channels: int) -> List[ResourceGroupConfig]:
+        cfg = self.config
+        deadtime_ns = float(max(getattr(cfg, "detector_deadtime", 0.0), 0.0))
+        deadtime_mode = "none" if deadtime_ns <= 0.0 else "nonparalyzable"
+        capacity = self._effective_event_capacity(cfg)
+
+        return [
+            ResourceGroupConfig(
+                name="shared",
+                deadtime_mode=deadtime_mode,
+                deadtime_ns=deadtime_ns,
+                capacity=capacity,
+                period_ns=float(max(getattr(cfg, "period", 0.0), 0.0)),
+            )
+        ]
+
+    def _build_event_driven_channels(self, gate_profiles: np.ndarray, channel_indices: Optional[List[int]] = None) -> List[ChannelConfig]:
+        cfg = self.config
+        gate_profiles = np.asarray(gate_profiles, dtype=float)
+        indices = channel_indices if channel_indices is not None else list(range(gate_profiles.shape[0]))
+        t = np.asarray(self.time_vector, dtype=float)
+        channels: List[ChannelConfig] = []
+        for order, gate_idx in enumerate(indices):
+            channels.append(
+                ChannelConfig(
+                    name=f"gate_{gate_idx}",
+                    acceptance_times=t,
+                    acceptance_values=np.asarray(gate_profiles[gate_idx], dtype=float),
+                    resource_group="shared",
+                    priority=order,
+                    period_ns=float(max(getattr(cfg, "period", 0.0), 0.0)),
+                )
+            )
+        return channels
+
+    def _simulate_event_driven_frames(
+        self,
+        tau: Optional[float],
+        expected_count_per_frame: float,
+        n_frames: int,
+        irf_cached: Optional[np.ndarray] = None,
+        channel_indices: Optional[List[int]] = None,
+        return_timestamps: Optional[bool] = None,
+    ):
+        self.distill_gates()
+        gate_profiles = np.asarray(self.gate_shapes, dtype=float)
+        optical_model = self._build_tabulated_optical_model(
+            tau=tau,
+            expected_count_per_frame=expected_count_per_frame,
+            irf_cached=irf_cached,
+        )
+        channels = self._build_event_driven_channels(gate_profiles, channel_indices=channel_indices)
+        resource_groups = self._build_event_driven_resource_groups(len(channels))
+        overlap_effect = str(getattr(self.config, "gate_overlap_effect", "exclusive")).lower()
+        routing_mode = "exclusive" if overlap_effect == "exclusive" else "nonexclusive"
+        arbitration_rule = "random" if overlap_effect == "exclusive" else "all_if_independent"
+        requested_workers = int(max(getattr(self.config, "event_cpu_workers", 0), 0))
+        cpu_workers = 1
+        if requested_workers == 0:
+            cpu_workers = max(min((os.cpu_count() or 1) - 1, int(max(n_frames, 1))), 1)
+        else:
+            cpu_workers = max(min(requested_workers, int(max(n_frames, 1))), 1)
+        sim_cfg = SimulationConfig(
+            optical_model=optical_model,
+            channels=channels,
+            resource_groups=resource_groups,
+            routing_mode=routing_mode,
+            arbitration_rule=arbitration_rule,
+            n_frames=int(max(n_frames, 0)),
+            return_timestamps=False,
+            cpu_workers=cpu_workers,
+        )
+        return EventDrivenSimulator(sim_cfg).run()
+
+    def _simulate_event_driven_frames_with_background(
+        self,
+        tau: Optional[float],
+        signal_count_per_frame: float,
+        background_density: float,
+        n_frames: int,
+        irf_cached: Optional[np.ndarray] = None,
+    ):
+        """
+        Event-driven helper for the legacy synthetic-image background model.
+
+        The historical image simulators express background as a uniform
+        per-time-bin density multiplied by the integrated gate support.
+        Here that is converted into the equivalent total background count and
+        folded into the shared dt_pdf latent model via `background_level`.
+        """
+        signal_count = float(max(signal_count_per_frame, 0.0))
+        background_density = float(max(background_density, 0.0))
+        background_total = background_density * float(np.sum(np.asarray(self.gate_shapes, dtype=float)))
+        total_expected = signal_count + background_total
+        if total_expected <= 0.0:
+            return self._simulate_event_driven_frames(
+                tau=tau,
+                expected_count_per_frame=0.0,
+                n_frames=n_frames,
+                irf_cached=irf_cached,
+            )
+
+        original_background = float(getattr(self.config, "background_level", 0.0))
+        try:
+            self.config.background_level = 0.0 if signal_count <= 0.0 else background_total / max(signal_count, 1e-12)
+            return self._simulate_event_driven_frames(
+                tau=tau,
+                expected_count_per_frame=total_expected,
+                n_frames=n_frames,
+                irf_cached=irf_cached,
+            )
+        finally:
+            self.config.background_level = original_background
+
     def _should_normalize_gate_probabilities(self, photon_basis_mode: Optional[str] = None) -> bool:
         if photon_basis_mode is not None:
             return str(photon_basis_mode).lower() == "collected"
         return not self._use_raw_gate_statistics()
+
+    def _include_lost_category(self, photon_basis_mode: Optional[str] = None) -> bool:
+        if photon_basis_mode is None:
+            return False
+        return str(photon_basis_mode).lower() in {"period", "all"}
+
+    def _acquisition_period_fraction(self, cfg: Optional[PhysicsConfig] = None) -> float:
+        cfg = cfg or self.config
+        if bool(getattr(cfg, "b_decay_wrapping", True)):
+            return 1.0
+        period = max(float(getattr(cfg, "period", 0.0)), 1e-12)
+        model = str(getattr(cfg, "decay_model", "exponential")).lower()
+        if model == "stretched":
+            tau = max(float((getattr(cfg, "taus", [1.0]) or [1.0])[0]), 1e-12)
+            beta = max(float(getattr(cfg, "beta", 1.0)), 1e-12)
+            return float(np.clip(1.0 - np.exp(-((period / tau) ** beta)), 0.0, 1.0))
+        taus = list(getattr(cfg, "taus", []) or [1.0])
+        amps = list(getattr(cfg, "amplitudes", []) or [1.0])
+        usable = min(len(taus), len(amps))
+        if usable <= 0:
+            tau = max(float(taus[0] if taus else 1.0), 1e-12)
+            return float(np.clip(1.0 - np.exp(-(period / tau)), 0.0, 1.0))
+        numer = 0.0
+        denom = 0.0
+        for idx in range(usable):
+            amp = max(float(amps[idx]), 0.0)
+            tau = max(float(taus[idx]), 1e-12)
+            numer += amp * (1.0 - np.exp(-(period / tau)))
+            denom += amp
+        if denom <= 0.0:
+            return 1.0
+        return float(np.clip(numer / denom, 0.0, 1.0))
 
     def _exclusive_overlap_weights(self, values: np.ndarray, axis: int = 0) -> np.ndarray:
         values = np.asarray(values, dtype=float)
@@ -472,7 +847,9 @@ class TwinEngine:
         original_param_value = self._get_cfg_param(cfg.f_x_param)
         for i, param_val in enumerate(self.grid_tau_axis):
             self._set_cfg_param(cfg.f_x_param, param_val)
-            p_vec = stat_gate_shapes @ self.dt_pdf(t)
+            pdf = self.dt_pdf(t)
+            pdf = self._effective_detected_pdf(pdf, float(getattr(cfg, "a_photons", 0.0)), cfg)
+            p_vec = stat_gate_shapes @ pdf
             p_sum = np.sum(p_vec)
             self.grid_templates[i, :] = p_vec / p_sum if p_sum > 0 else np.full(n_gates, 1.0 / n_gates)
         self._set_cfg_param(cfg.f_x_param, original_param_value)
@@ -484,8 +861,11 @@ class TwinEngine:
             gate_profiles = self.gate_shapes
         gate_profiles = self._statistical_gate_profiles(gate_profiles)
         pdf = self.dt_pdf(t, irf=irf_cached)
+        pdf = self._effective_detected_pdf(pdf, float(getattr(self.config, "a_photons", 0.0)), self.config)
         probs = gate_profiles @ pdf
         probs = probs * self._collection_efficiency_scale(gate_profiles.shape[0])
+        if not self._is_event_driven_mode():
+            probs = self._apply_detector_transfer_to_probabilities(probs, float(getattr(self.config, "a_photons", 0.0)), self.config)
         if self._use_raw_gate_statistics():
             return probs
         p_sum = np.sum(probs)
@@ -576,6 +956,13 @@ class TwinEngine:
     def generate_validation_image(self, n_photons: Optional[int] = None,
                                   target_repeats: Optional[int] = None,
                                   progress_callback: Optional[Callable[[int, int], None]] = None) -> Dict[str, Any]:
+        """
+        Generate a synthetic validation image using the selected simulation modality.
+
+        `ideal_poisson` preserves the historical backend unchanged.
+        `event_driven` reuses the same latent optical model but applies an
+        event-by-event detection model.
+        """
         cfg = self.config
         self.distill_gates()
         x_values = self.build_precision_x_range()
@@ -600,11 +987,22 @@ class TwinEngine:
         try:
             for idx, x_val in enumerate(x_values):
                 self._set_cfg_param(cfg.f_x_param, float(x_val))
-                probs = self._gate_probabilities_for_current_config(self.time_vector, irf_cached=irf_cached)
-                lam = np.clip(photon_budget * probs, 0.0, None)
                 x_start = idx * band_width
                 x_end = min(x_start + band_width, n_x)
-                self.raw_data[:, x_start:x_end, :] = np.random.poisson(lam, size=(n_y, x_end - x_start, n_gates))
+                n_frames = n_y * max(x_end - x_start, 0)
+                if self._is_event_driven_mode():
+                    sim_result = self._simulate_event_driven_frames(
+                        tau=None,
+                        expected_count_per_frame=float(photon_budget),
+                        n_frames=n_frames,
+                        irf_cached=irf_cached,
+                    )
+                    counts = np.asarray(sim_result.counts, dtype=float).reshape(n_y, x_end - x_start, n_gates)
+                else:
+                    probs = self._gate_probabilities_for_current_config(self.time_vector, irf_cached=irf_cached)
+                    lam = np.clip(photon_budget * probs, 0.0, None)
+                    counts = np.random.poisson(lam, size=(n_y, x_end - x_start, n_gates))
+                self.raw_data[:, x_start:x_end, :] = counts
                 self.validation_param_map[:, x_start:x_end] = float(x_val)
                 self.validation_truth_map[:, x_start:x_end] = self._effective_lifetime_ns()
                 band_index_map[:, x_start:x_end] = idx
@@ -614,10 +1012,6 @@ class TwinEngine:
             self._set_cfg_param(cfg.f_x_param, original_value)
 
         self.last_analysis_warnings = []
-        if not self._can_use_phasorpy():
-            self.last_analysis_warnings.append("PhasorPy is not installed; using internal phasor fallback.")
-        if not self._can_use_flimfit():
-            self.last_analysis_warnings.append("FLIMfit / FLIMLib is not installed; using the built-in fitting fallback.")
 
         self.validation_metadata = {
             "mode": "image_validation",
@@ -629,8 +1023,8 @@ class TwinEngine:
             "geometry": geometry,
             "band_index_map": band_index_map.tolist(),
             "analysis_backends": {
-                "phasor": "PhasorPy" if self._can_use_phasorpy() else "internal fallback",
-                "fit": "FLIMfit / FLIMLib" if self._can_use_flimfit() else "internal fallback",
+                "phasor": "HILIGHTer backend",
+                "fit": "HILIGHTer backend",
             },
         }
         return {
@@ -642,19 +1036,36 @@ class TwinEngine:
     def _fit_param_gridded(self, obs: np.ndarray) -> float:
         return float(self.estimate_tau_batch(np.asarray(obs, dtype=float).reshape(1, -1))[0])
 
+    def _tail_fit_mask(self, obs: np.ndarray) -> np.ndarray:
+        obs = np.asarray(obs, dtype=float)
+        mask = obs > 0
+        if np.count_nonzero(mask) < 2:
+            return mask
+        irf = np.asarray(self.dt_excitation(self.time_vector), dtype=float)
+        irf = irf / max(np.sum(irf), 1e-12)
+        gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
+        irf_gate = np.asarray(gate_profiles @ irf, dtype=float)
+        peak_idx = int(np.argmax(irf_gate))
+        threshold = float(np.max(irf_gate)) * np.exp(-4.5)
+        tail_candidates = np.flatnonzero((np.arange(irf_gate.size) >= peak_idx) & (irf_gate <= threshold))
+        if tail_candidates.size:
+            tail_start = int(tail_candidates[0])
+        else:
+            valid_idx = np.flatnonzero(mask)
+            tail_start = int(valid_idx[max(len(valid_idx) // 2, 0)])
+        tail_mask = mask & (np.arange(mask.size) >= tail_start)
+        if np.count_nonzero(tail_mask) < 2:
+            tail_mask = mask
+        return tail_mask
+
     def _fit_param_tail(self, obs: np.ndarray) -> float:
         if str(self.config.f_x_param) not in {"tau1", "tau2"}:
             return self._fit_param_gridded(obs)
         centers = 0.5 * (np.asarray(self.config.gate_edges[:-1], dtype=float) + np.asarray(self.config.gate_edges[1:], dtype=float))
         obs = np.asarray(obs, dtype=float)
-        mask = obs > 0
-        if np.count_nonzero(mask) < 2:
-            return np.nan
-        valid_idx = np.flatnonzero(mask)
-        tail_start = valid_idx[max(len(valid_idx) // 2, 0)]
-        tail_mask = mask & (np.arange(mask.size) >= tail_start)
+        tail_mask = self._tail_fit_mask(obs)
         if np.count_nonzero(tail_mask) < 2:
-            tail_mask = mask
+            return np.nan
         coeff = np.polyfit(centers[tail_mask], np.log(np.maximum(obs[tail_mask], 1e-12)), 1)
         slope = float(coeff[0])
         if slope >= 0:
@@ -745,71 +1156,85 @@ class TwinEngine:
         pred = None if not np.isfinite(estimate) else self.predict_gate_counts(float(estimate), float(np.sum(obs)))
         residuals = None if pred is None else (obs - pred)
         centers = 0.5 * (np.asarray(self.config.gate_edges[:-1], dtype=float) + np.asarray(self.config.gate_edges[1:], dtype=float))
+        gate_widths = np.diff(np.asarray(self.config.gate_edges, dtype=float))
+        fit_mask = np.ones_like(centers, dtype=bool)
+        if method == "tail":
+            fit_mask = self._tail_fit_mask(obs)
         irf = self.dt_excitation(self.time_vector)
-        irf_gate = self.gate_shapes @ (irf / max(np.sum(irf), 1e-12))
-        if np.sum(irf_gate) > 0:
-            irf_gate = irf_gate / np.sum(irf_gate) * max(float(np.max(obs)), 1.0)
+        irf_display = np.asarray(irf, dtype=float)
+        if np.max(irf_display) > 0:
+            irf_display = irf_display / np.max(irf_display) * max(float(np.max(obs)), 1.0)
+        smooth_fit_t = np.array([], dtype=float)
+        smooth_fit_y = np.array([], dtype=float)
+        if np.isfinite(estimate):
+            target = str(self.config.f_x_param)
+            current_value = self._get_cfg_param(target)
+            irf_cached = np.asarray(irf, dtype=float)
+            irf_sum = np.sum(irf_cached)
+            if irf_sum > 0:
+                irf_cached = irf_cached / irf_sum
+            try:
+                self._set_cfg_param(target, float(estimate))
+                pdf_fit = np.asarray(self.dt_pdf(self.time_vector, irf=irf_cached), dtype=float)
+                pdf_fit = self._effective_detected_pdf(pdf_fit, float(np.sum(obs)), self.config)
+            finally:
+                self._set_cfg_param(target, current_value)
+            if pdf_fit.size:
+                representative_bin_ns = float(np.median(gate_widths)) if gate_widths.size else 1.0
+                smooth_fit_t = np.asarray(self.time_vector, dtype=float)
+                smooth_fit_y = pdf_fit * float(np.sum(obs)) * representative_bin_ns
+                if method == "tail" and np.any(fit_mask):
+                    start_idx = int(np.flatnonzero(fit_mask)[0])
+                    start_time = float(np.asarray(self.config.gate_edges, dtype=float)[start_idx])
+                    dense_mask = smooth_fit_t >= start_time
+                    smooth_fit_t = smooth_fit_t[dense_mask]
+                    smooth_fit_y = smooth_fit_y[dense_mask]
         return {
             "status": "ok",
             "estimate": None if not np.isfinite(estimate) else float(estimate),
             "centers": centers.tolist(),
             "counts": obs.tolist(),
             "fit": None if pred is None else pred.tolist(),
+            "fit_centers": smooth_fit_t.tolist(),
+            "fit_values": smooth_fit_y.tolist(),
             "residuals": None if residuals is None else residuals.tolist(),
             "reduced_chi2": None if pred is None else self._reduced_chi2(obs, pred),
             "randomness": self._runs_test(residuals) if residuals is not None else {"z_score": 0.0, "approx_p_value": 1.0},
-            "irf_gate": irf_gate.tolist(),
+            "irf_time": np.asarray(self.time_vector, dtype=float).tolist(),
+            "irf_values": irf_display.tolist(),
             "fit_method": method,
             "truth": None if self.validation_param_map is None else float(self.validation_param_map[y, x]),
         }
 
-    def _can_use_phasorpy(self) -> bool:
-        try:
-            import phasorpy.phasor  # noqa: F401
-            return True
-        except Exception:
-            return False
-
-    def _can_use_flimfit(self) -> bool:
-        for module_name in ("flimlib", "flim_fit", "flimfit"):
-            try:
-                __import__(module_name)
-                return True
-            except Exception:
-                continue
-        return False
-
     def _phasor_from_signal_fallback(self, data: np.ndarray, harmonic: int = 1) -> Tuple[np.ndarray, np.ndarray]:
-        edges = np.asarray(self.config.gate_edges, dtype=float)
-        widths = np.diff(edges)
-        centers = 0.5 * (edges[:-1] + edges[1:])
-        phase = 2.0 * np.pi * harmonic * centers / max(float(self.config.period), 1e-12)
-        exp_term = np.exp(-1j * phase)
+        data = np.asarray(data, dtype=float)
+        t = np.asarray(self.time_vector, dtype=float)
+        gate_profiles = np.asarray(self._statistical_gate_profiles(self.gate_shapes), dtype=float)
+        omega = 2.0 * np.pi * harmonic / max(float(self.config.period), 1e-12)
+        complex_basis = np.exp(-1j * omega * t)
+
+        gate_norm = np.trapz(gate_profiles, t, axis=1)
+        gate_norm = np.where(np.abs(gate_norm) > 1e-18, gate_norm, 1.0)
+        gate_kernel = np.trapz(gate_profiles * complex_basis[None, :], t, axis=1) / gate_norm
+
         totals = np.sum(data, axis=-1)
-        z = np.sum(np.asarray(data, dtype=float) * exp_term, axis=-1)
+        z = np.sum(data * gate_kernel[None, :], axis=-1)
         z = np.where(totals > 0, z / np.maximum(totals, 1e-12), np.nan + 1j * np.nan)
 
-        irf = self.dt_excitation(self.time_vector)
+        irf = np.asarray(self.dt_excitation(t), dtype=float)
         irf = irf / max(np.sum(irf), 1e-12)
-        irf_gate = self._statistical_gate_profiles(self.gate_shapes) @ irf
+        irf_gate = gate_profiles @ irf
         irf_total = float(np.sum(irf_gate))
         if irf_total > 0:
-            z_irf = np.sum(irf_gate * exp_term) / irf_total
+            z_irf = np.sum(irf_gate * gate_kernel) / irf_total
             if abs(z_irf) > 1e-12:
                 z = z / z_irf
-
-        if (not self._can_use_phasorpy()) or not np.allclose(widths, widths[0], rtol=1e-4, atol=1e-8):
-            warning = "Using internal phasor fallback for unavailable PhasorPy or uneven gates."
-            if warning not in self.last_analysis_warnings:
-                self.last_analysis_warnings.append(warning)
 
         return np.real(z), -np.imag(z)
 
     def _phasor_from_validation_model(self, harmonic: int = 1) -> Tuple[np.ndarray, np.ndarray]:
-        if self.time_vector is None or not self._can_use_phasorpy():
+        if self.time_vector is None:
             return None, None
-
-        import phasorpy.phasor as pp
 
         lifetime_map = None
         if self.tau_map is not None and np.any(np.isfinite(self.tau_map)):
@@ -828,7 +1253,8 @@ class TwinEngine:
         t = np.asarray(self.time_vector, dtype=float)
         irf = self.dt_excitation(t)
         irf = irf / max(np.sum(irf), 1e-12)
-        _, irf_g, irf_s = pp.phasor_from_signal(irf, harmonic=harmonic, axis=-1)
+        irf_g, irf_s = self._phasor_from_signal_fallback(irf.reshape(1, -1), harmonic=harmonic)
+        irf_z = complex(float(np.asarray(irf_g).reshape(-1)[0]), float(np.asarray(irf_s).reshape(-1)[0]))
 
         g_map = np.full(lifetime_map.shape, np.nan, dtype=float)
         s_map = np.full(lifetime_map.shape, np.nan, dtype=float)
@@ -847,10 +1273,13 @@ class TwinEngine:
                 else:
                     self.config.taus[0] = tau_value
                 decay = np.asarray(self.dt_pdf(t, irf=irf), dtype=float)
-                _, g_val, s_val = pp.phasor_from_signal(decay, harmonic=harmonic, axis=-1)
-                g_cal, s_cal = pp.phasor_divide(g_val, s_val, irf_g, irf_s)
-                g_map[pixel_mask] = float(np.asarray(g_cal, dtype=float).reshape(-1)[0])
-                s_map[pixel_mask] = float(np.asarray(s_cal, dtype=float).reshape(-1)[0])
+                g_val, s_val = self._phasor_from_signal_fallback(decay.reshape(1, -1), harmonic=harmonic)
+                z_val = complex(float(np.asarray(g_val).reshape(-1)[0]), float(np.asarray(s_val).reshape(-1)[0]))
+                z_cal = z_val
+                if abs(irf_z) > 1e-12:
+                    z_cal = z_val / irf_z
+                g_map[pixel_mask] = float(np.real(z_cal))
+                s_map[pixel_mask] = float(np.imag(z_cal))
         finally:
             self.config.taus = original_taus
 
@@ -859,22 +1288,49 @@ class TwinEngine:
     def simulate_gate_histograms(self, tau: Optional[float], n_photons: int, n_repeats: int,
                                  irf_cached: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Monte Carlo gate simulation aligned with the MATLAB reference path:
-        sample photon times from the PDF, then evaluate per-gate Bernoulli detection
-        using the gate transfer functions at those times.
+        Monte Carlo gate simulation using one of two detection models.
+
+        - `ideal_poisson`: preserves the historical Digital Twin backend unchanged.
+        - `event_driven`: uses the same latent optical model but processes
+          arrivals chronologically through an explicit detection model.
         """
         self.distill_gates()
+        n_repeats = int(n_repeats)
+        n_photons = int(n_photons)
+        n_gates = self.gate_shapes.shape[0]
+
+        if self._is_event_driven_mode():
+            if getattr(self.config, "gate_collection_mode", "histogram") == "sequential":
+                gate_hist_all = np.zeros((n_repeats, n_gates), dtype=float)
+                photons_per_gate = float(n_photons) * self._collection_efficiency_scale(n_gates)
+                for gate_idx in range(n_gates):
+                    sim_result = self._simulate_event_driven_frames(
+                        tau=tau,
+                        expected_count_per_frame=photons_per_gate,
+                        n_frames=n_repeats,
+                        irf_cached=irf_cached,
+                        channel_indices=[gate_idx],
+                    )
+                    gate_hist_all[:, gate_idx] = np.asarray(sim_result.counts[:, 0], dtype=float)
+            else:
+                sim_result = self._simulate_event_driven_frames(
+                    tau=tau,
+                    expected_count_per_frame=float(n_photons),
+                    n_frames=n_repeats,
+                    irf_cached=irf_cached,
+                )
+                gate_hist_all = np.asarray(sim_result.counts, dtype=float)
+            n_detections = np.sum(gate_hist_all, axis=1)
+            return gate_hist_all, n_detections
+
         t = self.time_vector
         pdf = self.dt_pdf(t, tau=tau, irf=irf_cached) if tau is not None else self.dt_pdf(t, irf=irf_cached)
         cdf = np.cumsum(pdf)
         cdf[-1] = 1.0
 
-        photon_u = np.random.rand(int(n_repeats), int(n_photons))
+        photon_u = np.random.rand(n_repeats, n_photons)
         photon_times = np.interp(photon_u, cdf, t)
 
-        n_repeats = int(n_repeats)
-        n_photons = int(n_photons)
-        n_gates = self.gate_shapes.shape[0]
         gate_hist_all = np.zeros((n_repeats, n_gates), dtype=float)
         gate_vals = np.zeros((n_repeats, n_photons, n_gates), dtype=float)
         for gate_idx in range(n_gates):
@@ -901,6 +1357,15 @@ class TwinEngine:
             rep_idx, photon_idx = np.nonzero(detected_mask)
             for r, p in zip(rep_idx.tolist(), photon_idx.tolist()):
                 gate_hist_all[r, chosen_gate[r, p]] += 1.0
+
+        if self._has_detector_event_effects(self.config):
+            rng = np.random.default_rng()
+            for rep_idx in range(n_repeats):
+                gate_hist_all[rep_idx, :] = self._apply_detector_transfer_to_count_vector(
+                    gate_hist_all[rep_idx, :],
+                    rng,
+                    self.config,
+                )
 
         n_detections = np.sum(gate_hist_all, axis=1)
         return gate_hist_all, n_detections
@@ -979,7 +1444,7 @@ class TwinEngine:
 
     def calculate_phasor(self, data: Optional[np.ndarray] = None, harmonic: int = 1) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Calculates G and S phasor coordinates using PhasorPy.
+        Calculates G and S phasor coordinates using the internal HILIGHTer backend.
         """
         if data is None:
             data = self.raw_data
@@ -989,49 +1454,101 @@ class TwinEngine:
                 return model_g, model_s
         if data is None:
             return None, None
-
-        edges = np.asarray(self.config.gate_edges, dtype=float)
-        even_sampling = len(edges) >= 3 and np.allclose(np.diff(edges), np.diff(edges)[0], rtol=1e-4, atol=1e-8)
-
-        if self._can_use_phasorpy() and even_sampling:
-            import phasorpy.phasor as pp
-
-            _, g, s = pp.phasor_from_signal(np.asarray(data, dtype=float), harmonic=harmonic, axis=-1)
-            irf = self.dt_excitation(self.time_vector)
-            irf = irf / max(np.sum(irf), 1e-12)
-            irf_gate = self._statistical_gate_profiles(self.gate_shapes) @ irf
-            _, irf_g, irf_s = pp.phasor_from_signal(np.asarray(irf_gate, dtype=float), harmonic=harmonic, axis=-1)
-            z_irf = complex(float(np.asarray(irf_g).reshape(-1)[0]), float(np.asarray(irf_s).reshape(-1)[0]))
-            if abs(z_irf) > 1e-12:
-                z = (np.asarray(g, dtype=float) + 1j * np.asarray(s, dtype=float)) / z_irf
-                return np.real(z), np.imag(z)
-            return np.asarray(g, dtype=float), np.asarray(s, dtype=float)
-
         return self._phasor_from_signal_fallback(np.asarray(data, dtype=float), harmonic=harmonic)
+
+    def calculate_phasor_lifetime_map(self, harmonic: int = 1) -> Optional[np.ndarray]:
+        g_map, s_map = self.calculate_phasor(harmonic=harmonic)
+        if g_map is None or s_map is None:
+            return None
+
+        g_arr = np.asarray(g_map, dtype=float)
+        s_arr = np.asarray(s_map, dtype=float)
+        frequency_mhz = 1000.0 / max(float(self.config.period), 1e-12)
+
+        omega = 2.0 * np.pi * frequency_mhz * 1e-3
+        phase = np.arctan2(np.maximum(s_arr, 0.0), np.maximum(g_arr, 1e-12))
+        tau_phase = np.tan(phase) / max(omega, 1e-12)
+        tau_phase = np.asarray(tau_phase, dtype=float)
+        tau_phase[~np.isfinite(g_arr) | ~np.isfinite(s_arr)] = np.nan
+        return tau_phase
+
+    def summarize_validation_performance(self, estimate_map: Optional[np.ndarray], photon_map: Optional[np.ndarray] = None) -> Dict[str, Any]:
+        if estimate_map is None or self.validation_truth_map is None:
+            return {"truth": [], "mean": [], "std": [], "f_inv2": [], "count": [], "photons": []}
+
+        estimates = np.asarray(estimate_map, dtype=float)
+        truth = np.asarray(self.validation_truth_map, dtype=float)
+        if photon_map is None and self.raw_data is not None:
+            photon_map = np.sum(np.asarray(self.raw_data, dtype=float), axis=2)
+        photons = None if photon_map is None else np.asarray(photon_map, dtype=float)
+
+        valid = np.isfinite(estimates) & np.isfinite(truth)
+        if not np.any(valid):
+            return {"truth": [], "mean": [], "std": [], "f_inv2": [], "count": [], "photons": []}
+
+        truth_values = np.unique(np.round(truth[valid], 9))
+        out = {"truth": [], "mean": [], "std": [], "f_inv2": [], "count": [], "photons": []}
+        for truth_value in truth_values:
+            mask = valid & np.isclose(truth, truth_value, rtol=0.0, atol=1e-9)
+            sample = estimates[mask]
+            if sample.size == 0:
+                continue
+            mean_val = float(np.mean(sample))
+            std_val = float(np.std(sample, ddof=1)) if sample.size > 1 else 0.0
+            mean_photons = float(np.mean(photons[mask])) if photons is not None else float(getattr(self.config, "a_photons", 0.0))
+            if std_val <= 0.0 or abs(float(truth_value)) <= 1e-12 or mean_photons <= 0.0:
+                eff = 1.0
+            else:
+                f_val = (std_val / max(abs(float(truth_value)), 1e-12)) * np.sqrt(mean_photons)
+                eff = float(np.clip(1.0 / max(f_val ** 2, 1e-12), 0.0, 1.0))
+            out["truth"].append(float(truth_value))
+            out["mean"].append(mean_val)
+            out["std"].append(std_val)
+            out["f_inv2"].append(eff)
+            out["count"].append(int(sample.size))
+            out["photons"].append(mean_photons)
+        return out
 
     def get_theoretical_locus(self, tau_range: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Calculates the theoretical G and S coordinates using PhasorPy.
+        Calculates the theoretical G and S coordinates using the internal HILIGHTer phasor model.
         """
         if tau_range is None:
             tau_range = np.logspace(np.log10(0.05), np.log10(50.0), 100)
         tau_range = np.asarray(tau_range, dtype=float)
-
-        if self._can_use_phasorpy():
-            try:
-                import phasorpy.phasor as pp
-
-                frequency_mhz = 1000.0 / max(float(self.config.period), 1e-12)
-                g, s = pp.phasor_from_lifetime(frequency_mhz, tau_range)
-                return np.asarray(g, dtype=float), np.asarray(s, dtype=float)
-            except Exception:
-                pass
 
         omega = 2.0 * np.pi / max(float(self.config.period), 1e-12)
         omega_tau = omega * tau_range
         g = 1.0 / (1.0 + np.square(omega_tau))
         s = omega_tau / (1.0 + np.square(omega_tau))
         return g, s
+
+    def get_discrete_single_exponential_arc(self, tau_range: Optional[np.ndarray] = None, harmonic: int = 1) -> Tuple[np.ndarray, np.ndarray]:
+        if tau_range is None:
+            tau_range = np.logspace(np.log10(0.05), np.log10(50.0), 100)
+        tau_range = np.asarray(tau_range, dtype=float)
+        if tau_range.size == 0:
+            return np.array([], dtype=float), np.array([], dtype=float)
+
+        original_taus = list(getattr(self.config, "taus", []))
+        g_vals = []
+        s_vals = []
+        irf_cached = np.asarray(self.dt_excitation(self.time_vector), dtype=float)
+        irf_cached = irf_cached / max(np.sum(irf_cached), 1e-12)
+        try:
+            for tau in tau_range:
+                if not getattr(self.config, "taus", None):
+                    self.config.taus = [float(tau)]
+                else:
+                    self.config.taus[0] = float(tau)
+                decay = np.asarray(self.dt_pdf(self.time_vector, irf=irf_cached), dtype=float)
+                gate_data = np.asarray(self._statistical_gate_profiles(self.gate_shapes) @ decay, dtype=float).reshape(1, -1)
+                g, s = self.calculate_phasor(data=gate_data, harmonic=harmonic)
+                g_vals.append(float(np.asarray(g, dtype=float).reshape(-1)[0]))
+                s_vals.append(float(np.asarray(s, dtype=float).reshape(-1)[0]))
+        finally:
+            self.config.taus = original_taus
+        return np.asarray(g_vals, dtype=float), np.asarray(s_vals, dtype=float)
 
     def dt_excitation(self, t: np.ndarray) -> np.ndarray:
         """Calculates the excitation IRF (envelope) and optional Burst sub-pulses."""
@@ -1204,7 +1721,8 @@ class TwinEngine:
         n_gates = len(cfg.gate_edges) - 1
         collection_scale = self._collection_efficiency_scale(n_gates)
         normalize_probs = self._should_normalize_gate_probabilities(photon_basis_mode)
-        include_lost_category = (photon_basis_mode is not None and str(photon_basis_mode).lower() == "all")
+        photon_basis_mode_norm = str(photon_basis_mode or "").lower()
+        include_lost_category = self._include_lost_category(photon_basis_mode)
         original_dt_override = cfg.dt_override
         try:
             cfg.dt_override = dt
@@ -1251,8 +1769,13 @@ class TwinEngine:
                 # Central value
                 self._set_cfg_param(cfg.f_x_param, param_val)
                 p_cen_pdf  = self.dt_pdf(t, irf=irf_cached)
+                p_cen_pdf = self._effective_detected_pdf(p_cen_pdf, float(n_photons), cfg)
                 p_cen_gates = gate_profiles @ p_cen_pdf
                 p_cen_gates = p_cen_gates * collection_scale
+                if photon_basis_mode_norm == "all":
+                    p_cen_gates = p_cen_gates * self._acquisition_period_fraction(cfg)
+                if not self._is_event_driven_mode():
+                    p_cen_gates = self._apply_detector_transfer_to_probabilities(p_cen_gates, n_photons, cfg)
                 p_cen_sum = np.sum(p_cen_gates)
                 if normalize_probs and p_cen_sum > 0:
                     p_cen_gates = p_cen_gates / p_cen_sum
@@ -1260,8 +1783,13 @@ class TwinEngine:
                 # Forward
                 self._set_cfg_param(cfg.f_x_param, plus_val)
                 p_plus_pdf   = self.dt_pdf(t, irf=irf_cached)
+                p_plus_pdf = self._effective_detected_pdf(p_plus_pdf, float(n_photons), cfg)
                 p_plus_gates = gate_profiles @ p_plus_pdf
                 p_plus_gates = p_plus_gates * collection_scale
+                if photon_basis_mode_norm == "all":
+                    p_plus_gates = p_plus_gates * self._acquisition_period_fraction(cfg)
+                if not self._is_event_driven_mode():
+                    p_plus_gates = self._apply_detector_transfer_to_probabilities(p_plus_gates, n_photons, cfg)
                 p_plus_sum = np.sum(p_plus_gates)
                 if normalize_probs and p_plus_sum > 0:
                     p_plus_gates = p_plus_gates / p_plus_sum
@@ -1269,8 +1797,13 @@ class TwinEngine:
                 # Backward
                 self._set_cfg_param(cfg.f_x_param, minus_val)
                 p_minus_pdf   = self.dt_pdf(t, irf=irf_cached)
+                p_minus_pdf = self._effective_detected_pdf(p_minus_pdf, float(n_photons), cfg)
                 p_minus_gates = gate_profiles @ p_minus_pdf
                 p_minus_gates = p_minus_gates * collection_scale
+                if photon_basis_mode_norm == "all":
+                    p_minus_gates = p_minus_gates * self._acquisition_period_fraction(cfg)
+                if not self._is_event_driven_mode():
+                    p_minus_gates = self._apply_detector_transfer_to_probabilities(p_minus_gates, n_photons, cfg)
                 p_minus_sum = np.sum(p_minus_gates)
                 if normalize_probs and p_minus_sum > 0:
                     p_minus_gates = p_minus_gates / p_minus_sum
@@ -1498,7 +2031,11 @@ class TwinEngine:
         for idx, param_val in enumerate(x_grid):
             self._set_cfg_param(target_param, param_val)
             force_deadtime_mc = bool(getattr(self.config, "metadata", {}).get("force_precision_deadtime_mc", False))
-            if force_deadtime_mc and (self.config.detector_deadtime > 0 or not self.config.b_multihit_mode):
+            if (
+                force_deadtime_mc
+                and self._is_event_driven_mode()
+                and (self.config.detector_deadtime > 0 or not self.config.b_multihit_mode)
+            ):
                 counts = np.zeros((int(n_repeats), self.gate_shapes.shape[0]), dtype=float)
                 for rep_idx in range(int(n_repeats)):
                     counts[rep_idx, :] = self.simulate_photons_with_deadtime(
@@ -1521,7 +2058,7 @@ class TwinEngine:
             mean_tau[idx] = np.nanmean(param_est)
             std_tau[idx] = np.nanstd(param_est, ddof=1) if np.sum(np.isfinite(param_est)) > 1 else 0.0
             mean_detected = float(np.nanmean(n_detections)) if len(n_detections) else 0.0
-            photon_basis_mode = str(getattr(self.config, "optimization_f_photon_basis", "all")).lower()
+            photon_basis_mode = str(getattr(self.config, "optimization_f_photon_basis", "period")).lower()
             photon_budget = float(mean_detected if photon_basis_mode == "collected" else n_photons)
             denom = max(abs(param_val), 1e-12)
             if np.isfinite(std_tau[idx]) and photon_budget > 0:
@@ -1648,10 +2185,15 @@ class TwinEngine:
             for x in range(nx):
                 tau = tau_grid[y, x]
                 if np.isnan(tau) or tau <= 0: continue
-                
-                if cfg.detector_deadtime > 0 or not cfg.b_multihit_mode:
-                    # Use full Monte Carlo for deadtime/multihit effects
-                    counts = self.simulate_photons_with_deadtime(tau, a_sim, b_sim)
+
+                if self._is_event_driven_mode():
+                    sim_result = self._simulate_event_driven_frames_with_background(
+                        tau=float(tau),
+                        signal_count_per_frame=float(a_sim),
+                        background_density=float(b_sim),
+                        n_frames=1,
+                    )
+                    counts = np.asarray(sim_result.counts[0], dtype=float)
                 else:
                     # Use faster expected value + Poisson for ideal detectors
                     t_vec = self.time_vector
@@ -1661,11 +2203,23 @@ class TwinEngine:
                     term_b = np.sum(distilled_shapes, axis=1)
                     lam = a_sim * term_a + b_sim * term_b
                     counts = np.random.poisson(lam)
+                    if self._has_detector_event_effects(cfg):
+                        counts = self._apply_detector_transfer_to_count_vector(
+                            counts,
+                            np.random.default_rng(),
+                            cfg,
+                        )
                 
                 self.raw_data[y, x, :] = counts * dnl
 
     def simulate_data(self, a_sim: float, tau1: float, tau2: float, b_sim: float, ny: int, nx: int):
-        """Synthesizes a gradient dataset for validation."""
+        """
+        Synthesizes a gradient dataset for validation.
+
+        In `event_driven` mode this still reuses the same latent PDF backend,
+        but replaces the ideal per-gate count generation with chronological
+        event processing.
+        """
         n_gates = self.gate_shapes.shape[0]
         self.raw_data = np.zeros((ny, nx, n_gates))
         
@@ -1675,14 +2229,31 @@ class TwinEngine:
         
         for x in range(nx):
             tau = tau_values[x]
-            decay = np.exp(-t_vec / tau)
-            term_a = self.gate_shapes @ decay
-            term_a /= np.sum(term_a) # Renormalize
-            
-            pixel_counts = a_sim * term_a + b_sim * term_b
-            
-            for g in range(n_gates):
-                self.raw_data[:, x, g] = np.random.poisson(pixel_counts[g], (ny,))
+            if self._is_event_driven_mode():
+                sim_result = self._simulate_event_driven_frames_with_background(
+                    tau=float(tau),
+                    signal_count_per_frame=float(a_sim),
+                    background_density=float(b_sim),
+                    n_frames=ny,
+                )
+                self.raw_data[:, x, :] = np.asarray(sim_result.counts, dtype=float)
+            else:
+                decay = np.exp(-t_vec / tau)
+                term_a = self.gate_shapes @ decay
+                term_a /= np.sum(term_a) # Renormalize
+
+                pixel_counts = a_sim * term_a + b_sim * term_b
+
+                for g in range(n_gates):
+                    self.raw_data[:, x, g] = np.random.poisson(pixel_counts[g], (ny,))
+                if self._has_detector_event_effects(self.config):
+                    rng = np.random.default_rng()
+                    for y in range(ny):
+                        self.raw_data[y, x, :] = self._apply_detector_transfer_to_count_vector(
+                            self.raw_data[y, x, :],
+                            rng,
+                            self.config,
+                        )
 
     def characterize_hardware(self, sweep_table_data):
         """
@@ -1858,14 +2429,14 @@ class TwinEngine:
             fi, f_val = self.compute_fisher_info(
                 tau_grid,
                 n_photons=1e4,
-                photon_basis_mode=getattr(self.config, "optimization_f_photon_basis", "all"),
+                photon_basis_mode=getattr(self.config, "optimization_f_photon_basis", "period"),
             )
         else:
             fi, f_val = self._compute_effective_fisher_info_for_params(
                 tau_grid,
                 n_photons=1e4,
                 active_params=active_params,
-                photon_basis_mode=getattr(self.config, "optimization_f_photon_basis", "all"),
+                photon_basis_mode=getattr(self.config, "optimization_f_photon_basis", "period"),
             )
         j_val = float(np.nanmean(f_val)) if np.any(np.isfinite(f_val)) else np.inf
         payload = self._build_gate_optimization_payload(edges, tau_grid, j_val, fi, f_val, algorithm, step=step, note=note)
@@ -1881,7 +2452,7 @@ class TwinEngine:
         cfg = self.config
         self.distill_gates()
         t = self.time_vector
-        photon_basis_mode = getattr(cfg, "optimization_f_photon_basis", "all")
+        photon_basis_mode = getattr(cfg, "optimization_f_photon_basis", "period")
         collection_scale = self._collection_efficiency_scale(len(getattr(cfg, "gate_edges", [])) - 1)
         normalize_probs = self._should_normalize_gate_probabilities(photon_basis_mode)
         target_param = cfg.f_x_param
@@ -2028,7 +2599,8 @@ class TwinEngine:
         n_gates = len(cfg.gate_edges) - 1
         collection_scale = self._collection_efficiency_scale(n_gates)
         normalize_probs = self._should_normalize_gate_probabilities(photon_basis_mode)
-        include_lost_category = (photon_basis_mode is not None and str(photon_basis_mode).lower() == "all")
+        photon_basis_mode_norm = str(photon_basis_mode or "").lower()
+        include_lost_category = self._include_lost_category(photon_basis_mode)
         original_dt_override = cfg.dt_override
         try:
             cfg.dt_override = dt
@@ -2055,6 +2627,8 @@ class TwinEngine:
                 p_cen_pdf = self.dt_pdf(t, irf=irf_cached)
                 p_cen_gates = gate_profiles @ p_cen_pdf
                 p_cen_gates = p_cen_gates * collection_scale
+                if photon_basis_mode_norm == "all":
+                    p_cen_gates = p_cen_gates * self._acquisition_period_fraction(cfg)
                 p_cen_sum = np.sum(p_cen_gates)
                 if normalize_probs and p_cen_sum > 0:
                     p_cen_gates = p_cen_gates / p_cen_sum
@@ -2081,6 +2655,8 @@ class TwinEngine:
                     p_plus_pdf = self.dt_pdf(t, irf=irf_cached)
                     p_plus_gates = gate_profiles @ p_plus_pdf
                     p_plus_gates = p_plus_gates * collection_scale
+                    if photon_basis_mode_norm == "all":
+                        p_plus_gates = p_plus_gates * self._acquisition_period_fraction(cfg)
                     p_plus_sum = np.sum(p_plus_gates)
                     if normalize_probs and p_plus_sum > 0:
                         p_plus_gates = p_plus_gates / p_plus_sum
@@ -2089,6 +2665,8 @@ class TwinEngine:
                     p_minus_pdf = self.dt_pdf(t, irf=irf_cached)
                     p_minus_gates = gate_profiles @ p_minus_pdf
                     p_minus_gates = p_minus_gates * collection_scale
+                    if photon_basis_mode_norm == "all":
+                        p_minus_gates = p_minus_gates * self._acquisition_period_fraction(cfg)
                     p_minus_sum = np.sum(p_minus_gates)
                     if normalize_probs and p_minus_sum > 0:
                         p_minus_gates = p_minus_gates / p_minus_sum
@@ -2494,7 +3072,7 @@ class TwinEngine:
             fi, f_val = self.compute_fisher_info(
                 tau_grid,
                 n_photons=1e4,
-                photon_basis_mode=getattr(self.config, "optimization_f_photon_basis", "all"),
+                photon_basis_mode=getattr(self.config, "optimization_f_photon_basis", "period"),
             )
             info = {
                 "algorithm": algorithm,
@@ -2563,7 +3141,7 @@ class TwinEngine:
             _, f_val = self.compute_fisher_info(
                 x_range,
                 int(n_photons),
-                photon_basis_mode=getattr(cfg, "optimization_f_photon_basis", "all"),
+                photon_basis_mode=getattr(cfg, "optimization_f_photon_basis", "period"),
             )
             return float(np.nanmean(f_val)) if np.any(np.isfinite(f_val)) else np.inf
         finally:
@@ -2587,7 +3165,7 @@ class TwinEngine:
                 _, f_val = self.compute_fisher_info(
                     x_range,
                     int(reference_cfg.precision_photons),
-                    photon_basis_mode=getattr(reference_cfg, "optimization_f_photon_basis", "all"),
+                    photon_basis_mode=getattr(reference_cfg, "optimization_f_photon_basis", "period"),
                 )
                 return self._peak_efficiency_from_f_values(f_val)
             finally:
@@ -2621,7 +3199,7 @@ class TwinEngine:
         _, f_val = scratch.compute_fisher_info(
             x_range,
             int(reference_cfg.precision_photons),
-            photon_basis_mode=getattr(reference_cfg, "optimization_f_photon_basis", "all"),
+            photon_basis_mode=getattr(reference_cfg, "optimization_f_photon_basis", "period"),
         )
         return scratch._peak_efficiency_from_f_values(f_val)
 
@@ -2665,7 +3243,7 @@ class TwinEngine:
             fi, f_val = self.compute_fisher_info(
                 x_range,
                 n_photons=1e4,
-                photon_basis_mode=getattr(candidate_cfg, "optimization_f_photon_basis", "all"),
+                photon_basis_mode=getattr(candidate_cfg, "optimization_f_photon_basis", "period"),
             )
             mean_f = float(np.nanmean(f_val)) if np.any(np.isfinite(f_val)) else np.inf
             min_f = float(np.nanmin(f_val)) if np.any(np.isfinite(f_val)) else np.nan
@@ -2914,7 +3492,7 @@ class TwinEngine:
         final_fi, final_f = self.compute_fisher_info(
             x_range,
             int(self.config.precision_photons),
-            photon_basis_mode=getattr(self.config, "optimization_f_photon_basis", "all"),
+            photon_basis_mode=getattr(self.config, "optimization_f_photon_basis", "period"),
         )
         window_start, window_end = self._resolve_optimization_window(
             t_max=float(self.config.period),

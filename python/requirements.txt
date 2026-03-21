@@ -1,4 +1,4 @@
-numpy
+numpy<2
 scipy
 pytest
 pydantic
@@ -6,8 +6,6 @@ fastapi
 uvicorn
 numba
 h5py
-phasorpy
-flimlib
-matplotlib
+matplotlib<3.9
 pandas
 sdtfile

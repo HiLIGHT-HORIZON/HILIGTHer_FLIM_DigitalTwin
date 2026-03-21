@@ -102,8 +102,12 @@ class HILIGHTMainWindow(QMainWindow):
         self.optimization_ideal_f = None
         self.optimization_autoplay_previous = None
         self.last_validation_run = None
+        self.validation_fit_summary = None
         self.workspace_mode = None
         self.desktop_api = DesktopAutomationAPI(self)
+        self.simulation_core_prompted_session = False
+        self.event_driven_warning_shown_session = False
+        self.startup_complete = False
         
         # Setup Manual (Persistent Sidepanel)
         repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -135,7 +139,9 @@ class HILIGHTMainWindow(QMainWindow):
         self.restore_layout()
         
         # Initial Plot Refresh
+        self._update_simulation_mode_badge()
         self.refresh_diagnostics()
+        self.startup_complete = True
 
     def save_layout(self):
         self.settings.setValue("layoutVersion", self.LAYOUT_VERSION)
@@ -263,19 +269,6 @@ class HILIGHTMainWindow(QMainWindow):
         exit_act.triggered.connect(self.close)
         file_menu.addAction(exit_act)
         
-        help_menu = menubar.addMenu("&Help")
-        
-        self.manual_act = QAction("See Manual", self)
-        self.manual_act.setShortcut("Ctrl+H")
-        self.manual_act.triggered.connect(self.show_manual)
-        help_menu.addAction(self.manual_act)
-        
-        help_menu.addSeparator()
-        
-        about_act = QAction("About", self)
-        about_act.triggered.connect(self.show_about)
-        help_menu.addAction(about_act)
-
         view_menu = menubar.addMenu("&View")
         theme_menu = view_menu.addMenu("Theme")
         self.theme_group = QActionGroup(self)
@@ -296,6 +289,20 @@ class HILIGHTMainWindow(QMainWindow):
         self.view_testing_act = QAction("Image Validation Workspace", self)
         self.view_testing_act.triggered.connect(self.apply_testing_view)
         view_menu.addAction(self.view_testing_act)
+
+        help_menu = menubar.addMenu("&Help")
+        
+        self.manual_act = QAction("See Manual", self)
+        self.manual_act.setShortcut("Ctrl+H")
+        self.manual_act.triggered.connect(self.show_manual)
+        help_menu.addAction(self.manual_act)
+        
+        help_menu.addSeparator()
+        
+        about_act = QAction("About", self)
+        about_act.triggered.connect(self.show_about)
+        help_menu.addAction(about_act)
+
 
     def apply_theme(self):
         """Applies the current theme from settings."""
@@ -379,7 +386,7 @@ class HILIGHTMainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, d_dock)
 
         # Bottom Left: Image / Map
-        map_dock = QDockWidget("Image Validation", self)
+        map_dock = QDockWidget("MC Image Validation", self)
         map_dock.setObjectName("dock_map")
         map_dock.setWidget(self.map_widget)
         self.dock_map = map_dock
@@ -434,6 +441,7 @@ class HILIGHTMainWindow(QMainWindow):
         self.control_widget.btn_manage_inst.clicked.connect(self.open_instrument_manager)
         self.control_widget.chk_opt_detection.toggled.connect(self._on_optimization_scope_toggled)
         self.control_widget.chk_opt_excitation.toggled.connect(self._on_optimization_scope_toggled)
+        self.control_widget.advanced_config_changed.connect(self.refresh_diagnostics)
         
         # Auto-refresh diagnostics on any param change
         from PyQt6.QtWidgets import QDoubleSpinBox, QSpinBox, QComboBox, QCheckBox, QLineEdit
@@ -450,7 +458,6 @@ class HILIGHTMainWindow(QMainWindow):
         self.control_widget.btn_freeform_mode.toggled.connect(self.refresh_diagnostics)
 
         self.map_widget.pixel_selected.connect(self.on_pixel_select)
-        self.phasor_widget.roi_changed.connect(self.on_phasor_roi)
 
     def _update_primary_action_buttons(self):
         optimisation_running = bool(self.optimization_running)
@@ -464,6 +471,68 @@ class HILIGHTMainWindow(QMainWindow):
         else:
             self.control_widget.btn_precision.setText("Run Analysis")
             self.control_widget.btn_precision.setToolTip("Run the current analysis workflow, including precision calculations and active result views.")
+
+    def _update_simulation_mode_badge(self):
+        status = self.engine.get_simulation_mode_status()
+        self.control_widget._update_simulation_mode_badge(status)
+
+    def _detector_event_effects_active(self, cfg=None):
+        cfg = cfg or self.engine.config
+        if float(getattr(cfg, "detector_deadtime", 0.0)) > 0.0:
+            return True
+        if not bool(getattr(cfg, "b_multihit_mode", True)):
+            return True
+        capacity = getattr(cfg, "event_multihit_capacity", None)
+        if capacity is None:
+            return False
+        try:
+            capacity_val = int(capacity)
+        except (TypeError, ValueError):
+            return False
+        return capacity_val < 1_000_000
+
+    def _resolve_simulation_core_session_choice(self):
+        if not self.startup_complete:
+            return
+
+        cfg = self.engine.config
+        preference = str(getattr(cfg, "simulation_mode_preference", "auto")).lower()
+        if self._detector_event_effects_active(cfg) and preference == "auto" and not self.simulation_core_prompted_session:
+            box = QMessageBox(self)
+            box.setWindowTitle("Detector Effects Enabled")
+            box.setIcon(QMessageBox.Icon.Information)
+            box.setText("Detector event effects are active.")
+            box.setInformativeText(
+                "Choose which computational core to use for these effects.\n\n"
+                "Use Ideal Poisson (recommended) to apply the fast detector-transfer approximation.\n"
+                "Use Event-driven for chronological detection physics.\n\n"
+                "The event-driven core is still under development and is slow. Use few pixels and few MC repeats."
+            )
+            btn_poisson = box.addButton("Use Ideal Poisson (recommended)", QMessageBox.ButtonRole.AcceptRole)
+            btn_event = box.addButton("Use Event-driven", QMessageBox.ButtonRole.ActionRole)
+            box.setDefaultButton(btn_poisson)
+            box.exec()
+            chosen = "event_driven" if box.clickedButton() is btn_event else "ideal_poisson"
+            self.control_widget.simulation_mode_preference = chosen
+            self.engine.config.simulation_mode_preference = chosen
+            self.simulation_core_prompted_session = True
+            if chosen == "event_driven":
+                self.event_driven_warning_shown_session = True
+            self._update_simulation_mode_badge()
+
+        status = self.engine.get_simulation_mode_status()
+        if (
+            self.startup_complete
+            and str(status.get("effective_mode", "ideal_poisson")).lower() == "event_driven"
+            and not self.event_driven_warning_shown_session
+        ):
+            QMessageBox.warning(
+                self,
+                "Event-driven Core",
+                "The event-driven computational core is still under development. Use with caution.\n\n"
+                "It is also significantly slower than the Ideal Poisson core. Prefer few pixels and few MC repeats.",
+            )
+            self.event_driven_warning_shown_session = True
 
     def open_instrument_manager(self):
         # Pass engine config to manager
@@ -482,6 +551,7 @@ class HILIGHTMainWindow(QMainWindow):
             self.control_widget.update_from_config(self.engine.config)
         finally:
             self.loading_config_into_ui = False
+        self._update_simulation_mode_badge()
         self.refresh_diagnostics()
 
     def _set_export_enabled(self):
@@ -522,7 +592,7 @@ class HILIGHTMainWindow(QMainWindow):
             theory_fi, theory_f = self.engine.compute_fisher_info(
                 x_range,
                 int(self.engine.config.precision_photons),
-                photon_basis_mode=getattr(self.engine.config, "optimization_f_photon_basis", "all"),
+                photon_basis_mode=getattr(self.engine.config, "optimization_f_photon_basis", "period"),
             )
             frame = self._create_diagnostics_frame(self.engine.config, label)
             frame["background_curves"] = self._build_precision_pdf_ensemble(self.engine.config, x_range)
@@ -793,6 +863,7 @@ class HILIGHTMainWindow(QMainWindow):
 
     def run_optimization_workflow(self):
         self.sync_ui_to_config()
+        self._resolve_simulation_core_session_choice()
         cfg = self.engine.config
         cfg.b_interrupt = False
 
@@ -1042,14 +1113,12 @@ class HILIGHTMainWindow(QMainWindow):
         optimization_first_map = {"detection first": "detection", "excitation first": "excitation"}
         cfg.optimization_first = optimization_first_map.get(cw.combo_optimization_first.currentText().lower(), "detection")
         cfg.optimization_iterations = cw.spin_optimization_iterations.value()
-        optimization_basis_map = {
-            "all photons": "all",
-            "collected photons": "collected",
-        }
-        cfg.optimization_f_photon_basis = optimization_basis_map.get(
-            cw.combo_optimization_f_basis.currentText().lower(),
-            "all",
-        )
+        if cw.radio_f_basis_collected.isChecked():
+            cfg.optimization_f_photon_basis = "collected"
+        elif cw.radio_f_basis_all.isChecked():
+            cfg.optimization_f_photon_basis = "all"
+        else:
+            cfg.optimization_f_photon_basis = "period"
         optimization_objective_map = {
             "fisher information": "fisher_information",
             "fisher throughput": "fisher_throughput",
@@ -1149,13 +1218,21 @@ class HILIGHTMainWindow(QMainWindow):
         cfg.image_mc_repeats = int(cw.spin_image_repeats.value())
         image_fit_map = {
             "gridded mle": "gridded_mle",
-            "mle": "mle",
+            "iterative reconvolution": "mle",
             "tail fitting": "tail",
         }
         cfg.image_fit_method = image_fit_map.get(cw.combo_image_fit_method.currentText().lower(), "gridded_mle")
         cfg.timing_jitter = cw.spin_jitter.value()
         cfg.detector_deadtime = cw.spin_deadtime.value()
         cfg.b_multihit_mode = cw.chk_multihit.isChecked()
+        cfg.simulation_mode_preference = str(getattr(cw, "simulation_mode_preference", "auto")).lower()
+        cfg.event_deadtime_mode = "none" if cfg.detector_deadtime <= 0 else "nonparalyzable"
+        cfg.event_multihit_capacity = getattr(cw, "event_multihit_capacity", None)
+        cfg.event_routing_mode = "exclusive"
+        cfg.event_arbitration_rule = "random"
+        cfg.event_share_resource_group = True
+        cfg.event_return_timestamps = False
+        cfg.event_pixel_dwell_time_s = float(getattr(cw, "event_pixel_dwell_time_s", 1e-3))
         cfg.n_repeats = int(cw.spin_image_repeats.value())
 
         # Gating
@@ -1230,7 +1307,20 @@ class HILIGHTMainWindow(QMainWindow):
             self.engine.distill_gates()
             tau_ref = self.engine.config.taus[0] if self.engine.config.taus else 2.5
             pdf_ref = self.engine.dt_pdf(self.engine.time_vector, tau_ref)
-            irf_ref = self.engine.dt_excitation(self.engine.time_vector)
+            pdf_ref = self.engine._effective_detected_pdf(
+                pdf_ref,
+                float(getattr(self.engine.config, "a_photons", 0.0)),
+                self.engine.config,
+            )
+            irf_cfg = copy.deepcopy(self.engine.config)
+            irf_cfg.simulation_mode_preference = "ideal_poisson"
+            irf_cfg.background_level = 0.0
+            irf_cfg.decay_model = "exponential"
+            irf_cfg.n_components = 1
+            irf_cfg.taus = [1e-9]
+            irf_cfg.amplitudes = [1.0]
+            self.engine.config = irf_cfg
+            irf_ref = self.engine.dt_pdf(self.engine.time_vector, tau=1e-9)
             return {
                 "time_vec": np.array(self.engine.time_vector, copy=True),
                 "gate_shapes": np.array(self.engine.gate_shapes, copy=True),
@@ -1273,6 +1363,8 @@ class HILIGHTMainWindow(QMainWindow):
         if self.optimization_running:
             return
         self.sync_ui_to_config()
+        self._resolve_simulation_core_session_choice()
+        self._update_simulation_mode_badge()
         if self.optimization_mode_active and not self.optimization_running:
             self._show_optimization_baseline()
             return
@@ -1340,6 +1432,7 @@ class HILIGHTMainWindow(QMainWindow):
         self.last_precision_run = None
         self.last_optimization_run = None
         self.last_validation_run = None
+        self.validation_fit_summary = None
         self.workspace_mode = None
         self.export_precision_act.setEnabled(False)
         self.control_widget.btn_export.setEnabled(False)
@@ -1399,6 +1492,7 @@ class HILIGHTMainWindow(QMainWindow):
             self.loading_config_into_ui = False
         self.settings.setValue("theme", metadata.get("theme", "dark"))
         self.apply_theme()
+        self._update_simulation_mode_badge()
         self.engine.raw_data = arrays.get("raw_data")
         self.engine.tau_map = arrays.get("tau_map")
         self.engine.a_map = arrays.get("a_map")
@@ -1470,7 +1564,7 @@ class HILIGHTMainWindow(QMainWindow):
                     _, f_val = self.engine.compute_fisher_info(
                         x_range,
                         int(sweep_cfg.a_photons),
-                        photon_basis_mode=getattr(sweep_cfg, "optimization_f_photon_basis", "all"),
+                        photon_basis_mode=getattr(sweep_cfg, "optimization_f_photon_basis", "period"),
                     )
                     batch_results[self._format_sweep_label(param, val, sweep_cfg)] = np.array(f_val, copy=True)
                 finally:
@@ -1496,7 +1590,7 @@ class HILIGHTMainWindow(QMainWindow):
             _, f_val = self.engine.compute_fisher_info(
                 x_range,
                 int(cfg.a_photons),
-                photon_basis_mode=getattr(cfg, "optimization_f_photon_basis", "all"),
+                photon_basis_mode=getattr(cfg, "optimization_f_photon_basis", "period"),
             )
             
             sweep_pdfs = self._build_precision_pdf_ensemble(cfg, x_range)
@@ -1550,7 +1644,13 @@ class HILIGHTMainWindow(QMainWindow):
                 self.engine.config = pdf_cfg
                 self.engine._set_cfg_param(pdf_cfg.f_x_param, float(x_val))
                 self.engine.distill_gates()
-                curves.append(np.array(self.engine.dt_pdf(self.engine.time_vector), copy=True))
+                pdf = np.array(self.engine.dt_pdf(self.engine.time_vector), copy=True)
+                pdf = self.engine._effective_detected_pdf(
+                    pdf,
+                    float(getattr(pdf_cfg, "a_photons", 0.0)),
+                    pdf_cfg,
+                )
+                curves.append(pdf)
             return curves
         finally:
             self.engine.config = original_config
@@ -1559,20 +1659,6 @@ class HILIGHTMainWindow(QMainWindow):
         tokens = [token.strip() for token in raw_text.split(",") if token.strip()]
         if not tokens:
             return []
-        if param == "multihit_capabilities":
-            values = []
-            for token in tokens:
-                normalized = token.lower()
-                if normalized in {"1", "true", "on", "yes", "enabled", "multi"}:
-                    values.append(1.0)
-                elif normalized in {"0", "false", "off", "no", "disabled", "single"}:
-                    values.append(0.0)
-                else:
-                    try:
-                        values.append(1.0 if float(token) >= 0.5 else 0.0)
-                    except Exception:
-                        continue
-            return values
         try:
             return [float(token) for token in tokens]
         except Exception:
@@ -1595,7 +1681,7 @@ class HILIGHTMainWindow(QMainWindow):
         if param == "countrate_fixed_deadtime_kcps":
             return f"Countrate = {value:g} Kphotons/s @ {cfg.instr_sweep_fixed_deadtime_ns:g} ns"
         if param == "multihit_capabilities":
-            return f"Multihit = {'On' if value >= 0.5 else 'Off'}"
+            return f"Max events/period = {int(round(value))}"
         if param == "burst_edge_symmetric_ns":
             return f"Burst Rise/Fall = {value:g} ns"
         if param == "burst_edge_one_sharp_ns":
@@ -1649,7 +1735,9 @@ class HILIGHTMainWindow(QMainWindow):
             cfg.metadata["countrate_kcps"] = float(value)
         elif param == "multihit_capabilities":
             cfg.metadata["force_precision_deadtime_mc"] = True
-            cfg.b_multihit_mode = bool(value >= 0.5)
+            capacity = max(int(round(value)), 1)
+            cfg.event_multihit_capacity = capacity
+            cfg.b_multihit_mode = capacity > 1
         elif param == "burst_edge_symmetric_ns":
             cfg.burst_enabled = True
             cfg.burst_sub_rise_time = float(value)
@@ -1677,6 +1765,7 @@ class HILIGHTMainWindow(QMainWindow):
         if not self._confirm_workspace_transition("precision"):
             return
         self.sync_ui_to_config()
+        self._resolve_simulation_core_session_choice()
         self.apply_simulation_view()
         self.workspace_mode = "precision"
         baseline_cfg = copy.deepcopy(self.engine.config)
@@ -1777,7 +1866,7 @@ class HILIGHTMainWindow(QMainWindow):
                     x_range,
                     int(sweep_cfg.precision_photons),
                     point_callback=theory_callback,
-                    photon_basis_mode=getattr(sweep_cfg, "optimization_f_photon_basis", "all"),
+                    photon_basis_mode=getattr(sweep_cfg, "optimization_f_photon_basis", "period"),
                 )
                 theory_f = np.array(theory_final, copy=True)
                 plot_results[theory_label] = {
@@ -1906,6 +1995,7 @@ class HILIGHTMainWindow(QMainWindow):
         self.control_widget.btn_simulate.setEnabled(False)
         self.control_widget.btn_interrupt.setEnabled(True)
         self.sync_ui_to_config()
+        self._resolve_simulation_core_session_choice()
         self.apply_testing_view()
         self.workspace_mode = "validation"
         self.statusBar().showMessage("Generating synthetic validation image...")
@@ -1940,6 +2030,7 @@ class HILIGHTMainWindow(QMainWindow):
             self.statusBar().showMessage("Generate a validation image before fitting.")
             return
         self.sync_ui_to_config()
+        self._resolve_simulation_core_session_choice()
         self.statusBar().showMessage("Fitting validation image...")
         if update_buttons:
             self.progress.show()
@@ -1965,10 +2056,17 @@ class HILIGHTMainWindow(QMainWindow):
     def _refresh_validation_views(self):
         intensity = None if self.engine.raw_data is None else np.sum(self.engine.raw_data, axis=2)
         lifetime = self.engine.tau_map if self.engine.tau_map is not None else self.engine.validation_param_map
+        self.validation_fit_summary = self.engine.summarize_validation_performance(lifetime, photon_map=intensity)
         self.map_widget.set_images(intensity, lifetime)
         g_map, s_map = self.engine.calculate_phasor()
         if g_map is not None and s_map is not None:
-            self.phasor_widget.update_data(g_map, s_map)
+            self.phasor_widget.update_data(
+                g_map,
+                s_map,
+                performance_summary=self.validation_fit_summary,
+                universal_locus=self.engine.get_theoretical_locus(),
+                actual_locus=self.engine.get_discrete_single_exponential_arc(),
+            )
         self.on_pixel_select(0, 0)
 
 
@@ -1978,31 +2076,40 @@ class HILIGHTMainWindow(QMainWindow):
         payload = self.engine.get_pixel_fit_payload(y, x, fit_method=self.engine.config.image_fit_method)
         if payload.get("status") != "ok":
             return
-        histogram_values = None
-        if self.engine.tau_map is not None:
-            histogram_values = self.engine.tau_map[np.isfinite(self.engine.tau_map)]
-        elif self.engine.validation_param_map is not None:
-            histogram_values = self.engine.validation_param_map[np.isfinite(self.engine.validation_param_map)]
         self.decay_widget.update_decay(
             payload["centers"],
             payload["counts"],
-            fit=payload.get("fit"),
+            fit=payload.get("fit_values"),
+            fit_x=payload.get("fit_centers"),
             residuals=payload.get("residuals"),
-            irf=payload.get("irf_gate"),
+            irf=payload.get("irf_values"),
+            irf_x=payload.get("irf_time"),
             reduced_chi2=payload.get("reduced_chi2"),
             randomness=payload.get("randomness"),
-            histogram_values=histogram_values,
+            performance_summary=self.validation_fit_summary,
             selected_value=payload.get("estimate"),
             truth_value=payload.get("truth"),
         )
+        g_map, s_map = self.engine.calculate_phasor()
+        if g_map is not None and s_map is not None:
+            selected_phasor = None
+            try:
+                selected_phasor = (float(g_map[y, x]), float(s_map[y, x]))
+            except Exception:
+                selected_phasor = None
+            self.phasor_widget.update_data(
+                g_map,
+                s_map,
+                performance_summary=self.validation_fit_summary,
+                selected_value=payload.get("estimate"),
+                truth_value=payload.get("truth"),
+                selected_phasor=selected_phasor,
+                universal_locus=self.engine.get_theoretical_locus(),
+                actual_locus=self.engine.get_discrete_single_exponential_arc(),
+            )
 
     def on_phasor_roi(self, gmin, gmax, smin, smax):
-        if self.engine.raw_data is None:
-            return
-        mask = self.engine.get_roi_mask(gmin, gmax, smin, smax)
-        if mask is None:
-            return
-        self.statusBar().showMessage(f"Phasor ROI selected {int(np.count_nonzero(mask))} pixels.")
+        return
 
     def export_last_precision_report(self):
         self.preview_last_precision_report()
@@ -2563,13 +2670,12 @@ class HILIGHTMainWindow(QMainWindow):
         <hr>
         <b>Powered by:</b>
         <ul>
-            <li><b>PhasorPy</b>: Phasor analysis and IRF-calibrated image-validation phasor products.</li>
-            <li><b>FLIMfit / FLIMLib</b>: Lifetime-fitting backend used for validation-image analysis paths.</li>
+            <li><b>HILIGHTer backend</b>: Internal phasor analysis and lifetime-fitting backend used for validation-image analysis paths.</li>
             <li><b>PyQt6 & PyQtGraph</b>: High-performance UI and plotting.</li>
             <li><b>NumPy, SciPy & Numba</b>: Numerical processing kernels.</li>
             <li><b>QDarkStyle</b>: Sleek, research-ready aesthetics.</li>
         </ul>
-        <p><i>Special thanks to the PhasorPy and FLIMfit / FLIMLib contributors for enabling the validation-analysis workflow.</i></p>
+        <p><i>The validation-analysis workflow is implemented directly within the HILIGHTer backend.</i></p>
         """
         QMessageBox.about(self, "About HILIGHTer", about_text)
 

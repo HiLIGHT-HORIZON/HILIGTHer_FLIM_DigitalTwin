@@ -108,8 +108,9 @@ The optimisation workflow is integrated into the main desktop workspace. It shou
 The backend configuration object is the single source of truth for:
 
 - decay-model settings,
-- excitation settings,
+- laser-profile and excitation settings,
 - gate geometry and overlap semantics,
+- Fisher-information photon-basis semantics,
 - sweep definitions,
 - Monte Carlo and fitting settings,
 - validation-image settings,
@@ -134,6 +135,7 @@ The HTML manual should always describe the current Python workspace, including:
 
 - repo layout and launch paths,
 - desktop workflow usage,
+- the compact controller layout and simulation-core badge semantics,
 - workspace persistence,
 - service, HTTP, automation, and MCP interfaces,
 - optimisation scope and current limitations,

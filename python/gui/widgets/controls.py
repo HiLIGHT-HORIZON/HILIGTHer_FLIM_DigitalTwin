@@ -13,6 +13,8 @@ from .freeform_irf_editor import FreeFormIRFEditor
 
 class ControlWidget(QWidget):
     context_changed = pyqtSignal(str) # Emits section ID for manual
+    advanced_config_changed = pyqtSignal()
+    EVENT_CAPACITY_UNLIMITED = 1_000_000
     OPT_HISTORY_COLORS = {
         "objective": "#ef4444",
         "min_f": "#22c55e",
@@ -29,6 +31,15 @@ class ControlWidget(QWidget):
         self.optimization_running_state = False
         self._anchor_syncing = False
         self._f_photon_basis_syncing = False
+        self.current_f_photon_basis_mode = "period"
+        self.simulation_mode_preference = "auto"
+        self.event_deadtime_mode = "nonparalyzable"
+        self.event_multihit_capacity = None
+        self.event_routing_mode = "exclusive"
+        self.event_arbitration_rule = "random"
+        self.event_share_resource_group = False
+        self.event_return_timestamps = False
+        self.event_pixel_dwell_time_s = 1e-3
         layout = QVBoxLayout(self)
         
         # Main Tab Container
@@ -52,24 +63,38 @@ class ControlWidget(QWidget):
         
         model_group = QGroupBox("Model Architecture")
         model_form = QFormLayout(model_group)
+        model_form.setHorizontalSpacing(6)
+        model_form.setVerticalSpacing(6)
         self.combo_decay_model = QComboBox()
         self.combo_decay_model.addItems(["Exponential", "Stretched", "Custom"])
-        self.combo_decay_model.setToolTip("Select the mathematical model for fluorescence decay.")
-        model_form.addRow("Mode:", self.combo_decay_model)
-        
+        self.combo_decay_model.setToolTip("Select the mathematical form used for the fluorescence decay.")
         self.spin_n_comp = QSpinBox()
         self.spin_n_comp.setRange(1, 10)
         self.spin_n_comp.setValue(1)
-        model_form.addRow("N Components:", self.spin_n_comp)
+        model_row = QWidget()
+        model_row_layout = QHBoxLayout(model_row)
+        model_row_layout.setContentsMargins(0, 0, 0, 0)
+        model_row_layout.setSpacing(6)
+        model_row_layout.addWidget(QLabel("Decay:"))
+        model_row_layout.addWidget(self.combo_decay_model, 2)
+        model_row_layout.addWidget(QLabel("N components:"))
+        model_row_layout.addWidget(self.spin_n_comp, 1)
+        model_form.addRow(model_row)
 
-        self.chk_pulse_train_decay = QCheckBox("Enable PDF Wrapping (Pulse Train)")
-        self.chk_pulse_train_decay.setToolTip("Handles long-lived decay 'wraparound' by modulo-summing the PDF over Trep.")
+        self.chk_pulse_train_decay = QCheckBox("Decay wrapping")
+        self.chk_pulse_train_decay.setToolTip("Wrap long fluorescence decays across the repetition period so previous pulses contribute to the current acquisition window.")
         model_form.addRow(self.chk_pulse_train_decay)
+
+        self.btn_simulation_mode_badge = QToolButton()
+        self.btn_simulation_mode_badge.setText("Ideal Poisson (auto)")
+        self.btn_simulation_mode_badge.setToolTip("Click to cycle simulation core preference.")
+        self.btn_simulation_mode_badge.clicked.connect(self._cycle_simulation_mode_preference)
+        model_form.addRow("Simulation core:", self.btn_simulation_mode_badge)
         
         decay_layout.addWidget(model_group)
 
         # Precision Parameters Table/Matrix
-        param_group = QGroupBox("Fit Parameters & Precision Targeting")
+        param_group = QGroupBox("Decay parameters")
         param_vbox = QVBoxLayout(param_group)
         self.param_grid = QFormLayout()
         
@@ -129,8 +154,10 @@ class ControlWidget(QWidget):
         self.update_param_visibility()
 
         # F-Value Curve Resolution
-        sweep_grid_group = QGroupBox("Precision Sweep Configuration (X-Axis)")
+        sweep_grid_group = QGroupBox("Precision Sweep Configuration")
         sweep_grid_form = QFormLayout(sweep_grid_group)
+        sweep_grid_form.setHorizontalSpacing(6)
+        sweep_grid_form.setVerticalSpacing(6)
         self.spin_fx_min = QDoubleSpinBox()
         self.spin_fx_min.setRange(0.0, 1000)
         self.spin_fx_min.setValue(0.5)
@@ -138,8 +165,6 @@ class ControlWidget(QWidget):
         self.spin_fx_max = QDoubleSpinBox()
         self.spin_fx_max.setRange(0.0, 1000)
         self.spin_fx_max.setValue(7.5)
-        sweep_grid_form.addRow(two_column_row("Min Value:", self.spin_fx_min, "Max Value:", self.spin_fx_max))
-
         self.spin_fx_steps = QSpinBox()
         self.spin_fx_steps.setRange(10, 500)
         self.spin_fx_steps.setValue(30)
@@ -147,11 +172,30 @@ class ControlWidget(QWidget):
         self.spin_grid_fine_factor = QSpinBox()
         self.spin_grid_fine_factor.setRange(1, 1000)
         self.spin_grid_fine_factor.setValue(100)
-        sweep_grid_form.addRow(two_column_row("Steps:", self.spin_fx_steps, "MLE Fine Factor:", self.spin_grid_fine_factor))
-
         self.combo_fx_scale = QComboBox()
         self.combo_fx_scale.addItems(["Log", "Linear", "Exponential"])
-        sweep_grid_form.addRow("Grid Scale:", self.combo_fx_scale)
+        self.lbl_fx_min = QLabel("Min Tau 1 (ns):")
+        self.lbl_fx_max = QLabel("Max:")
+        row_one = QWidget()
+        row_one_layout = QHBoxLayout(row_one)
+        row_one_layout.setContentsMargins(0, 0, 0, 0)
+        row_one_layout.setSpacing(6)
+        row_one_layout.addWidget(self.lbl_fx_min)
+        row_one_layout.addWidget(self.spin_fx_min, 1)
+        row_one_layout.addWidget(self.lbl_fx_max)
+        row_one_layout.addWidget(self.spin_fx_max, 1)
+        row_one_layout.addWidget(QLabel("Steps:"))
+        row_one_layout.addWidget(self.spin_fx_steps, 1)
+        sweep_grid_form.addRow(row_one)
+        row_two = QWidget()
+        row_two_layout = QHBoxLayout(row_two)
+        row_two_layout.setContentsMargins(0, 0, 0, 0)
+        row_two_layout.setSpacing(6)
+        row_two_layout.addWidget(QLabel("Grid scale:"))
+        row_two_layout.addWidget(self.combo_fx_scale, 1)
+        row_two_layout.addWidget(QLabel("MLE Fine Factor:"))
+        row_two_layout.addWidget(self.spin_grid_fine_factor, 1)
+        sweep_grid_form.addRow(row_two)
         decay_layout.addWidget(sweep_grid_group)
 
         mle_group = QGroupBox("Gridded MLE Definition")
@@ -159,22 +203,41 @@ class ControlWidget(QWidget):
         self.lbl_grid_min = QLabel("0.100")
         self.lbl_grid_max = QLabel("10.000")
         self.lbl_grid_steps = QLabel("5000")
-        self.lbl_grid_scale = QLabel("Linear")
-        mle_form.addRow(two_column_row("Grid Min:", self.lbl_grid_min, "Grid Max:", self.lbl_grid_max))
-        mle_form.addRow(two_column_row("Grid Steps:", self.lbl_grid_steps, "Grid Scale:", self.lbl_grid_scale))
+        self.lbl_grid_mle_min = QLabel("Grid MLE min (ns):")
+        mle_row = QWidget()
+        mle_row_layout = QHBoxLayout(mle_row)
+        mle_row_layout.setContentsMargins(0, 0, 0, 0)
+        mle_row_layout.setSpacing(6)
+        mle_row_layout.addWidget(self.lbl_grid_mle_min)
+        mle_row_layout.addWidget(self.lbl_grid_min, 1)
+        mle_row_layout.addWidget(QLabel("Max:"))
+        mle_row_layout.addWidget(self.lbl_grid_max, 1)
+        mle_row_layout.addWidget(QLabel("MLE grid steps:"))
+        mle_row_layout.addWidget(self.lbl_grid_steps, 1)
+        mle_form.addRow(mle_row)
         decay_layout.addWidget(mle_group)
 
-        exec_group = QGroupBox("Precision Execution")
+        exec_group = QGroupBox("Fisher Information")
         exec_form = QFormLayout(exec_group)
+        exec_group.setStyleSheet("QGroupBox::title { color: #d946ef; font-weight: bold; }")
         self.chk_validate_mc = QCheckBox("Validate with Monte Carlo")
-        self.chk_validate_mc.setChecked(True)
-        self.chk_compute_ci = QCheckBox("Compute 95% CI")
+        self.chk_validate_mc.setChecked(False)
+        self.chk_compute_ci = QCheckBox("Evaluate CI")
         self.chk_compute_ci.setChecked(False)
+
+        self.spin_ci_level = QDoubleSpinBox()
+        self.spin_ci_level.setRange(50.0, 99.999)
+        self.spin_ci_level.setDecimals(3)
+        self.spin_ci_level.setSingleStep(0.5)
+        self.spin_ci_level.setValue(95.0)
         mc_toggle_row = QWidget()
         mc_toggle_layout = QHBoxLayout(mc_toggle_row)
         mc_toggle_layout.setContentsMargins(0, 0, 0, 0)
+        mc_toggle_layout.setSpacing(6)
         mc_toggle_layout.addWidget(self.chk_validate_mc)
         mc_toggle_layout.addWidget(self.chk_compute_ci)
+        mc_toggle_layout.addWidget(QLabel("CI Level (%):"))
+        mc_toggle_layout.addWidget(self.spin_ci_level)
         mc_toggle_layout.addStretch()
         exec_form.addRow(mc_toggle_row)
 
@@ -185,26 +248,39 @@ class ControlWidget(QWidget):
         self.spin_mc_repeats = QSpinBox()
         self.spin_mc_repeats.setRange(10, 5000)
         self.spin_mc_repeats.setValue(400)
-        exec_form.addRow(two_column_row("Precision Photons:", self.spin_precision_photons, "MC Repeats:", self.spin_mc_repeats))
+        exec_form.addRow(two_column_row("Photons:", self.spin_precision_photons, "MC Repeats:", self.spin_mc_repeats))
 
         self.spin_accuracy_pvalue = QDoubleSpinBox()
         self.spin_accuracy_pvalue.setRange(0.00000001, 0.5)
         self.spin_accuracy_pvalue.setDecimals(8)
         self.spin_accuracy_pvalue.setSingleStep(0.000001)
-        self.spin_accuracy_pvalue.setValue(0.0000001)
-        exec_form.addRow("Estimator Accuracy p-value:", self.spin_accuracy_pvalue)
+        self.spin_accuracy_pvalue.setValue(0.0001)
 
         self.spin_bootstrap_samples = QSpinBox()
         self.spin_bootstrap_samples.setRange(200, 100000)
         self.spin_bootstrap_samples.setSingleStep(100)
         self.spin_bootstrap_samples.setValue(2000)
+        exec_form.addRow(two_column_row("Estimator accuracy p-value:", self.spin_accuracy_pvalue, "Bootstrap resamples:", self.spin_bootstrap_samples))
 
-        self.spin_ci_level = QDoubleSpinBox()
-        self.spin_ci_level.setRange(50.0, 99.999)
-        self.spin_ci_level.setDecimals(3)
-        self.spin_ci_level.setSingleStep(0.5)
-        self.spin_ci_level.setValue(95.0)
-        exec_form.addRow(two_column_row("Bootstrap Resamples:", self.spin_bootstrap_samples, "CI Level (%):", self.spin_ci_level))
+        basis_row = QWidget()
+        basis_row_layout = QHBoxLayout(basis_row)
+        basis_row_layout.setContentsMargins(0, 0, 0, 0)
+        basis_row_layout.setSpacing(8)
+        self.lbl_f_basis = QLabel("Compute F-value on")
+        self.radio_f_basis_period = QRadioButton("All in acquisition period")
+        self.radio_f_basis_all = QRadioButton("All")
+        self.radio_f_basis_collected = QRadioButton("Only collected (disregard losses)")
+        self.radio_f_basis_period.setChecked(True)
+        self.f_photon_basis_bg = QButtonGroup()
+        self.f_photon_basis_bg.addButton(self.radio_f_basis_period)
+        self.f_photon_basis_bg.addButton(self.radio_f_basis_all)
+        self.f_photon_basis_bg.addButton(self.radio_f_basis_collected)
+        basis_row_layout.addWidget(self.lbl_f_basis)
+        basis_row_layout.addWidget(self.radio_f_basis_period)
+        basis_row_layout.addWidget(self.radio_f_basis_all)
+        basis_row_layout.addWidget(self.radio_f_basis_collected)
+        basis_row_layout.addStretch()
+        exec_form.addRow(basis_row)
         self.chk_validate_mc.toggled.connect(self._sync_precision_execution_ui)
         self.chk_compute_ci.toggled.connect(lambda _: self._sync_precision_execution_ui(self.chk_validate_mc.isChecked()))
         self._sync_precision_execution_ui(self.chk_validate_mc.isChecked())
@@ -255,9 +331,9 @@ class ControlWidget(QWidget):
         analysis_group = QGroupBox("Image Analysis")
         analysis_form = QFormLayout(analysis_group)
         self.combo_image_fit_method = QComboBox()
-        self.combo_image_fit_method.addItems(["Gridded MLE", "MLE", "Tail Fitting"])
+        self.combo_image_fit_method.addItems(["Gridded MLE", "Iterative Reconvolution", "Tail Fitting"])
         analysis_form.addRow("Lifetime fitting:", self.combo_image_fit_method)
-        self.lbl_image_backends = QLabel("Phasors: PhasorPy | Lifetime fitting: FLIMfit")
+        self.lbl_image_backends = QLabel("Phasors: HILIGHTer backend | Lifetime fitting: HILIGHTer backend")
         self.lbl_image_backends.setWordWrap(True)
         analysis_form.addRow("Backends:", self.lbl_image_backends)
         self.btn_fit_image = QPushButton("FIT IMAGE")
@@ -270,7 +346,7 @@ class ControlWidget(QWidget):
         self.spin_image_repeats.valueChanged.connect(self.update_image_validation_summary)
         acq_layout.addStretch()
         self.update_image_validation_summary()
-        self.tabs.addTab(acq_tab, "Images")
+        self.tabs.addTab(acq_tab, "MC Image validation")
 
         # --- TAB 2: LASER / IRF (REFACTORED) ---
         laser_tab = QWidget()
@@ -284,7 +360,7 @@ class ControlWidget(QWidget):
         
         self.combo_profile = QComboBox()
         self.combo_profile.addItems(["Gaussian", "Rectangular", "Free Form", "Ideal (Dirac)"])
-        laser_layout.addRow("IRF Profile:", self.combo_profile)
+        laser_layout.addRow("Laser profile:", self.combo_profile)
         
         self.spin_fwhm = QDoubleSpinBox(); self.spin_fwhm.setValue(0.25)
         laser_layout.addRow("FWHM / Duration (ns):", self.spin_fwhm)
@@ -368,9 +444,39 @@ class ControlWidget(QWidget):
         hw_layout = QFormLayout(detector_group)
         self.spin_jitter = QSpinBox(); self.spin_jitter.setValue(150)
         self.spin_deadtime = QSpinBox(); self.spin_deadtime.setValue(45)
-        hw_layout.addRow(two_column_row("Jitter (ps):", self.spin_jitter, "Deadtime (ns):", self.spin_deadtime))
+        self.spin_pixel_dwell = QDoubleSpinBox()
+        self.spin_pixel_dwell.setRange(1e-6, 1e9)
+        self.spin_pixel_dwell.setDecimals(6)
+        self.spin_pixel_dwell.setSingleStep(1.0)
+        self.combo_pixel_dwell_unit = QComboBox()
+        self.combo_pixel_dwell_unit.addItems(["ns", "us", "ms", "s"])
+        detector_row_one = QWidget()
+        detector_row_one_layout = QHBoxLayout(detector_row_one)
+        detector_row_one_layout.setContentsMargins(0, 0, 0, 0)
+        detector_row_one_layout.setSpacing(6)
+        detector_row_one_layout.addWidget(QLabel("Jitter (ps):"))
+        detector_row_one_layout.addWidget(self.spin_jitter, 1)
+        detector_row_one_layout.addWidget(QLabel("Deadtime (ns):"))
+        detector_row_one_layout.addWidget(self.spin_deadtime, 1)
+        detector_row_one_layout.addWidget(QLabel("Pixel dwell:"))
+        detector_row_one_layout.addWidget(self.spin_pixel_dwell, 1)
+        detector_row_one_layout.addWidget(self.combo_pixel_dwell_unit)
+        hw_layout.addRow(detector_row_one)
+        self.lbl_estimated_count_rate = QLabel("0 cps")
         self.chk_multihit = QCheckBox("Multihit Detection"); self.chk_multihit.setChecked(True)
-        hw_layout.addRow(self.chk_multihit)
+        self.spin_max_events_per_period = QSpinBox()
+        self.spin_max_events_per_period.setRange(1, self.EVENT_CAPACITY_UNLIMITED)
+        self.spin_max_events_per_period.setValue(self.EVENT_CAPACITY_UNLIMITED)
+        detector_runtime_row = QWidget()
+        detector_runtime_layout = QHBoxLayout(detector_runtime_row)
+        detector_runtime_layout.setContentsMargins(0, 0, 0, 0)
+        detector_runtime_layout.setSpacing(6)
+        detector_runtime_layout.addWidget(QLabel("Avg count rate:"))
+        detector_runtime_layout.addWidget(self.lbl_estimated_count_rate, 1)
+        detector_runtime_layout.addWidget(self.chk_multihit)
+        detector_runtime_layout.addWidget(QLabel("Max events/period:"))
+        detector_runtime_layout.addWidget(self.spin_max_events_per_period, 1)
+        hw_layout.addRow(detector_runtime_row)
         detection_layout.addWidget(detector_group)
 
         # Gating
@@ -450,18 +556,6 @@ class ControlWidget(QWidget):
         collection_layout.addWidget(self.radio_gate_collection_hist)
         collection_layout.addWidget(self.radio_gate_collection_seq)
         gate_layout.addRow(collection_group)
-
-        f_basis_group = QGroupBox("F-Value Photon Basis")
-        f_basis_layout = QVBoxLayout(f_basis_group)
-        self.radio_f_basis_all = QRadioButton("All photons")
-        self.radio_f_basis_collected = QRadioButton("Collected photons")
-        self.radio_f_basis_all.setChecked(True)
-        self.f_photon_basis_bg = QButtonGroup()
-        self.f_photon_basis_bg.addButton(self.radio_f_basis_all)
-        self.f_photon_basis_bg.addButton(self.radio_f_basis_collected)
-        f_basis_layout.addWidget(self.radio_f_basis_all)
-        f_basis_layout.addWidget(self.radio_f_basis_collected)
-        gate_layout.addRow(f_basis_group)
 
         overlap_group = QGroupBox("Gate Overlap")
         overlap_layout = QVBoxLayout(overlap_group)
@@ -547,9 +641,6 @@ class ControlWidget(QWidget):
         self.spin_optimization_iterations.setRange(1, 50)
         self.spin_optimization_iterations.setValue(20)
         optimization_scope_form.addRow(two_column_row("Run Order:", self.combo_optimization_first, "Max iterations:", self.spin_optimization_iterations))
-        self.combo_optimization_f_basis = QComboBox()
-        self.combo_optimization_f_basis.addItems(["All photons", "Collected photons"])
-        optimization_scope_form.addRow("F basis:", self.combo_optimization_f_basis)
         optimization_layout.addWidget(optimization_scope_group)
 
         optimization_view_group = QGroupBox("Optimisation Visualisation")
@@ -902,11 +993,19 @@ class ControlWidget(QWidget):
         self.chk_opt_detection.toggled.connect(self._sync_optimization_ui)
         self.chk_opt_excitation.toggled.connect(self._sync_optimization_ui)
         self.chk_optimization_realtime.toggled.connect(self._sync_optimization_ui)
-        self.combo_optimization_f_basis.currentIndexChanged.connect(self._sync_f_photon_basis_controls)
+        self.radio_f_basis_period.toggled.connect(self._sync_f_photon_basis_controls)
         self.radio_f_basis_all.toggled.connect(self._sync_f_photon_basis_controls)
         self.radio_f_basis_collected.toggled.connect(self._sync_f_photon_basis_controls)
+        self.spin_photons.valueChanged.connect(self._update_estimated_count_rate)
+        self.spin_deadtime.valueChanged.connect(self._sync_detector_event_controls)
+        self.spin_pixel_dwell.valueChanged.connect(self._sync_detector_event_controls)
+        self.combo_pixel_dwell_unit.currentIndexChanged.connect(self._sync_detector_event_controls)
+        self.chk_multihit.toggled.connect(self._sync_detector_event_controls)
+        self.spin_max_events_per_period.valueChanged.connect(self._sync_detector_event_controls)
         self._sync_optimization_ui()
         self._sync_f_photon_basis_controls()
+        self._set_detector_dwell_from_seconds(self.event_pixel_dwell_time_s)
+        self._sync_detector_event_controls()
 
         # --- TAB 6: BATCH SWEEP ---
         instr_tab = QWidget()
@@ -969,6 +1068,16 @@ class ControlWidget(QWidget):
             extra_label="Mode:",
         )
         add_sweep_option("number_of_gates", "Number of Gates", "2, 4, 8, 16")
+        add_sweep_option("detector_jitter_ps", "Detector Jitter (ps)", "0, 25, 50, 100, 150")
+        deadtime_rate = QLineEdit("100.0")
+        add_sweep_option(
+            "deadtime_fixed_countrate_ns",
+            "Detector Deadtime (ns)",
+            "0, 10, 25, 45, 90",
+            extra_widget=deadtime_rate,
+            extra_label="Count rate (kcps):",
+        )
+        add_sweep_option("multihit_capabilities", "Max events/period", "1, 2, 4, 8")
         add_sweep_option("burst_edge_symmetric_ns", "Burst Rise/Fall Time (ns) - Symmetric Values", "0.05, 0.1, 0.2")
         burst_sharp_mode = QComboBox()
         burst_sharp_mode.addItems(["Sharp Rise, Sweep Fall", "Sharp Fall, Sweep Rise"])
@@ -985,6 +1094,7 @@ class ControlWidget(QWidget):
 
         instr_layout.addStretch()
         self.tabs.addTab(instr_tab, "Batch Sweep")
+        self.tabs.tabBar().moveTab(1, 3)
 
         tabs_container = QWidget()
         tabs_container_layout = QVBoxLayout(tabs_container)
@@ -1217,14 +1327,13 @@ class ControlWidget(QWidget):
             return
         self._f_photon_basis_syncing = True
         try:
-            sender = self.sender()
-            if sender is self.combo_optimization_f_basis:
-                collected = self.combo_optimization_f_basis.currentText().lower() == "collected photons"
-                self.radio_f_basis_collected.setChecked(collected)
-                self.radio_f_basis_all.setChecked(not collected)
+            if self.radio_f_basis_collected.isChecked():
+                mode = "collected"
+            elif self.radio_f_basis_all.isChecked():
+                mode = "all"
             else:
-                collected = self.radio_f_basis_collected.isChecked()
-                self.combo_optimization_f_basis.setCurrentText("Collected photons" if collected else "All photons")
+                mode = "period"
+            self.current_f_photon_basis_mode = mode
         finally:
             self._f_photon_basis_syncing = False
 
@@ -1264,12 +1373,17 @@ class ControlWidget(QWidget):
         self.tabs.setTabToolTip(2, "Excitation and IRF definition.")
         self.tabs.setTabToolTip(3, "Detector and gating settings.")
         self.tabs.setTabToolTip(4, "Detection and excitation optimisation settings.")
+        self.tabs.setTabToolTip(0, "Decay model, Fisher sweep, and simulation-core settings.")
+        self.tabs.setTabToolTip(1, "Laser excitation profile and burst-envelope settings.")
+        self.tabs.setTabToolTip(2, "Detector and gate geometry settings.")
+        self.tabs.setTabToolTip(3, "Monte Carlo image validation and fitted-image testing.")
+        self.tabs.setTabToolTip(4, "Detection and excitation optimisation workflows.")
         self.tabs.setTabToolTip(5, "Instrument batch sweeps for comparative precision runs.")
 
         tooltips = {
             self.spin_n_comp: "Number of decay components used in the forward and inverse model.",
-            self.spin_fx_min: "Minimum value of the swept target parameter.",
-            self.spin_fx_max: "Maximum value of the swept target parameter.",
+            self.spin_fx_min: "Minimum value of the selected swept decay parameter, shown with the correct physical units.",
+            self.spin_fx_max: "Maximum value of the selected swept decay parameter, shown with the correct physical units.",
             self.spin_fx_steps: "Number of points in the precision sweep.",
             self.spin_grid_fine_factor: "Refinement factor used to build the gridded MLE lookup axis.",
             self.combo_fx_scale: "Spacing of the target-parameter sweep values.",
@@ -1285,7 +1399,7 @@ class ControlWidget(QWidget):
             self.combo_image_fit_method: "Lifetime-fitting backend for the validation image.",
             self.btn_fit_image: "Fit the generated validation image using the selected algorithm.",
             self.spin_period: "Measurement repetition period in nanoseconds.",
-            self.combo_profile: "Excitation or IRF profile used in the forward model.",
+            self.combo_profile: "Laser profile used to build the excitation waveform in the forward model.",
             self.spin_fwhm: "IRF width for Gaussian mode or pulse duration for rectangular mode.",
             self.spin_irf_pos: "IRF temporal position within the period.",
             self.spin_rise: "Rising edge time for rectangular excitation profiles.",
@@ -1296,8 +1410,12 @@ class ControlWidget(QWidget):
             self.spin_burst_period: "Peak-to-peak distance between sub-pulses in the burst (ps).",
             self.spin_burst_fwhm: "Pulse-width (FWHM) of each sub-pulse in the burst (ps).",
             self.spin_jitter: "Detector timing jitter in picoseconds.",
-            self.spin_deadtime: "Detector deadtime in nanoseconds.",
-            self.chk_multihit: "Allow more than one detected photon per excitation cycle.",
+            self.spin_deadtime: "Detector deadtime in nanoseconds. Non-zero deadtime uses a nonparalyzable detector model.",
+            self.spin_pixel_dwell: "Pixel dwell time used to infer the average count rate and the strength of deadtime or pile-up effects.",
+            self.combo_pixel_dwell_unit: "Units for the pixel dwell time.",
+            self.lbl_estimated_count_rate: "Estimated average count rate derived from the configured photons per pixel and pixel dwell time.",
+            self.chk_multihit: "Allow more than one accepted photon event in each repetition period.",
+            self.spin_max_events_per_period: "Maximum accepted photon events in each repetition period. Disable multihit to force single-hit operation.",
             self.spin_num_gates: "Number of detector gates across the measurement period.",
             self.combo_gate_type: "Gate construction mode.",
             self.edit_gate_widths: "Comma-separated gate edges in nanoseconds. In Equal mode this field shows the generated edges; in Custom mode you can edit them directly.",
@@ -1313,8 +1431,9 @@ class ControlWidget(QWidget):
             self.spin_gate_last: "Manual end time for the last gate when Free is selected.",
             self.radio_gate_collection_hist: "Histogram-style gating: photons are binned into gates without being discarded.",
             self.radio_gate_collection_seq: "Sequential gating: each gate is acquired in a separate pass and photons outside the active gate are lost in that pass.",
-            self.radio_f_basis_all: "Evaluate F against the full photon budget, including photons that miss all gates as lost counts.",
-            self.radio_f_basis_collected: "Evaluate F using only the photons collected by the measurement gates.",
+            self.radio_f_basis_period: "Evaluate F against all photons that fall inside the acquisition period, including photons lost because the gates do not collect them.",
+            self.radio_f_basis_all: "Evaluate F against all photons that could be detected, including photons lost because of both gate losses and a finite acquisition window.",
+            self.radio_f_basis_collected: "Evaluate F using only the photons actually collected by the measurement gates, disregarding photon losses.",
             self.radio_overlap_jitter: "Allow only the natural overlap caused by jittered or skewed gate tails.",
             self.radio_overlap_never: "Do not allow gate overlap. Overlapping tails are clipped and can create photon-loss gaps between gates.",
             self.radio_overlap_yes: "Allow user-specified geometric overlap between adjacent gates.",
@@ -1328,7 +1447,6 @@ class ControlWidget(QWidget):
             self.combo_optimization_mode: "Joint optimisation now alternates sequentially; this hidden compatibility control remains fixed to Sequential.",
             self.combo_optimization_first: "When both optimisations are enabled, choose which one runs first in the alternating sequential loop.",
             self.spin_optimization_iterations: "Maximum number of alternating detection/excitation rounds when both optimisation targets are enabled.",
-            self.combo_optimization_f_basis: "Choose whether optimisation F-values are computed against all emitted photons, including gated-out losses, or only the photons collected by the gates.",
             self.combo_optimization_objective: "Excitation optimisation objective. Fisher Throughput is the default and combines peak photon efficiency with throughput scaling.",
             self.spin_optimization_fi_loss: "Maximum absolute peak photon-efficiency loss allowed in throughput mode, expressed as F^-2 percentage points relative to the Dirac-reference design.",
             self.chk_optimization_realtime: "When enabled, update the main analysis widgets during optimisation. Disable this for a faster run.",
@@ -1551,6 +1669,123 @@ class ControlWidget(QWidget):
                     self.detection_opt_fc_min_gates = int(widgets["min_gates"].value())
                     self.detection_opt_fc_max_f_loss_pct = float(widgets["max_loss"].value())
             self._update_detection_algorithm_settings_tooltip()
+            self.advanced_config_changed.emit()
+
+    def _open_event_simulation_settings(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Event-driven Detector Settings")
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+
+        combo_deadtime = QComboBox()
+        combo_deadtime.addItems(["None", "Nonparalyzable", "Paralyzable"])
+        combo_deadtime.setCurrentText(str(self.event_deadtime_mode).replace("_", " ").title())
+        combo_deadtime.setToolTip("Deadtime law applied to each detector resource group.")
+        form.addRow("Deadtime mode:", combo_deadtime)
+
+        combo_capacity = QComboBox()
+        combo_capacity.addItems(["Infinite", "First-hit", "Custom"])
+        current_capacity = self.event_multihit_capacity
+        if current_capacity is None:
+            combo_capacity.setCurrentText("Infinite" if self.chk_multihit.isChecked() else "First-hit")
+        elif int(current_capacity) == 1:
+            combo_capacity.setCurrentText("First-hit")
+        else:
+            combo_capacity.setCurrentText("Custom")
+        combo_capacity.setToolTip("Accepted hits per detector resource during one pixel dwell.")
+        spin_capacity = QSpinBox()
+        spin_capacity.setRange(2, 10_000)
+        spin_capacity.setValue(int(current_capacity) if current_capacity not in (None, 1) else 4)
+        spin_capacity.setEnabled(combo_capacity.currentText() == "Custom")
+        spin_capacity.setToolTip("Finite multihit capacity used when Custom is selected.")
+        combo_capacity.currentTextChanged.connect(lambda text: spin_capacity.setEnabled(text == "Custom"))
+        capacity_row = QWidget()
+        capacity_layout = QHBoxLayout(capacity_row)
+        capacity_layout.setContentsMargins(0, 0, 0, 0)
+        capacity_layout.setSpacing(6)
+        capacity_layout.addWidget(combo_capacity, 2)
+        capacity_layout.addWidget(QLabel("Custom C:"))
+        capacity_layout.addWidget(spin_capacity, 1)
+        form.addRow("Capacity:", capacity_row)
+
+        combo_routing = QComboBox()
+        combo_routing.addItems(["Exclusive", "Nonexclusive"])
+        combo_routing.setCurrentText(str(self.event_routing_mode).replace("_", " ").title())
+        combo_routing.setToolTip("How simultaneously accepted channels are routed for the same latent photon.")
+        form.addRow("Routing:", combo_routing)
+
+        combo_arbitration = QComboBox()
+        combo_arbitration.addItems(["Random", "Priority", "All If Independent"])
+        combo_arbitration.setCurrentText(str(self.event_arbitration_rule).replace("_", " ").title())
+        combo_arbitration.setToolTip("Rule used when multiple channels compete for the same event.")
+        form.addRow("Arbitration:", combo_arbitration)
+
+        chk_shared = QCheckBox("Share detector resource group across gates")
+        chk_shared.setChecked(bool(self.event_share_resource_group))
+        chk_shared.setToolTip("If enabled, all gates share the same deadtime/capacity resource.")
+        form.addRow(chk_shared)
+
+        chk_timestamps = QCheckBox("Return accepted event timestamps")
+        chk_timestamps.setChecked(bool(self.event_return_timestamps))
+        chk_timestamps.setToolTip("Include accepted event timestamps in event-driven simulation results.")
+        form.addRow(chk_timestamps)
+
+        dwell_row = QWidget()
+        dwell_layout = QHBoxLayout(dwell_row)
+        dwell_layout.setContentsMargins(0, 0, 0, 0)
+        dwell_layout.setSpacing(6)
+        spin_dwell = QDoubleSpinBox()
+        spin_dwell.setRange(1e-6, 1e9)
+        spin_dwell.setDecimals(6)
+        spin_dwell.setSingleStep(1.0)
+        combo_dwell_units = QComboBox()
+        combo_dwell_units.addItems(["ns", "us", "ms", "s"])
+        dwell_s = float(getattr(self, "event_pixel_dwell_time_s", 1e-3))
+        if dwell_s >= 1.0:
+            spin_dwell.setValue(dwell_s)
+            combo_dwell_units.setCurrentText("s")
+        elif dwell_s >= 1e-3:
+            spin_dwell.setValue(dwell_s * 1e3)
+            combo_dwell_units.setCurrentText("ms")
+        elif dwell_s >= 1e-6:
+            spin_dwell.setValue(dwell_s * 1e6)
+            combo_dwell_units.setCurrentText("us")
+        else:
+            spin_dwell.setValue(dwell_s * 1e9)
+            combo_dwell_units.setCurrentText("ns")
+        spin_dwell.setToolTip("Pixel dwell time used to infer count rate for event-driven deadtime and pile-up effects.")
+        combo_dwell_units.setToolTip("Units for the pixel dwell time.")
+        dwell_layout.addWidget(spin_dwell, 2)
+        dwell_layout.addWidget(combo_dwell_units, 1)
+        form.addRow("Pixel dwell time:", dwell_row)
+
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec():
+            self.event_deadtime_mode = combo_deadtime.currentText().strip().lower().replace(" ", "_")
+            capacity_mode = combo_capacity.currentText().strip().lower()
+            if capacity_mode == "infinite":
+                self.event_multihit_capacity = None
+                self.chk_multihit.setChecked(True)
+            elif capacity_mode == "first-hit":
+                self.event_multihit_capacity = 1
+                self.chk_multihit.setChecked(False)
+            else:
+                self.event_multihit_capacity = int(spin_capacity.value())
+                self.chk_multihit.setChecked(True)
+            self.event_routing_mode = combo_routing.currentText().strip().lower().replace(" ", "_")
+            self.event_arbitration_rule = combo_arbitration.currentText().strip().lower().replace(" ", "_")
+            self.event_share_resource_group = bool(chk_shared.isChecked())
+            self.event_return_timestamps = bool(chk_timestamps.isChecked())
+            dwell_value = float(spin_dwell.value())
+            dwell_unit = combo_dwell_units.currentText()
+            scale = {"ns": 1e-9, "us": 1e-6, "ms": 1e-3, "s": 1.0}.get(dwell_unit, 1.0)
+            self.event_pixel_dwell_time_s = dwell_value * scale
+            self.advanced_config_changed.emit()
 
     def _on_tab_changed(self, index):
         # Map tab index to manual section ID
@@ -1564,6 +1799,115 @@ class ControlWidget(QWidget):
         }
         section = mapping.get(index, "intro")
         self.context_changed.emit(section)
+
+    def _detector_dwell_seconds(self) -> float:
+        value = float(self.spin_pixel_dwell.value())
+        unit = self.combo_pixel_dwell_unit.currentText()
+        scale = {"ns": 1e-9, "us": 1e-6, "ms": 1e-3, "s": 1.0}.get(unit, 1.0)
+        return max(value * scale, 1e-12)
+
+    def _set_detector_dwell_from_seconds(self, dwell_s: float) -> None:
+        dwell_s = float(max(dwell_s, 1e-12))
+        if dwell_s >= 1.0:
+            self.spin_pixel_dwell.setValue(dwell_s)
+            self.combo_pixel_dwell_unit.setCurrentText("s")
+        elif dwell_s >= 1e-3:
+            self.spin_pixel_dwell.setValue(dwell_s * 1e3)
+            self.combo_pixel_dwell_unit.setCurrentText("ms")
+        elif dwell_s >= 1e-6:
+            self.spin_pixel_dwell.setValue(dwell_s * 1e6)
+            self.combo_pixel_dwell_unit.setCurrentText("us")
+        else:
+            self.spin_pixel_dwell.setValue(dwell_s * 1e9)
+            self.combo_pixel_dwell_unit.setCurrentText("ns")
+
+    def _format_count_rate(self, rate_hz: float) -> str:
+        rate_hz = float(max(rate_hz, 0.0))
+        if rate_hz >= 1e9:
+            return f"{rate_hz / 1e9:.3f} Gcps"
+        if rate_hz >= 1e6:
+            return f"{rate_hz / 1e6:.3f} Mcps"
+        if rate_hz >= 1e3:
+            return f"{rate_hz / 1e3:.3f} kcps"
+        return f"{rate_hz:.3f} cps"
+
+    def _update_estimated_count_rate(self) -> None:
+        dwell_s = float(max(getattr(self, "event_pixel_dwell_time_s", self._detector_dwell_seconds()), 1e-12))
+        avg_photons = float(self.spin_photons.value())
+        self.lbl_estimated_count_rate.setText(self._format_count_rate(avg_photons / dwell_s))
+
+    def _sync_detector_event_controls(self, *_args) -> None:
+        self.event_pixel_dwell_time_s = self._detector_dwell_seconds()
+        self.event_deadtime_mode = "none" if float(self.spin_deadtime.value()) <= 0.0 else "nonparalyzable"
+
+        if self.chk_multihit.isChecked():
+            self.spin_max_events_per_period.setEnabled(True)
+            if self.spin_max_events_per_period.value() < 2:
+                self.spin_max_events_per_period.setValue(2)
+            cap_val = int(self.spin_max_events_per_period.value())
+            self.event_multihit_capacity = None if cap_val >= self.EVENT_CAPACITY_UNLIMITED else cap_val
+        else:
+            if self.spin_max_events_per_period.value() != 1:
+                self.spin_max_events_per_period.setValue(1)
+            self.spin_max_events_per_period.setEnabled(False)
+            self.event_multihit_capacity = 1
+
+        self._update_estimated_count_rate()
+
+    def _cycle_simulation_mode_preference(self):
+        order = ["auto", "event_driven", "ideal_poisson"]
+        current = str(getattr(self, "simulation_mode_preference", "auto")).lower()
+        if current not in order:
+            current = "auto"
+        next_idx = (order.index(current) + 1) % len(order)
+        self.simulation_mode_preference = order[next_idx]
+        self._update_simulation_mode_badge(
+            {
+                "preference": self.simulation_mode_preference,
+                "effective_mode": self.simulation_mode_preference if self.simulation_mode_preference != "auto" else "ideal_poisson",
+                "requires_event_driven": False,
+                "forced_event_driven": self.simulation_mode_preference == "event_driven",
+                "reason": "User-selected simulation-core preference.",
+            }
+        )
+        self.advanced_config_changed.emit()
+
+    def _update_simulation_mode_badge(self, status):
+        preference = str((status or {}).get("preference", "auto")).lower()
+        effective = str((status or {}).get("effective_mode", "ideal_poisson")).lower()
+        required = bool((status or {}).get("requires_event_driven", False))
+        approximated = bool((status or {}).get("approximated_event_effects", False))
+        reason = str((status or {}).get("reason", ""))
+
+        if preference == "event_driven":
+            text = "Event-driven (forced)"
+            bg = "#d946ef"
+        elif approximated and effective == "ideal_poisson":
+            if preference == "ideal_poisson":
+                text = "Ideal Poisson (forced, detector effects)"
+            else:
+                text = "Ideal Poisson (detector effects)"
+            bg = "#f59e0b"
+        elif preference == "ideal_poisson":
+            text = "Ideal Poisson (forced)"
+            bg = "#16a34a"
+        elif effective == "event_driven":
+            text = "Event-driven (auto)"
+            bg = "#d946ef"
+        else:
+            text = "Ideal Poisson (auto)"
+            bg = "#16a34a"
+
+        self.btn_simulation_mode_badge.setText(text)
+        self.btn_simulation_mode_badge.setStyleSheet(
+            f"QToolButton {{ background-color: {bg}; color: white; font-weight: bold; border-radius: 6px; padding: 4px 10px; }}"
+        )
+        tooltip = f"Effective core: {effective}\nPreference: {preference}\nReason: {reason}"
+        if required and preference == "auto":
+            tooltip += "\nThe current detector configuration requires the event-driven core."
+        elif approximated and effective == "ideal_poisson":
+            tooltip += "\nDetector event effects are being approximated by the Ideal Poisson core."
+        self.btn_simulation_mode_badge.setToolTip(tooltip)
 
     def _sync_optimization_ui(self, *_args):
         detection_enabled = self.chk_opt_detection.isChecked()
@@ -1666,6 +2010,25 @@ class ControlWidget(QWidget):
                 self._reset_freeform_from_current_inputs()
 
     def update_gridded_mle_summary(self):
+        param_name = self.get_selected_x_param()
+        unit_map = {
+            "tau1": "ns",
+            "tau2": "ns",
+            "alpha": "fraction",
+            "background": "counts",
+            "beta": "",
+        }
+        label_map = {
+            "tau1": "Tau 1",
+            "tau2": "Tau 2",
+            "alpha": "Alpha 1",
+            "background": "Background",
+            "beta": "Beta",
+        }
+        units = unit_map.get(param_name, "")
+        unit_suffix = f" ({units})" if units else ""
+        self.lbl_fx_min.setText(f"Min {label_map.get(param_name, param_name.title())}{unit_suffix}:")
+        self.lbl_grid_mle_min.setText(f"Grid MLE min{unit_suffix}:")
         use_log_grid = (
             self.combo_fx_scale.currentText().lower() == "log"
             and self.get_selected_x_param() in {"tau1", "tau2", "beta"}
@@ -1687,7 +2050,6 @@ class ControlWidget(QWidget):
         self.lbl_grid_min.setText(f"{grid_min:.3f}")
         self.lbl_grid_max.setText(f"{grid_max:.3f}")
         self.lbl_grid_steps.setText(f"{grid_steps}")
-        self.lbl_grid_scale.setText(grid_scale)
 
     def update_image_validation_summary(self):
         param_name = self.get_selected_x_param()
@@ -1771,7 +2133,7 @@ class ControlWidget(QWidget):
             self.chk_compute_ci.setChecked(getattr(cfg, "precision_compute_ci", False))
             self.spin_precision_photons.setValue(cfg.precision_photons)
             self.spin_mc_repeats.setValue(cfg.precision_mc_repeats)
-            self.spin_accuracy_pvalue.setValue(getattr(cfg, "precision_accuracy_pvalue", 0.001))
+            self.spin_accuracy_pvalue.setValue(getattr(cfg, "precision_accuracy_pvalue", 0.0001))
             self.spin_bootstrap_samples.setValue(getattr(cfg, "precision_bootstrap_samples", 2000))
             self.spin_ci_level.setValue(getattr(cfg, "precision_ci_level", 95.0))
 
@@ -1859,16 +2221,10 @@ class ControlWidget(QWidget):
                 optimization_first_map.get(getattr(cfg, "optimization_first", "detection"), "Detection First")
             )
             self.spin_optimization_iterations.setValue(getattr(cfg, "optimization_iterations", 20))
-            optimization_basis_map = {
-                "all": "All photons",
-                "collected": "Collected photons",
-            }
-            self.combo_optimization_f_basis.setCurrentText(
-                optimization_basis_map.get(getattr(cfg, "optimization_f_photon_basis", "all"), "All photons")
-            )
-            collected_basis = getattr(cfg, "optimization_f_photon_basis", "all") == "collected"
-            self.radio_f_basis_collected.setChecked(collected_basis)
-            self.radio_f_basis_all.setChecked(not collected_basis)
+            f_basis = str(getattr(cfg, "optimization_f_photon_basis", "period")).lower()
+            self.radio_f_basis_period.setChecked(f_basis == "period")
+            self.radio_f_basis_all.setChecked(f_basis == "all")
+            self.radio_f_basis_collected.setChecked(f_basis == "collected")
             optimization_objective_map = {
                 "fisher_information": "Fisher Information",
                 "fisher_throughput": "Fisher Throughput",
@@ -1940,7 +2296,7 @@ class ControlWidget(QWidget):
             self.spin_image_repeats.setValue(int(getattr(cfg, "image_mc_repeats", getattr(cfg, "n_repeats", 200))))
             image_fit_map = {
                 "gridded_mle": "Gridded MLE",
-                "mle": "MLE",
+                "mle": "Iterative Reconvolution",
                 "tail": "Tail Fitting",
             }
             self.combo_image_fit_method.setCurrentText(
@@ -1949,6 +2305,23 @@ class ControlWidget(QWidget):
             self.spin_jitter.setValue(int(round(cfg.timing_jitter)))
             self.spin_deadtime.setValue(int(round(cfg.detector_deadtime)))
             self.chk_multihit.setChecked(cfg.b_multihit_mode)
+            self.event_deadtime_mode = str(getattr(cfg, "event_deadtime_mode", "nonparalyzable")).lower()
+            self.event_multihit_capacity = getattr(cfg, "event_multihit_capacity", None)
+            self.event_routing_mode = str(getattr(cfg, "event_routing_mode", "exclusive")).lower()
+            self.event_arbitration_rule = str(getattr(cfg, "event_arbitration_rule", "random")).lower()
+            self.event_share_resource_group = bool(getattr(cfg, "event_share_resource_group", False))
+            self.event_return_timestamps = bool(getattr(cfg, "event_return_timestamps", False))
+            self.event_pixel_dwell_time_s = float(getattr(cfg, "event_pixel_dwell_time_s", 1e-3))
+            self._set_detector_dwell_from_seconds(self.event_pixel_dwell_time_s)
+            capacity = getattr(cfg, "event_multihit_capacity", None)
+            if bool(getattr(cfg, "b_multihit_mode", True)):
+                if capacity is None:
+                    self.spin_max_events_per_period.setValue(self.EVENT_CAPACITY_UNLIMITED)
+                else:
+                    self.spin_max_events_per_period.setValue(max(int(capacity), 2))
+            else:
+                self.spin_max_events_per_period.setValue(1)
+            self._sync_detector_event_controls()
             self.update_image_validation_summary()
 
             # Batch sweep

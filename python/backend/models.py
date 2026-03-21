@@ -127,11 +127,11 @@ class PhysicsConfig(BaseModel):
     image_fit_method: str = "gridded_mle"  # gridded_mle, mle, tail
     active_instrument_profile: Optional[str] = None
     dt_override: Optional[float] = None # Manual dt setting
-    precision_validate_mc: bool = True
+    precision_validate_mc: bool = False
     precision_compute_ci: bool = False
     precision_mc_repeats: int = 400
     precision_photons: int = 2000
-    precision_accuracy_pvalue: float = 0.001
+    precision_accuracy_pvalue: float = 0.0001
     precision_bootstrap_samples: int = 2000
     precision_ci_level: float = 95.0
     sweep_autoplay: bool = True
@@ -142,7 +142,7 @@ class PhysicsConfig(BaseModel):
     optimization_mode: str = "sequential"  # legacy compatibility field; joint optimisation now alternates sequentially
     optimization_first: str = "detection"  # detection, excitation
     optimization_iterations: int = 20
-    optimization_f_photon_basis: str = "all"  # all, collected
+    optimization_f_photon_basis: str = "period"  # period, all, collected
     optimization_objective: str = "fisher_throughput"  # fisher_information, fisher_throughput, photon_efficiency_auc, throughput_auc
     optimization_max_fi_loss_pct: float = 5.0
     optimization_realtime_visualization: bool = False
@@ -173,6 +173,16 @@ class PhysicsConfig(BaseModel):
     excitation_optimization_control_points: int = 8
 
     sim_mode: str = "spatial gradient" # spatial gradient, uniform model
+    simulation_mode_preference: str = "auto"  # auto, ideal_poisson, event_driven
+    simulation_mode: str = "ideal_poisson"  # ideal_poisson, event_driven
+    event_routing_mode: str = "exclusive"  # exclusive, nonexclusive
+    event_arbitration_rule: str = "random"  # random, priority, all_if_independent
+    event_deadtime_mode: str = "nonparalyzable"  # none, nonparalyzable, paralyzable
+    event_multihit_capacity: Optional[int] = None  # None=infinite, 1=first-hit, C=finite multihit
+    event_return_timestamps: bool = False
+    event_share_resource_group: bool = False
+    event_pixel_dwell_time_s: float = 1e-3
+    event_cpu_workers: int = 0  # 0=auto, 1=serial, >1 explicit process count
     b_interrupt: bool = False
 
     # Decay Model Parameters

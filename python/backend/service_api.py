@@ -175,7 +175,7 @@ class DigitalTwinService:
             theory_fi, theory_f = self.engine.compute_fisher_info(
                 x_range,
                 int(cfg.precision_photons),
-                photon_basis_mode=getattr(cfg, "optimization_f_photon_basis", "all"),
+                photon_basis_mode=getattr(cfg, "optimization_f_photon_basis", "period"),
             )
             payload = {
                 "x_range": x_range.tolist(),
@@ -246,7 +246,7 @@ class DigitalTwinService:
             theory_fi, theory_f = self.engine.compute_fisher_info(
                 x_range,
                 int(cfg.precision_photons),
-                photon_basis_mode=getattr(cfg, "optimization_f_photon_basis", "all"),
+                photon_basis_mode=getattr(cfg, "optimization_f_photon_basis", "period"),
             )
             return {
                 "status": "success",
