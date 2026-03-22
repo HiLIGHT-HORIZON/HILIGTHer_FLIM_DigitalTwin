@@ -21,10 +21,13 @@ from gui.widgets.mle_accuracy_plot import MLEAccuracyWidget
 from gui.widgets.diagnostics_plot import DiagnosticsWidget
 from gui.widgets.instrument_manager import InstrumentManager
 from gui.widgets.manual_viewer import ManualWidget
+from gui.widgets.custom_model_editor import CustomModelEditorDialog
 from gui.automation_api import DesktopAutomationAPI
 from gui.optimisation_worker import DetectionOptimisationWorker
 from gui.report_export import write_precision_report_package
 from backend.models import PhysicsConfig
+from backend.decay_model_store import DecayModelStore
+from backend.profile_store import InstrumentProfileStore
 from backend.storage import storage
 
 
@@ -77,12 +80,15 @@ class HILIGHTMainWindow(QMainWindow):
         # Initialize Core Engine
         from backend.twin_engine import TwinEngine
         self.engine = TwinEngine()
+        self.decay_model_store = DecayModelStore()
+        self.profile_store = InstrumentProfileStore()
         
         # Setup Widgets
         self.map_widget = MapWidget("Lifetime Gradient Map")
         self.phasor_widget = PhasorWidget()
         self.decay_widget = DecayWidget()
         self.control_widget = ControlWidget()
+        self.control_widget.custom_model_editor_requested.connect(self.open_custom_model_editor)
         self.fisher_widget = FisherWidget()
         self.mle_accuracy_widget = MLEAccuracyWidget()
         self.diagnostics_widget = DiagnosticsWidget()
@@ -109,9 +115,15 @@ class HILIGHTMainWindow(QMainWindow):
         self.event_driven_warning_shown_session = False
         self.startup_complete = False
         
+        # Security & API State (Default open)
+        self.gui_api_locked = False
+        self.backend_api_locked = False
+        self.mcp_server_stopped = False
+        self._sync_locks_to_disk()
+        
         # Setup Manual (Persistent Sidepanel)
         repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        manual_path = os.path.join(repo_root, "docs", "digital_twin_manual.html")
+        manual_path = os.path.join(repo_root, "docs", "manual", "index.html")
         manual_fallback = os.path.join(repo_root, "python", "frontend", "public", "manual.html")
         self.manual_widget = ManualWidget(manual_path if os.path.exists(manual_path) else manual_fallback)
         
@@ -142,6 +154,21 @@ class HILIGHTMainWindow(QMainWindow):
         self._update_simulation_mode_badge()
         self.refresh_diagnostics()
         self.startup_complete = True
+
+    def _sync_locks_to_disk(self):
+        """Persist lock state for access by the MCP server and other sub-processes."""
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+        os.makedirs(data_dir, exist_ok=True)
+        lock_file = os.path.join(data_dir, "app_locks.json")
+        try:
+            with open(lock_file, "w") as f:
+                json.dump({
+                    "gui_api_locked": bool(self.gui_api_locked),
+                    "backend_api_locked": bool(self.backend_api_locked),
+                    "mcp_server_stopped": bool(self.mcp_server_stopped)
+                }, f)
+        except Exception:
+            pass
 
     def save_layout(self):
         self.settings.setValue("layoutVersion", self.LAYOUT_VERSION)
@@ -290,6 +317,46 @@ class HILIGHTMainWindow(QMainWindow):
         self.view_testing_act.triggered.connect(self.apply_testing_view)
         view_menu.addAction(self.view_testing_act)
 
+        tools_menu = menubar.addMenu("&Tools")
+        
+        self.profile_mgr_act = QAction("Profiles...", self)
+        self.profile_mgr_act.triggered.connect(self.open_instrument_manager)
+        tools_menu.addAction(self.profile_mgr_act)
+
+        self.custom_model_act = QAction("Custom model...", self)
+        self.custom_model_act.triggered.connect(self.open_custom_model_editor)
+        tools_menu.addAction(self.custom_model_act)
+        
+        tools_menu.addSeparator()
+        
+        self.lock_gui_act = QAction("Lock GUI APIs", self)
+        self.lock_gui_act.triggered.connect(self.toggle_gui_api_lock)
+        tools_menu.addAction(self.lock_gui_act)
+        
+        self.lock_backend_act = QAction("Lock backend APIs", self)
+        self.lock_backend_act.triggered.connect(self.toggle_backend_api_lock)
+        tools_menu.addAction(self.lock_backend_act)
+        
+        self.api_docs_act = QAction("API docs...", self)
+        self.api_docs_act.triggered.connect(lambda: self.show_manual("api"))
+        tools_menu.addAction(self.api_docs_act)
+        
+        tools_menu.addSeparator()
+        
+        self.stop_mcp_act = QAction("Stop MCP server", self)
+        self.stop_mcp_act.triggered.connect(self.toggle_mcp_lock)
+        tools_menu.addAction(self.stop_mcp_act)
+        
+        self.mcp_docs_act = QAction("MCP docs...", self)
+        self.mcp_docs_act.triggered.connect(lambda: self.show_manual("mcp"))
+        tools_menu.addAction(self.mcp_docs_act)
+        
+        tools_menu.addSeparator()
+        
+        self.app_lockdown_act = QAction("App safety lockdown", self)
+        self.app_lockdown_act.triggered.connect(self.app_safety_lockdown)
+        tools_menu.addAction(self.app_lockdown_act)
+
         help_menu = menubar.addMenu("&Help")
         
         self.manual_act = QAction("See Manual", self)
@@ -303,6 +370,43 @@ class HILIGHTMainWindow(QMainWindow):
         about_act.triggered.connect(self.show_about)
         help_menu.addAction(about_act)
 
+    def toggle_gui_api_lock(self):
+        self.gui_api_locked = not self.gui_api_locked
+        self._sync_locks_to_disk()
+        self.lock_gui_act.setText("Unlock GUI APIs" if self.gui_api_locked else "Lock GUI APIs")
+        self.statusBar().showMessage(f"GUI API {'locked' if self.gui_api_locked else 'unlocked'}.")
+
+    def toggle_backend_api_lock(self):
+        self.backend_api_locked = not self.backend_api_locked
+        self._sync_locks_to_disk()
+        self.lock_backend_act.setText("Unlock Backend APIs" if self.backend_api_locked else "Lock Backend APIs")
+        self.statusBar().showMessage(f"Backend API {'locked' if self.backend_api_locked else 'unlocked'}.")
+
+    def toggle_mcp_lock(self):
+        self.mcp_server_stopped = not self.mcp_server_stopped
+        self._sync_locks_to_disk()
+        self.stop_mcp_act.setText("Start MCP server" if self.mcp_server_stopped else "Stop MCP server")
+        self.statusBar().showMessage(f"MCP server {'stopped' if self.mcp_server_stopped else 'started'}.")
+
+    def app_safety_lockdown(self):
+        """Global override for all API and MCP access."""
+        if not (self.gui_api_locked and self.backend_api_locked and self.mcp_server_stopped):
+            self.gui_api_locked = True
+            self.backend_api_locked = True
+            self.mcp_server_stopped = True
+            self.app_lockdown_act.setText("App safety unlock")
+        else:
+            self.gui_api_locked = False
+            self.backend_api_locked = False
+            self.mcp_server_stopped = False
+            self.app_lockdown_act.setText("App safety lockdown")
+        
+        self._sync_locks_to_disk()
+        # Update other menu texts
+        self.lock_gui_act.setText("Unlock GUI APIs" if self.gui_api_locked else "Lock GUI APIs")
+        self.lock_backend_act.setText("Unlock Backend APIs" if self.backend_api_locked else "Lock Backend APIs")
+        self.stop_mcp_act.setText("Start MCP server" if self.mcp_server_stopped else "Stop MCP server")
+        self.statusBar().showMessage("Safety Lockdown: " + ("ACTIVATED" if self.gui_api_locked else "DEACTIVATED"))
 
     def apply_theme(self):
         """Applies the current theme from settings."""
@@ -480,6 +584,10 @@ class HILIGHTMainWindow(QMainWindow):
         cfg = cfg or self.engine.config
         if float(getattr(cfg, "detector_deadtime", 0.0)) > 0.0:
             return True
+        if float(getattr(cfg, "detector_afterpulsing_probability", 0.0)) > 0.0:
+            return True
+        if float(getattr(cfg, "detector_dark_count_rate_cps", 0.0)) > 0.0:
+            return True
         if not bool(getattr(cfg, "b_multihit_mode", True)):
             return True
         capacity = getattr(cfg, "event_multihit_capacity", None)
@@ -542,10 +650,29 @@ class HILIGHTMainWindow(QMainWindow):
                 self._apply_config_to_workspace(dlg.applied_config)
                 self.statusBar().showMessage("Instrument profile applied successfully.")
 
+    def open_custom_model_editor(self):
+        dlg = CustomModelEditorDialog(self.engine.config, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            selected_key = dlg.selected_model_key()
+            self.decay_model_store = DecayModelStore()
+            self.engine.decay_model_store = self.decay_model_store
+            self.engine.config.decay_model = selected_key
+            self.engine.config.decay_model_sweep_defaults = dlg.cfg.decay_model_sweep_defaults
+            self.control_widget.decay_model_store = self.decay_model_store
+            self.control_widget.refresh_decay_model_options(selected_key)
+            self.control_widget.update_param_visibility()
+            self.control_widget.update_from_config(self.engine.config)
+            self.engine.invalidate_grid()
+            self.refresh_diagnostics()
+            self.statusBar().showMessage(f"Decay model '{selected_key}' loaded.")
+
     def _apply_config_to_workspace(self, config):
         self.engine.config = self.engine.config.__class__(
             **(config.model_dump() if hasattr(config, "model_dump") else config.dict())
         )
+        self.decay_model_store = DecayModelStore()
+        self.engine.decay_model_store = self.decay_model_store
+        self.control_widget.decay_model_store = self.decay_model_store
         self.loading_config_into_ui = True
         try:
             self.control_widget.update_from_config(self.engine.config)
@@ -1053,13 +1180,23 @@ class HILIGHTMainWindow(QMainWindow):
         cw = self.control_widget
         
         # Model Parameters (Dynamic row logic)
-        cfg.decay_model = cw.combo_decay_model.currentText().lower()
+        cfg.decay_model = cw.get_selected_decay_model_key()
         cfg.n_components = cw.spin_n_comp.value()
-        cfg.taus[0] = cw.param_rows["tau1"]['val'].value()
-        cfg.taus[1] = cw.param_rows["tau2"]['val'].value()
-        cfg.amplitudes[0] = cw.param_rows["alpha"]['val'].value()
-        cfg.background_level = cw.param_rows["background"]['val'].value()
-        cfg.beta = cw.param_rows["beta"]['val'].value()
+        if "tau1" in cw.param_rows:
+            cfg.taus[0] = cw.param_rows["tau1"]['val'].value()
+        if "tau2" in cw.param_rows:
+            cfg.taus[1] = cw.param_rows["tau2"]['val'].value()
+        if "alpha" in cw.param_rows:
+            cfg.amplitudes[0] = cw.param_rows["alpha"]['val'].value()
+        dark_count_rate = float(getattr(cw, "spin_dark_count_rate", None).value()) if hasattr(cw, "spin_dark_count_rate") else 0.0
+        cfg.background_level = 0.0 if dark_count_rate > 0.0 else cw.param_rows["background"]['val'].value() / 100.0
+        if "beta" in cw.param_rows:
+            cfg.beta = cw.param_rows["beta"]['val'].value()
+        cfg.custom_model_params = {
+            name: row["val"].value()
+            for name, row in cw.param_rows.items()
+            if name not in getattr(cw, "base_param_names", set())
+        }
         
         # Fix Flags & F-Value X Selection
         selected_x = None
@@ -1081,12 +1218,9 @@ class HILIGHTMainWindow(QMainWindow):
         cfg.grid_fine_factor = cw.spin_grid_fine_factor.value()
         scale_map = {"log": "log", "linear": "linear", "exponential": "exp"}
         cfg.f_x_scale = scale_map.get(cw.combo_fx_scale.currentText().lower(), "log")
-        use_log_grid = (
-            cfg.f_x_scale == "log"
-            and cfg.f_x_param in {"tau1", "tau2", "beta"}
-            and cfg.f_x_min > 0
-            and cfg.f_x_max > 0
-        )
+        runtime_defs = self.decay_model_store.runtime_param_defs(cfg)
+        selected_meta = next((item for item in runtime_defs if item.get("name") == cfg.f_x_param), {})
+        use_log_grid = cfg.f_x_scale == "log" and cfg.f_x_min > 0 and cfg.f_x_max > 0 and str(selected_meta.get("scale", "")).lower() == "log"
         if use_log_grid:
             step_ratio = (cfg.f_x_max / cfg.f_x_min) ** (1.0 / max(1, cfg.f_x_steps - 1))
             pad_factor = max(step_ratio, 1.25)
@@ -1214,7 +1348,7 @@ class HILIGHTMainWindow(QMainWindow):
         cfg.burst_sub_fwhm = cw.spin_burst_fwhm.value() / 1000.0 # From ps to ns
         
         # Instrument & Noise
-        cfg.a_photons = float(cw.spin_photons.value())
+        cfg.a_photons = float(cw.spin_precision_photons.value())
         cfg.image_mc_repeats = int(cw.spin_image_repeats.value())
         image_fit_map = {
             "gridded mle": "gridded_mle",
@@ -1224,6 +1358,8 @@ class HILIGHTMainWindow(QMainWindow):
         cfg.image_fit_method = image_fit_map.get(cw.combo_image_fit_method.currentText().lower(), "gridded_mle")
         cfg.timing_jitter = cw.spin_jitter.value()
         cfg.detector_deadtime = cw.spin_deadtime.value()
+        cfg.detector_afterpulsing_probability = float(getattr(cw, "spin_afterpulsing", None).value()) / 100.0 if hasattr(cw, "spin_afterpulsing") else 0.0
+        cfg.detector_dark_count_rate_cps = dark_count_rate
         cfg.b_multihit_mode = cw.chk_multihit.isChecked()
         cfg.simulation_mode_preference = str(getattr(cw, "simulation_mode_preference", "auto")).lower()
         cfg.event_deadtime_mode = "none" if cfg.detector_deadtime <= 0 else "nonparalyzable"
@@ -1288,13 +1424,7 @@ class HILIGHTMainWindow(QMainWindow):
                 cfg.instr_sweep_fixed_countrate_kcps = 100.0
         else:
             cfg.instr_sweep_fixed_countrate_kcps = 100.0
-        if "countrate_fixed_deadtime_kcps" in cw.sweep_options and cw.sweep_options["countrate_fixed_deadtime_kcps"]["extra"] is not None:
-            try:
-                cfg.instr_sweep_fixed_deadtime_ns = float(cw.sweep_options["countrate_fixed_deadtime_kcps"]["extra"].text().strip())
-            except Exception:
-                cfg.instr_sweep_fixed_deadtime_ns = 45.0
-        else:
-            cfg.instr_sweep_fixed_deadtime_ns = 45.0
+        cfg.instr_sweep_fixed_deadtime_ns = float(getattr(cfg, "instr_sweep_fixed_deadtime_ns", 45.0))
         cfg.instr_sweep_vals = self._parse_sweep_values(cfg.instr_sweep_param, cw.get_selected_sweep_values_text())
 
     def _create_diagnostics_frame(self, config=None, label="Instrument snapshot"):
@@ -1656,6 +1786,8 @@ class HILIGHTMainWindow(QMainWindow):
             self.engine.config = original_config
 
     def _parse_sweep_values(self, param, raw_text):
+        if param == "instrument_profile":
+            return [token.strip() for token in raw_text.split(",") if token.strip()]
         tokens = [token.strip() for token in raw_text.split(",") if token.strip()]
         if not tokens:
             return []
@@ -1682,6 +1814,12 @@ class HILIGHTMainWindow(QMainWindow):
             return f"Countrate = {value:g} Kphotons/s @ {cfg.instr_sweep_fixed_deadtime_ns:g} ns"
         if param == "multihit_capabilities":
             return f"Max events/period = {int(round(value))}"
+        if param == "afterpulsing_probability_pct":
+            return f"Afterpulsing = {value:g}%"
+        if param == "dark_count_rate_cps":
+            return f"Dark count rate = {value:g} cps"
+        if param == "instrument_profile":
+            return f"Profile = {value}"
         if param == "burst_edge_symmetric_ns":
             return f"Burst Rise/Fall = {value:g} ns"
         if param == "burst_edge_one_sharp_ns":
@@ -1738,6 +1876,35 @@ class HILIGHTMainWindow(QMainWindow):
             capacity = max(int(round(value)), 1)
             cfg.event_multihit_capacity = capacity
             cfg.b_multihit_mode = capacity > 1
+        elif param == "afterpulsing_probability_pct":
+            cfg.detector_afterpulsing_probability = max(float(value), 0.0) / 100.0
+        elif param == "dark_count_rate_cps":
+            cfg.detector_dark_count_rate_cps = max(float(value), 0.0)
+        elif param == "instrument_profile":
+            loaded = self.profile_store.load_profile(str(value), sanitize=True)
+            loaded_cfg = loaded["config"]
+            preserved = {
+                "f_x_param": cfg.f_x_param,
+                "f_x_min": cfg.f_x_min,
+                "f_x_max": cfg.f_x_max,
+                "f_x_steps": cfg.f_x_steps,
+                "f_x_scale": cfg.f_x_scale,
+                "precision_photons": cfg.precision_photons,
+                "precision_validate_mc": cfg.precision_validate_mc,
+                "precision_mc_repeats": cfg.precision_mc_repeats,
+                "precision_compute_ci": cfg.precision_compute_ci,
+                "precision_accuracy_pvalue": cfg.precision_accuracy_pvalue,
+                "precision_bootstrap_samples": cfg.precision_bootstrap_samples,
+                "precision_ci_level": cfg.precision_ci_level,
+                "instr_sweep_active": cfg.instr_sweep_active,
+                "instr_sweep_param": cfg.instr_sweep_param,
+                "instr_sweep_vals": list(cfg.instr_sweep_vals),
+            }
+            new_cfg = PhysicsConfig(**(loaded_cfg.model_dump() if hasattr(loaded_cfg, "model_dump") else loaded_cfg.dict()))
+            for key, val in preserved.items():
+                setattr(new_cfg, key, val)
+            new_cfg.active_instrument_profile = str(value)
+            cfg.__dict__.update(new_cfg.__dict__)
         elif param == "burst_edge_symmetric_ns":
             cfg.burst_enabled = True
             cfg.burst_sub_rise_time = float(value)
@@ -2679,11 +2846,13 @@ class HILIGHTMainWindow(QMainWindow):
         """
         QMessageBox.about(self, "About HILIGHTer", about_text)
 
-    def show_manual(self):
+    def show_manual(self, section_id: str | None = None):
         """Displays the interactive manual as a floating window."""
         self.manual_widget.show()
         self.manual_widget.raise_()
         self.manual_widget.activateWindow()
+        if section_id:
+            self.manual_widget.scroll_to_section(section_id)
         self.statusBar().showMessage("Displaying Interactive Manual (Ctrl+H).")
 
 

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>2D MC tests</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script defer src="assets/app.js"></script>
+</head>
+<body data-page="index">
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">HILIGHTer Digital Twin<small>2D MC tests</small></div>
+      <nav class="nav">
+        <a data-nav="index" href="index.html">Overview</a>
+        <a data-nav="controller" href="controller.html">Controller</a>
+        <a data-nav="widgets" href="widgets.html">Widgets</a>
+        <a data-nav="apis" href="apis.html">APIs</a>
+        <a data-nav="mcp" href="mcp.html">MCP</a>
+        <a data-nav="backend" href="backend.html">Backend</a>
+        <a data-nav="maths" href="maths.html">Maths</a>
+      </nav>
+      <form class="search-form" data-search-target="search.html">
+        <input type="search" name="q" placeholder="Search MC validation...">
+        <button type="submit">Search</button>
+      </form>
+    </div>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-card toc">
+        <h3>Validation</h3>
+        <a href="#mc-image-validation">What 2D MC tests do</a>
+        <a href="#pixel-flow">Pixel analysis flow</a>
+        <a href="#phasor-flow">Phasor flow</a>
+        <a href="#fitters">Fitting methods</a>
+      </div>
+    </aside>
+    <main class="content">
+      <section class="hero" id="mc-image-validation">
+        <div class="kicker">Workflow</div>
+        <h1>2D MC tests and MC Image validation</h1>
+        <p>This workflow generates validation images, fits them, and exposes per-pixel diagnostics. It is used to test full image-analysis behaviour rather than one-dimensional Fisher curves.</p>
+      </section>
+      <section class="card" id="pixel-flow">
+        <h2>Pixel analysis flow</h2>
+        <div class="plain-box"><h3>Plain English</h3><p>Clicking a pixel shows the measured decay, the fitted decay, residuals, and the exact laser profile used to fit that pixel.</p></div>
+        <div class="specialist-box"><h3>For specialists</h3><p>The backend produces validation images with known truth, then the fit path computes dense reconvolved curves for display while keeping residuals grounded in the actual binned or gated prediction.</p></div>
+      </section>
+      <section class="card" id="phasor-flow">
+        <h2>Phasor flow</h2>
+        <div class="plain-box"><h3>Plain English</h3><p>The phasor view gives a compact summary of pixel behaviour in a frequency-domain representation. Selecting a pixel in the image also highlights its phasor.</p></div>
+        <div class="specialist-box"><h3>For specialists</h3><p>The current phasor implementation is internal to the HILIGHTer backend. It uses the known laser profile for calibration and plots both the universal semicircle and the discrete single-exponential locus implied by the actual gate scheme.</p></div>
+      </section>
+      <section class="card" id="fitters">
+        <h2>Fitting methods</h2>
+        <p>The main lifetime-fitting options exposed in the desktop are Gridded MLE, Iterative Reconvolution, and Tail Fitting. Tail Fitting starts after the laser profile has fallen by the configured 3-sigma criterion.</p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

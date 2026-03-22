@@ -1,0 +1,6 @@
+TCSPC instrument
+Repetition rate 80 MHz
+128 bins
+Timing jitter 150 ps
+Deadtime 45 ns
+Gaussian IRF FWHM 250 ps

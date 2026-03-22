@@ -3,17 +3,26 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                              QComboBox, QLabel, QGroupBox, QTabWidget,
                              QCheckBox, QLineEdit, QRadioButton, QButtonGroup,
                              QStackedWidget, QTextEdit, QToolButton, QDialog,
-                             QScrollArea, QSizePolicy,
-                             QDialogButtonBox)
+                             QScrollArea, QSizePolicy, QFileDialog,
+                             QDialogButtonBox, QMessageBox, QStyle)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QGuiApplication, QColor
 import numpy as np
 import pyqtgraph as pg
 from .freeform_irf_editor import FreeFormIRFEditor
+try:
+    from backend.batch_sweep_store import BatchSweepStore
+except ImportError:
+    from python.backend.batch_sweep_store import BatchSweepStore
+try:
+    from backend.profile_store import InstrumentProfileStore
+except ImportError:
+    from python.backend.profile_store import InstrumentProfileStore
 
 class ControlWidget(QWidget):
     context_changed = pyqtSignal(str) # Emits section ID for manual
     advanced_config_changed = pyqtSignal()
+    custom_model_editor_requested = pyqtSignal()
     EVENT_CAPACITY_UNLIMITED = 1_000_000
     OPT_HISTORY_COLORS = {
         "objective": "#ef4444",
@@ -31,6 +40,7 @@ class ControlWidget(QWidget):
         self.optimization_running_state = False
         self._anchor_syncing = False
         self._f_photon_basis_syncing = False
+        self._photon_budget_syncing = False
         self.current_f_photon_basis_mode = "period"
         self.simulation_mode_preference = "auto"
         self.event_deadtime_mode = "nonparalyzable"
@@ -40,6 +50,11 @@ class ControlWidget(QWidget):
         self.event_share_resource_group = False
         self.event_return_timestamps = False
         self.event_pixel_dwell_time_s = 1e-3
+        self._ideal_detector_syncing = False
+        self._ideal_gates_syncing = False
+        self.batch_sweep_store = BatchSweepStore()
+        self.instrument_profile_store = InstrumentProfileStore()
+        self.batch_sweep_defaults = self.batch_sweep_store.load_current()
         layout = QVBoxLayout(self)
         
         # Main Tab Container
@@ -89,7 +104,19 @@ class ControlWidget(QWidget):
         self.btn_simulation_mode_badge.setText("Ideal Poisson (auto)")
         self.btn_simulation_mode_badge.setToolTip("Click to cycle simulation core preference.")
         self.btn_simulation_mode_badge.clicked.connect(self._cycle_simulation_mode_preference)
-        model_form.addRow("Simulation core:", self.btn_simulation_mode_badge)
+        self.validation_mode_preference = "ideal_poisson"
+        self.btn_validation_mode_badge = QToolButton()
+        self.btn_validation_mode_badge.setToolTip("Click to cycle validation-core preference.")
+        self.btn_validation_mode_badge.clicked.connect(self._cycle_validation_mode_preference)
+        core_row = QWidget()
+        core_row_layout = QHBoxLayout(core_row)
+        core_row_layout.setContentsMargins(0, 0, 0, 0)
+        core_row_layout.setSpacing(6)
+        core_row_layout.addWidget(QLabel("Simulation core:"))
+        core_row_layout.addWidget(self.btn_simulation_mode_badge, 1)
+        core_row_layout.addWidget(QLabel("Validation core:"))
+        core_row_layout.addWidget(self.btn_validation_mode_badge, 1)
+        model_form.addRow(core_row)
         
         decay_layout.addWidget(model_group)
 
@@ -305,39 +332,71 @@ class ControlWidget(QWidget):
         self.spin_photons.setRange(1, 10_000_000)
         self.spin_photons.setSingleStep(100)
         self.spin_photons.setValue(2000)
-        stat_layout.addRow("Avg Photons:", self.spin_photons)
-
         self.spin_image_repeats = QSpinBox()
         self.spin_image_repeats.setRange(1, 100000)
         self.spin_image_repeats.setValue(200)
-        stat_layout.addRow("Target repeats:", self.spin_image_repeats)
-
-        self.lbl_image_param = QLabel("tau1")
-        self.lbl_image_x_summary = QLabel("Min 0.500 | Max 7.500 | Steps 30")
-        stat_layout.addRow("Swept parameter:", self.lbl_image_param)
-        stat_layout.addRow("X-axis source:", self.lbl_image_x_summary)
+        stat_layout.addRow(two_column_row("Photons:", self.spin_photons, "MC repeats (aim):", self.spin_image_repeats))
         acq_layout.addWidget(stat_group)
 
-        res_group = QGroupBox("Derived Validation Geometry")
+        res_group = QGroupBox("Data features")
         res_layout = QFormLayout(res_group)
+        self.lbl_image_param = QLabel("tau1")
         self.lbl_image_x_pixels = QLabel("90")
         self.lbl_image_y_pixels = QLabel("70")
         self.lbl_image_band_width = QLabel("3")
         self.lbl_image_effective_repeats = QLabel("210")
-        res_layout.addRow(two_column_row("X pixels:", self.lbl_image_x_pixels, "Y pixels:", self.lbl_image_y_pixels))
-        res_layout.addRow(two_column_row("Band width:", self.lbl_image_band_width, "Replicates/value:", self.lbl_image_effective_repeats))
+        self.lbl_image_sweep_min = QLabel("0.500")
+        self.lbl_image_sweep_max = QLabel("7.500")
+        self.lbl_image_sweep_steps = QLabel("30")
+        line1 = QWidget()
+        line1_layout = QHBoxLayout(line1)
+        line1_layout.setContentsMargins(0, 0, 0, 0)
+        line1_layout.setSpacing(6)
+        line1_layout.addWidget(QLabel("X (precision sweep):"))
+        line1_layout.addWidget(self.lbl_image_param, 1)
+        line1_layout.addWidget(QLabel("X pixels:"))
+        line1_layout.addWidget(self.lbl_image_x_pixels, 1)
+        res_layout.addRow(line1)
+        line2 = QWidget()
+        line2_layout = QHBoxLayout(line2)
+        line2_layout.setContentsMargins(0, 0, 0, 0)
+        line2_layout.setSpacing(6)
+        line2_layout.addWidget(QLabel("Swept values min"))
+        line2_layout.addWidget(self.lbl_image_sweep_min, 1)
+        line2_layout.addWidget(QLabel("max"))
+        line2_layout.addWidget(self.lbl_image_sweep_max, 1)
+        line2_layout.addWidget(QLabel("steps"))
+        line2_layout.addWidget(self.lbl_image_sweep_steps, 1)
+        line2_layout.addWidget(QLabel("stripe width"))
+        line2_layout.addWidget(self.lbl_image_band_width, 1)
+        res_layout.addRow(line2)
+        line3 = QWidget()
+        line3_layout = QHBoxLayout(line3)
+        line3_layout.setContentsMargins(0, 0, 0, 0)
+        line3_layout.setSpacing(6)
+        line3_layout.addWidget(QLabel("Y dimension (Monte Carlo):"))
+        line3_layout.addWidget(self.lbl_image_y_pixels, 1)
+        line3_layout.addWidget(QLabel("Replicates/value:"))
+        line3_layout.addWidget(self.lbl_image_effective_repeats, 1)
+        res_layout.addRow(line3)
+        self.lbl_image_replicates_comment = QLabel("Replicates are stripe widths x Y pixels")
+        self.lbl_image_replicates_comment.setWordWrap(True)
+        res_layout.addRow(self.lbl_image_replicates_comment)
         acq_layout.addWidget(res_group)
 
         analysis_group = QGroupBox("Image Analysis")
         analysis_form = QFormLayout(analysis_group)
         self.combo_image_fit_method = QComboBox()
         self.combo_image_fit_method.addItems(["Gridded MLE", "Iterative Reconvolution", "Tail Fitting"])
-        analysis_form.addRow("Lifetime fitting:", self.combo_image_fit_method)
-        self.lbl_image_backends = QLabel("Phasors: HILIGHTer backend | Lifetime fitting: HILIGHTer backend")
-        self.lbl_image_backends.setWordWrap(True)
-        analysis_form.addRow("Backends:", self.lbl_image_backends)
-        self.btn_fit_image = QPushButton("FIT IMAGE")
-        analysis_form.addRow(self.btn_fit_image)
+        self.btn_fit_image = QPushButton("REFIT")
+        self.btn_fit_image.setStyleSheet("background-color: #16a34a; color: white; font-weight: bold;")
+        fit_row = QWidget()
+        fit_row_layout = QHBoxLayout(fit_row)
+        fit_row_layout.setContentsMargins(0, 0, 0, 0)
+        fit_row_layout.setSpacing(6)
+        fit_row_layout.addWidget(self.combo_image_fit_method, 1)
+        fit_row_layout.addWidget(self.btn_fit_image, 0)
+        analysis_form.addRow("Lifetime fitting:", fit_row)
         acq_layout.addWidget(analysis_group)
 
         self.spin_fx_min.valueChanged.connect(self.update_image_validation_summary)
@@ -350,7 +409,9 @@ class ControlWidget(QWidget):
 
         # --- TAB 2: LASER / IRF (REFACTORED) ---
         laser_tab = QWidget()
-        laser_layout = QFormLayout(laser_tab)
+        laser_main_layout = QVBoxLayout(laser_tab)
+        laser_inner_widget = QWidget()
+        laser_layout = QFormLayout(laser_inner_widget)
         laser_layout.setHorizontalSpacing(6)
         laser_layout.setVerticalSpacing(6)
         laser_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
@@ -377,7 +438,7 @@ class ControlWidget(QWidget):
         self.label_fall = QLabel("Fall Time (ns):")
         laser_layout.addRow(self.label_fall, self.spin_fall)
 
-        self.btn_freeform_mode = QPushButton("Edit free-form")
+        self.btn_freeform_mode = QPushButton("Editing")
         self.btn_freeform_mode.setCheckable(True)
         self.btn_freeform_mode.setChecked(True)
         self.freeform_editor = FreeFormIRFEditor()
@@ -386,45 +447,73 @@ class ControlWidget(QWidget):
         self.freeform_editor.setMaximumWidth(420)
         self.freeform_editor.btn_reset.clicked.disconnect()
         self.freeform_editor.btn_reset.clicked.connect(self._reset_freeform_from_current_inputs)
+        self.lbl_freeform_editor = QLabel("Free-form editor:")
+        self.lbl_freeform_help = QLabel(
+            "Double-click a point to select it.\n"
+            "Drag to move. Double-click empty space then Add Point to insert."
+        )
+        self.lbl_freeform_help.setWordWrap(True)
         freeform_header = QWidget()
         freeform_header_layout = QHBoxLayout(freeform_header)
         freeform_header_layout.setContentsMargins(0, 0, 0, 0)
         freeform_header_layout.setSpacing(6)
-        self.lbl_freeform_editor = QLabel("Free-form editor:")
         freeform_header_layout.addWidget(self.lbl_freeform_editor)
-        freeform_header_layout.addStretch()
         freeform_header_layout.addWidget(self.btn_freeform_mode)
-        laser_layout.addRow(freeform_header)
+        freeform_header_layout.addStretch()
         freeform_container = QWidget()
         freeform_container_layout = QVBoxLayout(freeform_container)
         freeform_container_layout.setContentsMargins(0, 0, 0, 0)
-        freeform_container_layout.setSpacing(2)
-        freeform_container_layout.setAlignment(Qt.AlignmentFlag.AlignRight)
+        freeform_container_layout.setSpacing(4)
+        freeform_container_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        freeform_container_layout.addWidget(freeform_header, 0, Qt.AlignmentFlag.AlignLeft)
+        freeform_container_layout.addWidget(self.lbl_freeform_help, 0, Qt.AlignmentFlag.AlignLeft)
         freeform_container_layout.addWidget(self.freeform_editor)
-        laser_layout.addRow("", freeform_container)
+        laser_layout.addRow(freeform_container)
         
         # Burst Excitation Sub-group
         self.group_burst = QGroupBox("Burst Excitation")
         self.group_burst.setCheckable(True)
         self.group_burst.setChecked(False)
-        self.group_burst.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        self.group_burst.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Maximum)
+        self.group_burst.setMaximumWidth(330)
         burst_l = QFormLayout(self.group_burst)
         burst_l.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
         burst_l.setVerticalSpacing(4)
         
+        lbl_burst_period = QLabel("Pulse distance (ps):")
+        lbl_burst_period.setMinimumWidth(130)
         self.spin_burst_period = QDoubleSpinBox()
         self.spin_burst_period.setRange(1.0, 100000.0)
         self.spin_burst_period.setValue(1000.0)
         self.spin_burst_period.setToolTip("Peak-to-peak distance between sub-pulses in the burst (ps).")
-        burst_l.addRow("Pulse distance (ps):", self.spin_burst_period)
+        burst_l.addRow(lbl_burst_period, self.spin_burst_period)
         
+        lbl_burst_fwhm = QLabel("Burst FWHM (ps):")
+        lbl_burst_fwhm.setMinimumWidth(130)
         self.spin_burst_fwhm = QDoubleSpinBox()
         self.spin_burst_fwhm.setRange(1.0, 100000.0)
         self.spin_burst_fwhm.setValue(100.0)
         self.spin_burst_fwhm.setToolTip("Pulse-width (FWHM) of each sub-pulse in the burst (ps).")
-        burst_l.addRow("Burst FWHM (ps):", self.spin_burst_fwhm)
+        burst_l.addRow(lbl_burst_fwhm, self.spin_burst_fwhm)
         
-        laser_layout.addRow(self.group_burst)
+        input_width = 140
+        self.combo_profile.setFixedWidth(input_width)
+        self.spin_period.setFixedWidth(input_width)
+        self.spin_fwhm.setFixedWidth(input_width)
+        self.spin_irf_pos.setFixedWidth(input_width)
+        self.spin_rise.setFixedWidth(input_width)
+        self.spin_fall.setFixedWidth(input_width)
+        self.spin_burst_period.setFixedWidth(input_width)
+        self.spin_burst_fwhm.setFixedWidth(input_width)
+
+        burst_container = QHBoxLayout()
+        burst_container.setContentsMargins(0, 0, 0, 0)
+        burst_container.addWidget(self.group_burst)
+        burst_container.addStretch()
+        laser_layout.addRow(burst_container)
+        
+        laser_main_layout.addWidget(laser_inner_widget)
+        laser_main_layout.addStretch()
         
         self.tabs.addTab(laser_tab, "Excitation")
         
@@ -440,8 +529,10 @@ class ControlWidget(QWidget):
         detection_tab = QWidget()
         detection_layout = QVBoxLayout(detection_tab)
 
-        detector_group = QGroupBox("Detector")
+        detector_group = QGroupBox("Detector Properties")
         hw_layout = QFormLayout(detector_group)
+        self.chk_ideal_detector = QCheckBox("Ideal detector")
+        hw_layout.addRow(self.chk_ideal_detector)
         self.spin_jitter = QSpinBox(); self.spin_jitter.setValue(150)
         self.spin_deadtime = QSpinBox(); self.spin_deadtime.setValue(45)
         self.spin_pixel_dwell = QDoubleSpinBox()
@@ -461,7 +552,8 @@ class ControlWidget(QWidget):
         detector_row_one_layout.addWidget(QLabel("Pixel dwell:"))
         detector_row_one_layout.addWidget(self.spin_pixel_dwell, 1)
         detector_row_one_layout.addWidget(self.combo_pixel_dwell_unit)
-        hw_layout.addRow(detector_row_one)
+        self.detector_row_one_widget = detector_row_one
+        hw_layout.addRow(self.detector_row_one_widget)
         self.lbl_estimated_count_rate = QLabel("0 cps")
         self.chk_multihit = QCheckBox("Multihit Detection"); self.chk_multihit.setChecked(True)
         self.spin_max_events_per_period = QSpinBox()
@@ -476,12 +568,48 @@ class ControlWidget(QWidget):
         detector_runtime_layout.addWidget(self.chk_multihit)
         detector_runtime_layout.addWidget(QLabel("Max events/period:"))
         detector_runtime_layout.addWidget(self.spin_max_events_per_period, 1)
-        hw_layout.addRow(detector_runtime_row)
+        self.detector_runtime_row_widget = detector_runtime_row
+        hw_layout.addRow(self.detector_runtime_row_widget)
+        self.spin_afterpulsing = QDoubleSpinBox()
+        self.spin_afterpulsing.setRange(0.0, 100.0)
+        self.spin_afterpulsing.setDecimals(3)
+        self.spin_afterpulsing.setSingleStep(0.1)
+        self.spin_afterpulsing.setValue(0.0)
+        self.spin_dark_count_rate = QDoubleSpinBox()
+        self.spin_dark_count_rate.setRange(0.0, 1e12)
+        self.spin_dark_count_rate.setDecimals(3)
+        self.spin_dark_count_rate.setSingleStep(10.0)
+        self.spin_dark_count_rate.setValue(0.0)
+        detector_effects_row = QWidget()
+        detector_effects_layout = QHBoxLayout(detector_effects_row)
+        detector_effects_layout.setContentsMargins(0, 0, 0, 0)
+        detector_effects_layout.setSpacing(6)
+        detector_effects_layout.addWidget(QLabel("Afterpulsing (%):"))
+        detector_effects_layout.addWidget(self.spin_afterpulsing, 1)
+        detector_effects_layout.addWidget(QLabel("Dark count rate (cps):"))
+        detector_effects_layout.addWidget(self.spin_dark_count_rate, 1)
+        self.detector_effects_row_widget = detector_effects_row
+        hw_layout.addRow(self.detector_effects_row_widget)
+
+        detector_input_width = 110
+        for widget in (
+            self.spin_jitter,
+            self.spin_deadtime,
+            self.spin_pixel_dwell,
+            self.spin_max_events_per_period,
+            self.spin_afterpulsing,
+            self.spin_dark_count_rate,
+        ):
+            widget.setFixedWidth(detector_input_width)
+        self.combo_pixel_dwell_unit.setFixedWidth(70)
         detection_layout.addWidget(detector_group)
 
         # Gating
-        gating_group = QGroupBox("Gating")
+        gating_group = QGroupBox("Gate Properties")
         gate_layout = QFormLayout(gating_group)
+        self.chk_ideal_gates = QCheckBox("Ideal gates")
+        self.chk_ideal_gates.setChecked(True)
+        gate_layout.addRow(self.chk_ideal_gates)
         self.spin_num_gates = QSpinBox(); self.spin_num_gates.setRange(2, 512); self.spin_num_gates.setValue(4)
         self.combo_gate_type = QComboBox(); self.combo_gate_type.addItems(["Equal", "Custom"])
         gate_layout.addRow(two_column_row("Num Gates:", self.spin_num_gates, "Gate Type:", self.combo_gate_type))
@@ -491,9 +619,20 @@ class ControlWidget(QWidget):
         self.lbl_gate_error = QLabel("")
         self.lbl_gate_error.setStyleSheet("color: #dc2626; font-weight: bold;")
         gate_layout.addRow("", self.lbl_gate_error)
-        self.spin_gate_rise = QDoubleSpinBox(); self.spin_gate_rise.setValue(0.1)
-        self.spin_gate_fall = QDoubleSpinBox(); self.spin_gate_fall.setValue(0.1)
-        gate_layout.addRow(two_column_row("Edge Rise (ns):", self.spin_gate_rise, "Edge Fall (ns):", self.spin_gate_fall))
+        self.spin_gate_rise = QDoubleSpinBox(); self.spin_gate_rise.setValue(0.0)
+        self.spin_gate_fall = QDoubleSpinBox(); self.spin_gate_fall.setValue(0.0)
+        edge_wrap_row = QWidget()
+        edge_wrap_row_layout = QHBoxLayout(edge_wrap_row)
+        edge_wrap_row_layout.setContentsMargins(0, 0, 0, 0)
+        edge_wrap_row_layout.setSpacing(6)
+        edge_wrap_row_layout.addWidget(QLabel("Edge rise/fall (ns):"))
+        edge_wrap_row_layout.addWidget(self.spin_gate_rise, 1)
+        edge_wrap_row_layout.addWidget(self.spin_gate_fall, 1)
+        self.chk_gate_wraparound = QCheckBox("Wrap around")
+        self.chk_gate_wraparound.setChecked(False)
+        edge_wrap_row_layout.addWidget(self.chk_gate_wraparound)
+        self.gate_nonideal_row_widget = edge_wrap_row
+        gate_layout.addRow(self.gate_nonideal_row_widget)
 
         # Radio button group for gate start mode
         start_group = QGroupBox("Gate Start Alignment")
@@ -521,8 +660,6 @@ class ControlWidget(QWidget):
         free_layout.addWidget(self.spin_gate_first)
         start_layout.addLayout(free_layout)
         
-        gate_layout.addRow(start_group)
-
         end_group = QGroupBox("Gate End Alignment")
         end_layout = QVBoxLayout(end_group)
 
@@ -543,7 +680,14 @@ class ControlWidget(QWidget):
         self.spin_gate_last.setEnabled(False)
         end_free_layout.addWidget(self.spin_gate_last)
         end_layout.addLayout(end_free_layout)
-        gate_layout.addRow(end_group)
+        anchors_row = QWidget()
+        anchors_row_layout = QHBoxLayout(anchors_row)
+        anchors_row_layout.setContentsMargins(0, 0, 0, 0)
+        anchors_row_layout.setSpacing(6)
+        anchors_row_layout.addWidget(start_group, 1)
+        anchors_row_layout.addWidget(end_group, 1)
+        self.gate_anchor_row_widget = anchors_row
+        gate_layout.addRow(self.gate_anchor_row_widget)
 
         collection_group = QGroupBox("Gate Collection")
         collection_layout = QVBoxLayout(collection_group)
@@ -555,14 +699,12 @@ class ControlWidget(QWidget):
         self.gate_collection_bg.addButton(self.radio_gate_collection_seq)
         collection_layout.addWidget(self.radio_gate_collection_hist)
         collection_layout.addWidget(self.radio_gate_collection_seq)
-        gate_layout.addRow(collection_group)
-
         overlap_group = QGroupBox("Gate Overlap")
         overlap_layout = QVBoxLayout(overlap_group)
         self.radio_overlap_jitter = QRadioButton("Only for jittering/skewness")
         self.radio_overlap_never = QRadioButton("Never")
         self.radio_overlap_yes = QRadioButton("Yes (under development)")
-        self.radio_overlap_jitter.setChecked(True)
+        self.radio_overlap_never.setChecked(True)
         self.gate_overlap_bg = QButtonGroup()
         self.gate_overlap_bg.addButton(self.radio_overlap_jitter)
         self.gate_overlap_bg.addButton(self.radio_overlap_never)
@@ -579,7 +721,6 @@ class ControlWidget(QWidget):
         self.spin_gate_overlap.setEnabled(False)
         overlap_yes_row.addWidget(self.spin_gate_overlap)
         overlap_layout.addLayout(overlap_yes_row)
-        gate_layout.addRow(overlap_group)
 
         overlap_effect_group = QGroupBox("Overlap Effect")
         overlap_effect_layout = QVBoxLayout(overlap_effect_group)
@@ -594,11 +735,27 @@ class ControlWidget(QWidget):
         overlap_effect_layout.addWidget(self.radio_overlap_effect_exclusive)
         overlap_effect_layout.addWidget(self.radio_overlap_effect_duplicate)
         overlap_effect_layout.addWidget(self.radio_overlap_effect_independent)
-        gate_layout.addRow(overlap_effect_group)
+        overlap_row = QWidget()
+        overlap_row_layout = QHBoxLayout(overlap_row)
+        overlap_row_layout.setContentsMargins(0, 0, 0, 0)
+        overlap_row_layout.setSpacing(6)
+        overlap_row_layout.addWidget(overlap_group, 1)
+        overlap_row_layout.addWidget(overlap_effect_group, 1)
+        self.gate_overlap_row_widget = overlap_row
+        gate_layout.addRow(self.gate_overlap_row_widget)
+        self.gate_collection_group = collection_group
+        gate_layout.addRow(self.gate_collection_group)
 
-        self.chk_gate_wraparound = QCheckBox("Wrap around")
-        self.chk_gate_wraparound.setChecked(True)
-        gate_layout.addRow(self.chk_gate_wraparound)
+        for widget in (
+            self.spin_num_gates,
+            self.combo_gate_type,
+            self.spin_gate_rise,
+            self.spin_gate_fall,
+            self.spin_gate_first,
+            self.spin_gate_last,
+            self.spin_gate_overlap,
+        ):
+            widget.setFixedWidth(detector_input_width)
         
         # Connect radio buttons
         self.radio_gate_free.toggled.connect(self.spin_gate_first.setEnabled)
@@ -718,7 +875,8 @@ class ControlWidget(QWidget):
         self.spin_detection_end_anchor.setValue(12.5)
         self.spin_detection_end_anchor.setEnabled(False)
         detection_opt_form.addRow(two_column_row("Last Gate End:", self.combo_detection_end_anchor, "Custom End (ns):", self.spin_detection_end_anchor))
-        optimization_layout.addWidget(detection_opt_group)
+        self.detection_opt_group = detection_opt_group
+        optimization_layout.addWidget(self.detection_opt_group)
 
         excitation_opt_group = QGroupBox("Excitation Optimisation")
         excitation_opt_form = QFormLayout(excitation_opt_group)
@@ -771,8 +929,9 @@ class ControlWidget(QWidget):
         excitation_row_layout.addWidget(QLabel("Control pts:"))
         excitation_row_layout.addWidget(self.spin_excitation_control_points, 1)
         excitation_opt_form.addRow(excitation_row)
-        optimization_layout.addWidget(excitation_opt_group)
-        self.opt_groups = [optimization_scope_group, optimization_view_group, detection_opt_group, excitation_opt_group]
+        self.excitation_opt_group = excitation_opt_group
+        optimization_layout.addWidget(self.excitation_opt_group)
+        self.opt_groups = [optimization_scope_group, optimization_view_group, self.detection_opt_group, self.excitation_opt_group]
 
         self.lbl_optimization_current = QLabel("Current simulated value: baseline configuration")
         self.lbl_optimization_current.setWordWrap(True)
@@ -996,16 +1155,20 @@ class ControlWidget(QWidget):
         self.radio_f_basis_period.toggled.connect(self._sync_f_photon_basis_controls)
         self.radio_f_basis_all.toggled.connect(self._sync_f_photon_basis_controls)
         self.radio_f_basis_collected.toggled.connect(self._sync_f_photon_basis_controls)
+        self.spin_precision_photons.valueChanged.connect(self._sync_photon_budget_from_precision)
+        self.spin_photons.valueChanged.connect(self._sync_photon_budget_from_validation)
         self.spin_photons.valueChanged.connect(self._update_estimated_count_rate)
         self.spin_deadtime.valueChanged.connect(self._sync_detector_event_controls)
         self.spin_pixel_dwell.valueChanged.connect(self._sync_detector_event_controls)
         self.combo_pixel_dwell_unit.currentIndexChanged.connect(self._sync_detector_event_controls)
         self.chk_multihit.toggled.connect(self._sync_detector_event_controls)
         self.spin_max_events_per_period.valueChanged.connect(self._sync_detector_event_controls)
+        self.spin_dark_count_rate.valueChanged.connect(self._sync_background_source_controls)
         self._sync_optimization_ui()
         self._sync_f_photon_basis_controls()
         self._set_detector_dwell_from_seconds(self.event_pixel_dwell_time_s)
         self._sync_detector_event_controls()
+        self._sync_background_source_controls()
 
         # --- TAB 6: BATCH SWEEP ---
         instr_tab = QWidget()
@@ -1020,28 +1183,68 @@ class ControlWidget(QWidget):
         sweep_list_group = QGroupBox("Sweep Mode")
         sweep_list_layout = QVBoxLayout(sweep_list_group)
         sweep_list_layout.setContentsMargins(8, 8, 8, 8)
+        sweep_list_group.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Maximum)
         sweep_list_layout.addWidget(self.radio_sweep_off)
         instr_layout.addWidget(sweep_list_group)
 
         self.sweep_detail_group = QGroupBox("Sweep Values")
         self.sweep_detail_form = QFormLayout(self.sweep_detail_group)
+        self.sweep_detail_group.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Maximum)
         self.lbl_sweep_detail_title = QLabel("Batch sweep disabled")
-        self.sweep_detail_form.addRow("Mode:", self.lbl_sweep_detail_title)
+        mode_header = QWidget()
+        mode_header_layout = QHBoxLayout(mode_header)
+        mode_header_layout.setContentsMargins(0, 0, 0, 0)
+        mode_header_layout.setSpacing(4)
+        mode_header_layout.addWidget(self.lbl_sweep_detail_title, 1)
+        self.btn_sweep_load = self._make_icon_button(QStyle.StandardPixmap.SP_BrowserReload, "Load current sweep defaults from the active JSON file.", "Load")
+        self.btn_sweep_save = self._make_icon_button(QStyle.StandardPixmap.SP_DialogSaveButton, "Save the currently edited sweep defaults to the active JSON file. This overwrites the current JSON.", "Save")
+        self.btn_sweep_import = self._make_icon_button(QStyle.StandardPixmap.SP_DialogOpenButton, "Import sweep defaults from a JSON file and replace the current editable defaults.", "Import")
+        self.btn_sweep_export = self._make_icon_button(QStyle.StandardPixmap.SP_DriveFDIcon, "Export the current editable sweep defaults to a JSON file.", "Export")
+        self.btn_sweep_reset = self._make_icon_button(QStyle.StandardPixmap.SP_RestoreDefaultsButton, "Reset the active sweep-default JSON back to the installation defaults.", "Reset")
+        for button in (
+            self.btn_sweep_load,
+            self.btn_sweep_save,
+            self.btn_sweep_import,
+            self.btn_sweep_export,
+            self.btn_sweep_reset,
+        ):
+            mode_header_layout.addWidget(button, 0)
+        self.sweep_detail_form.addRow("Mode:", mode_header)
         self.sweep_detail_stack = QStackedWidget()
         self.sweep_detail_form.addRow(self.sweep_detail_stack)
         instr_layout.addWidget(self.sweep_detail_group)
 
         def add_sweep_option(key, title, values_default, values_label="Values:",
-                             extra_widget=None, extra_label=None):
+                             extra_widget=None, extra_label=None, row_kind="numeric"):
             radio = QRadioButton(title)
-            values_edit = QLineEdit(values_default)
             detail = QWidget()
-            detail_layout = QFormLayout(detail)
+            detail_layout = QVBoxLayout(detail)
             detail_layout.setContentsMargins(0, 0, 0, 0)
-            detail_layout.addRow(values_label, values_edit)
-            widgets = [values_edit]
+            detail_layout.setSpacing(6)
+            values_container = QWidget()
+            values_container_layout = QVBoxLayout(values_container)
+            values_container_layout.setContentsMargins(0, 0, 0, 0)
+            values_container_layout.setSpacing(4)
+            add_top_row = QHBoxLayout()
+            add_top_row.setContentsMargins(0, 0, 0, 0)
+            add_top_row.setSpacing(4)
+            btn_add_top = self._make_plus_button("Add a new sweep value.")
+            add_top_row.addWidget(btn_add_top, 0)
+            add_top_row.addStretch(1)
+            values_container_layout.addLayout(add_top_row)
+            rows_host = QWidget()
+            rows_host_layout = QVBoxLayout(rows_host)
+            rows_host_layout.setContentsMargins(0, 0, 0, 0)
+            rows_host_layout.setSpacing(4)
+            values_container_layout.addWidget(rows_host)
+            detail_layout.addWidget(values_container)
+            widgets = []
+            extra_form = None
             if extra_widget is not None and extra_label is not None:
-                detail_layout.addRow(extra_label, extra_widget)
+                extra_form = QFormLayout()
+                extra_form.setContentsMargins(0, 0, 0, 0)
+                extra_form.addRow(extra_label, extra_widget)
+                detail_layout.addLayout(extra_form)
                 widgets.append(extra_widget)
             sweep_list_layout.addWidget(radio)
             self.sweep_detail_stack.addWidget(detail)
@@ -1049,11 +1252,18 @@ class ControlWidget(QWidget):
             self.sweep_options[key] = {
                 "radio": radio,
                 "title": title,
-                "values": values_edit,
+                "values": [],
                 "extra": extra_widget,
                 "widgets": widgets,
                 "detail": detail,
+                "rows_host_layout": rows_host_layout,
+                "btn_add_top": btn_add_top,
+                "values_label": values_label,
+                "row_kind": row_kind,
             }
+            initial_values = self._parse_float_list(values_default) if row_kind == "numeric" else list(values_default)
+            self._set_sweep_values(key, initial_values)
+            btn_add_top.clicked.connect(lambda _checked=False, sweep_key=key: self._append_sweep_value_row(sweep_key, None, 0))
             radio.toggled.connect(self._update_sweep_inputs_enabled)
 
         add_sweep_option("laser_pulse_fwhm_ns", "Laser Pulse (FWHM, ns)", "0.1, 0.2, 0.5")
@@ -1078,6 +1288,17 @@ class ControlWidget(QWidget):
             extra_label="Count rate (kcps):",
         )
         add_sweep_option("multihit_capabilities", "Max events/period", "1, 2, 4, 8")
+        add_sweep_option("afterpulsing_probability_pct", "Afterpulsing Probability (%)", "0, 0.5, 1, 2, 5")
+        add_sweep_option("dark_count_rate_cps", "Detector Dark Count Rate (cps)", "0, 100, 1000, 10000, 100000")
+        profile_names = [entry.get("name", "") for entry in self.instrument_profile_store.list_profiles()]
+        if not profile_names:
+            profile_names = ["HiLIGHT"]
+        add_sweep_option(
+            "instrument_profile",
+            "Instrument Profiles",
+            profile_names,
+            row_kind="profile",
+        )
         add_sweep_option("burst_edge_symmetric_ns", "Burst Rise/Fall Time (ns) - Symmetric Values", "0.05, 0.1, 0.2")
         burst_sharp_mode = QComboBox()
         burst_sharp_mode.addItems(["Sharp Rise, Sweep Fall", "Sharp Fall, Sweep Rise"])
@@ -1088,6 +1309,13 @@ class ControlWidget(QWidget):
             extra_widget=burst_sharp_mode,
             extra_label="Mode:",
         )
+
+        self._load_batch_sweep_defaults_into_ui(self.batch_sweep_defaults)
+        self.btn_sweep_load.clicked.connect(self._load_batch_sweep_defaults_from_store)
+        self.btn_sweep_save.clicked.connect(self._save_batch_sweep_defaults_to_store)
+        self.btn_sweep_import.clicked.connect(self._import_batch_sweep_defaults)
+        self.btn_sweep_export.clicked.connect(self._export_batch_sweep_defaults)
+        self.btn_sweep_reset.clicked.connect(self._reset_batch_sweep_defaults)
 
         self.radio_sweep_off.setChecked(True)
         self._update_sweep_inputs_enabled()
@@ -1168,7 +1396,36 @@ class ControlWidget(QWidget):
         self.radio_overlap_jitter.toggled.connect(self._sync_gate_controls)
         self.radio_overlap_never.toggled.connect(self._sync_gate_controls)
         self.radio_overlap_yes.toggled.connect(self._sync_gate_controls)
+        self.chk_ideal_detector.toggled.connect(self._on_ideal_detector_toggled)
+        self.chk_ideal_gates.toggled.connect(self._on_ideal_gates_toggled)
+        self.spin_jitter.valueChanged.connect(self._sync_ideal_detector_checkbox_from_values)
+        self.spin_deadtime.valueChanged.connect(self._sync_ideal_detector_checkbox_from_values)
+        self.spin_afterpulsing.valueChanged.connect(self._sync_ideal_detector_checkbox_from_values)
+        self.spin_dark_count_rate.valueChanged.connect(self._sync_ideal_detector_checkbox_from_values)
+        self.chk_multihit.toggled.connect(self._sync_ideal_detector_checkbox_from_values)
+        self.spin_max_events_per_period.valueChanged.connect(self._sync_ideal_detector_checkbox_from_values)
+        self.spin_gate_rise.valueChanged.connect(self._sync_ideal_gates_checkbox_from_values)
+        self.spin_gate_fall.valueChanged.connect(self._sync_ideal_gates_checkbox_from_values)
+        self.radio_overlap_jitter.toggled.connect(self._sync_ideal_gates_checkbox_from_values)
+        self.radio_overlap_never.toggled.connect(self._sync_ideal_gates_checkbox_from_values)
+        self.radio_overlap_yes.toggled.connect(self._sync_ideal_gates_checkbox_from_values)
+        self.spin_gate_overlap.valueChanged.connect(self._sync_ideal_gates_checkbox_from_values)
+        self.radio_overlap_effect_exclusive.toggled.connect(self._sync_ideal_gates_checkbox_from_values)
+        self.radio_overlap_effect_duplicate.toggled.connect(self._sync_ideal_gates_checkbox_from_values)
+        self.radio_overlap_effect_independent.toggled.connect(self._sync_ideal_gates_checkbox_from_values)
         self._sync_gate_controls()
+        self._sync_ideal_detector_checkbox_from_values()
+        self._sync_ideal_gates_checkbox_from_values()
+        self._update_simulation_mode_badge(
+            {
+                "preference": self.simulation_mode_preference,
+                "effective_mode": "ideal_poisson",
+                "requires_event_driven": False,
+                "forced_event_driven": False,
+                "reason": "Default simulation-core preference.",
+                "approximated_event_effects": False,
+            }
+        )
         self._render_optimization_history()
 
     def _compute_gate_anchor_start(self):
@@ -1274,6 +1531,7 @@ class ControlWidget(QWidget):
         if not allow_overlap:
             self.radio_overlap_effect_exclusive.setChecked(True)
         self._sync_optimization_controls_from_main_gate()
+        self._apply_ideal_gates_state(self.chk_ideal_gates.isChecked())
 
     def _sync_optimization_controls_from_main_gate(self):
         self._anchor_syncing = True
@@ -1355,6 +1613,14 @@ class ControlWidget(QWidget):
         self._apply_default_x_range(selected_name)
         self._apply_default_x_scale(selected_name)
 
+    def get_selected_decay_model_key(self):
+        text = self.combo_decay_model.currentText().strip().lower()
+        if text == "add custom model...":
+            return "exponential"
+        if text == "custom":
+            return "custom"
+        return text
+
     def _apply_default_x_range(self, param_name):
         if param_name not in self.default_x_ranges:
             return
@@ -1404,8 +1670,8 @@ class ControlWidget(QWidget):
             self.spin_irf_pos: "IRF temporal position within the period.",
             self.spin_rise: "Rising edge time for rectangular excitation profiles.",
             self.spin_fall: "Falling edge time for rectangular excitation profiles.",
-            self.btn_freeform_mode: "Toggle between editing the free-form waveform and locking it for use in the current IRF model.",
-            self.freeform_editor: "Visual editor for free-form excitation. Drag points to reshape the waveform, click empty space then Add Point to insert a new breakpoint, or delete the selected breakpoint.",
+            self.btn_freeform_mode: "Switch between Editing and Using the free-form excitation profile.",
+            self.freeform_editor: "Visual editor for free-form excitation. Double-click a point to select it, drag to move it, or double-click empty space and then Add Point to insert a new breakpoint.",
             self.group_burst: "Enable and configure burst excitation sub-pulses.",
             self.spin_burst_period: "Peak-to-peak distance between sub-pulses in the burst (ps).",
             self.spin_burst_fwhm: "Pulse-width (FWHM) of each sub-pulse in the burst (ps).",
@@ -1414,8 +1680,12 @@ class ControlWidget(QWidget):
             self.spin_pixel_dwell: "Pixel dwell time used to infer the average count rate and the strength of deadtime or pile-up effects.",
             self.combo_pixel_dwell_unit: "Units for the pixel dwell time.",
             self.lbl_estimated_count_rate: "Estimated average count rate derived from the configured photons per pixel and pixel dwell time.",
+            self.chk_ideal_detector: "Restore ideal detector behaviour by setting jitter, deadtime, afterpulsing, and dark counts to zero while allowing unlimited multihit collection.",
             self.chk_multihit: "Allow more than one accepted photon event in each repetition period.",
             self.spin_max_events_per_period: "Maximum accepted photon events in each repetition period. Disable multihit to force single-hit operation.",
+            self.spin_afterpulsing: "Detector afterpulsing probability in percent. Higher values add delayed detector-originated counts after true events.",
+            self.spin_dark_count_rate: "Detector dark count rate in counts per second. Non-zero dark counts replace the manual decay background control.",
+            self.chk_ideal_gates: "Restore ideal gate shapes with zero edge rise/fall and no explicit overlap effects.",
             self.spin_num_gates: "Number of detector gates across the measurement period.",
             self.combo_gate_type: "Gate construction mode.",
             self.edit_gate_widths: "Comma-separated gate edges in nanoseconds. In Equal mode this field shows the generated edges; in Custom mode you can edit them directly.",
@@ -1483,7 +1753,11 @@ class ControlWidget(QWidget):
 
         for spec in self.sweep_options.values():
             spec["radio"].setToolTip(f"Activate the batch sweep mode: {spec['title']}.")
-            spec["values"].setToolTip("Comma-separated sweep values for this instrument parameter.")
+            for row in spec["values"]:
+                row["edit"].setToolTip("One sweep value for this instrument parameter. Use the plus button to add more values.")
+                row["trash"].setToolTip("Remove this sweep value.")
+                row["add"].setToolTip("Add a new sweep value below this one.")
+            spec["btn_add_top"].setToolTip("Add a new sweep value to this mode.")
             if spec["extra"] is not None:
                 spec["extra"].setToolTip(f"Additional option for {spec['title']}.")
 
@@ -1831,9 +2105,146 @@ class ControlWidget(QWidget):
             return f"{rate_hz / 1e3:.3f} kcps"
         return f"{rate_hz:.3f} cps"
 
+    def _sync_photon_budget_from_precision(self, value):
+        if self._photon_budget_syncing:
+            return
+        self._photon_budget_syncing = True
+        try:
+            self.spin_photons.setValue(int(value))
+        finally:
+            self._photon_budget_syncing = False
+        self._update_estimated_count_rate()
+
+    def _sync_photon_budget_from_validation(self, value):
+        if self._photon_budget_syncing:
+            return
+        self._photon_budget_syncing = True
+        try:
+            self.spin_precision_photons.setValue(int(value))
+        finally:
+            self._photon_budget_syncing = False
+        self._update_estimated_count_rate()
+
+    def _sync_background_source_controls(self, *_args):
+        dark_active = float(getattr(self, "spin_dark_count_rate", None).value()) > 0.0 if hasattr(self, "spin_dark_count_rate") else False
+        if "background" in self.param_rows:
+            row = self.param_rows["background"]
+            row["val"].setEnabled(not dark_active)
+            row["fix"].setEnabled(not dark_active)
+            row["x"].setEnabled(not dark_active)
+            if dark_active and row["x"].isChecked():
+                row["x"].setChecked(False)
+
+    def _sync_ideal_detector_checkbox_from_values(self, *_args):
+        if self._ideal_detector_syncing:
+            return
+        capacity_val = int(self.spin_max_events_per_period.value())
+        is_ideal = (
+            float(self.spin_jitter.value()) == 0.0
+            and float(self.spin_deadtime.value()) == 0.0
+            and float(self.spin_afterpulsing.value()) == 0.0
+            and float(self.spin_dark_count_rate.value()) == 0.0
+            and self.chk_multihit.isChecked()
+            and capacity_val >= self.EVENT_CAPACITY_UNLIMITED
+        )
+        self._ideal_detector_syncing = True
+        try:
+            self.chk_ideal_detector.setChecked(is_ideal)
+        finally:
+            self._ideal_detector_syncing = False
+        self._apply_ideal_detector_state(is_ideal)
+
+    def _apply_ideal_detector_state(self, is_ideal: bool):
+        self.detector_row_one_widget.setVisible(not is_ideal)
+        self.detector_runtime_row_widget.setVisible(not is_ideal)
+        self.detector_effects_row_widget.setVisible(not is_ideal)
+        for widget in (
+            self.spin_jitter,
+            self.spin_deadtime,
+            self.spin_pixel_dwell,
+            self.combo_pixel_dwell_unit,
+            self.chk_multihit,
+            self.spin_max_events_per_period,
+            self.spin_afterpulsing,
+            self.spin_dark_count_rate,
+        ):
+            widget.setEnabled(not is_ideal)
+
+    def _on_ideal_detector_toggled(self, checked: bool):
+        if self._ideal_detector_syncing:
+            return
+        self._ideal_detector_syncing = True
+        try:
+            if checked:
+                self.spin_jitter.setValue(0)
+                self.spin_deadtime.setValue(0)
+                self.spin_afterpulsing.setValue(0.0)
+                self.spin_dark_count_rate.setValue(0.0)
+                self.chk_multihit.setChecked(True)
+                self.spin_max_events_per_period.setValue(self.EVENT_CAPACITY_UNLIMITED)
+            self._apply_ideal_detector_state(bool(checked))
+        finally:
+            self._ideal_detector_syncing = False
+        self._sync_detector_event_controls()
+        self._sync_background_source_controls()
+
+    def _sync_ideal_gates_checkbox_from_values(self, *_args):
+        if self._ideal_gates_syncing:
+            return
+        is_ideal = (
+            float(self.spin_gate_rise.value()) == 0.0
+            and float(self.spin_gate_fall.value()) == 0.0
+            and self.radio_overlap_never.isChecked()
+            and float(self.spin_gate_overlap.value()) == 0.0
+            and self.radio_overlap_effect_exclusive.isChecked()
+            and self.radio_gate_collection_hist.isChecked()
+            and not self.chk_gate_wraparound.isChecked()
+        )
+        self._ideal_gates_syncing = True
+        try:
+            self.chk_ideal_gates.setChecked(is_ideal)
+        finally:
+            self._ideal_gates_syncing = False
+        self._apply_ideal_gates_state(is_ideal)
+
+    def _apply_ideal_gates_state(self, is_ideal: bool):
+        self.gate_nonideal_row_widget.setVisible(not is_ideal)
+        self.gate_collection_group.setVisible(not is_ideal)
+        self.gate_overlap_row_widget.setVisible(not is_ideal)
+        self.spin_gate_rise.setEnabled(not is_ideal)
+        self.spin_gate_fall.setEnabled(not is_ideal)
+        self.chk_gate_wraparound.setEnabled(not is_ideal)
+        self.radio_gate_collection_hist.setEnabled(not is_ideal)
+        self.radio_gate_collection_seq.setEnabled(not is_ideal)
+        self.radio_overlap_jitter.setEnabled(not is_ideal)
+        self.radio_overlap_never.setEnabled(not is_ideal)
+        self.radio_overlap_yes.setEnabled(not is_ideal)
+        self.spin_gate_overlap.setEnabled((not is_ideal) and self.radio_overlap_yes.isChecked())
+        self.radio_overlap_effect_exclusive.setEnabled(not is_ideal)
+        self.radio_overlap_effect_duplicate.setEnabled(not is_ideal)
+        self.radio_overlap_effect_independent.setEnabled(not is_ideal)
+
+    def _on_ideal_gates_toggled(self, checked: bool):
+        if self._ideal_gates_syncing:
+            return
+        self._ideal_gates_syncing = True
+        try:
+            if checked:
+                self.spin_gate_rise.setValue(0.0)
+                self.spin_gate_fall.setValue(0.0)
+                self.radio_gate_collection_hist.setChecked(True)
+                self.radio_overlap_never.setChecked(True)
+                self.spin_gate_overlap.setValue(0.0)
+                self.radio_overlap_effect_exclusive.setChecked(True)
+                self.chk_gate_wraparound.setChecked(False)
+            self._apply_ideal_gates_state(bool(checked))
+        finally:
+            self._ideal_gates_syncing = False
+        self._sync_gate_controls()
+
     def _update_estimated_count_rate(self) -> None:
         dwell_s = float(max(getattr(self, "event_pixel_dwell_time_s", self._detector_dwell_seconds()), 1e-12))
-        avg_photons = float(self.spin_photons.value())
+        avg_photons = float(self.spin_precision_photons.value())
         self.lbl_estimated_count_rate.setText(self._format_count_rate(avg_photons / dwell_s))
 
     def _sync_detector_event_controls(self, *_args) -> None:
@@ -1853,6 +2264,7 @@ class ControlWidget(QWidget):
             self.event_multihit_capacity = 1
 
         self._update_estimated_count_rate()
+        self._apply_ideal_detector_state(self.chk_ideal_detector.isChecked())
 
     def _cycle_simulation_mode_preference(self):
         order = ["auto", "event_driven", "ideal_poisson"]
@@ -1861,7 +2273,8 @@ class ControlWidget(QWidget):
             current = "auto"
         next_idx = (order.index(current) + 1) % len(order)
         self.simulation_mode_preference = order[next_idx]
-        self._update_simulation_mode_badge(
+        self._set_core_badge(
+            self.btn_simulation_mode_badge,
             {
                 "preference": self.simulation_mode_preference,
                 "effective_mode": self.simulation_mode_preference if self.simulation_mode_preference != "auto" else "ideal_poisson",
@@ -1872,7 +2285,27 @@ class ControlWidget(QWidget):
         )
         self.advanced_config_changed.emit()
 
-    def _update_simulation_mode_badge(self, status):
+    def _cycle_validation_mode_preference(self):
+        order = ["ideal_poisson", "event_driven", "auto"]
+        current = str(getattr(self, "validation_mode_preference", "ideal_poisson")).lower()
+        if current not in order:
+            current = "ideal_poisson"
+        next_idx = (order.index(current) + 1) % len(order)
+        self.validation_mode_preference = order[next_idx]
+        effective_mode = "ideal_poisson" if self.validation_mode_preference == "auto" else self.validation_mode_preference
+        self._set_core_badge(
+            self.btn_validation_mode_badge,
+            {
+                "preference": self.validation_mode_preference,
+                "effective_mode": effective_mode,
+                "requires_event_driven": False,
+                "forced_event_driven": self.validation_mode_preference == "event_driven",
+                "reason": "Validation fitting uses the selected validation core badge for display and future compatibility.",
+                "approximated_event_effects": False,
+            },
+        )
+
+    def _set_core_badge(self, button, status):
         preference = str((status or {}).get("preference", "auto")).lower()
         effective = str((status or {}).get("effective_mode", "ideal_poisson")).lower()
         required = bool((status or {}).get("requires_event_driven", False))
@@ -1898,8 +2331,8 @@ class ControlWidget(QWidget):
             text = "Ideal Poisson (auto)"
             bg = "#16a34a"
 
-        self.btn_simulation_mode_badge.setText(text)
-        self.btn_simulation_mode_badge.setStyleSheet(
+        button.setText(text)
+        button.setStyleSheet(
             f"QToolButton {{ background-color: {bg}; color: white; font-weight: bold; border-radius: 6px; padding: 4px 10px; }}"
         )
         tooltip = f"Effective core: {effective}\nPreference: {preference}\nReason: {reason}"
@@ -1907,7 +2340,23 @@ class ControlWidget(QWidget):
             tooltip += "\nThe current detector configuration requires the event-driven core."
         elif approximated and effective == "ideal_poisson":
             tooltip += "\nDetector event effects are being approximated by the Ideal Poisson core."
-        self.btn_simulation_mode_badge.setToolTip(tooltip)
+        button.setToolTip(tooltip)
+
+    def _update_simulation_mode_badge(self, status):
+        self._set_core_badge(self.btn_simulation_mode_badge, status)
+        validation_pref = str(getattr(self, "validation_mode_preference", "ideal_poisson")).lower()
+        validation_effective = "ideal_poisson" if validation_pref == "auto" else validation_pref
+        self._set_core_badge(
+            self.btn_validation_mode_badge,
+            {
+                "preference": validation_pref,
+                "effective_mode": validation_effective,
+                "requires_event_driven": False,
+                "forced_event_driven": validation_pref == "event_driven",
+                "reason": "Validation fitting normally uses Ideal Poisson to avoid fitting detector artefacts.",
+                "approximated_event_effects": False,
+            },
+        )
 
     def _sync_optimization_ui(self, *_args):
         detection_enabled = self.chk_opt_detection.isChecked()
@@ -1941,12 +2390,14 @@ class ControlWidget(QWidget):
         self.spin_detection_end_anchor.setEnabled(
             detection_enabled and self.combo_detection_end_anchor.currentText().lower() == "custom"
         )
+        self.detection_opt_group.setVisible(detection_enabled)
 
         self.combo_excitation_optimization_profile.setEnabled(excitation_enabled)
         self.combo_excitation_constraint.setEnabled(excitation_enabled)
         self.spin_excitation_width_min.setEnabled(excitation_enabled and not free_form)
         self.spin_excitation_width_max.setEnabled(excitation_enabled and not free_form)
         self.spin_excitation_control_points.setEnabled(excitation_enabled and free_form)
+        self.excitation_opt_group.setVisible(excitation_enabled)
         self.chk_optimization_realtime.setEnabled(optimisation_active)
         self.spin_optimization_realtime_interval.setEnabled(optimisation_active and self.chk_optimization_realtime.isChecked())
         self.spin_optimization_steps_to_show.setEnabled(optimisation_active)
@@ -1977,7 +2428,7 @@ class ControlWidget(QWidget):
 
     def _on_freeform_mode_toggled(self, checked):
         edit_mode = bool(checked)
-        self.btn_freeform_mode.setText("Edit free-form" if edit_mode else "Use free-form")
+        self.btn_freeform_mode.setText("Editing" if edit_mode else "Using")
         self.freeform_editor.set_edit_mode(edit_mode)
 
     def _update_irf_ui(self, index=0):
@@ -1989,6 +2440,7 @@ class ControlWidget(QWidget):
         self.label_rise.setVisible(is_rect); self.spin_rise.setVisible(is_rect)
         self.label_fall.setVisible(is_rect); self.spin_fall.setVisible(is_rect)
         self.lbl_freeform_editor.setVisible(is_free_form)
+        self.lbl_freeform_help.setVisible(is_free_form)
         self.btn_freeform_mode.setVisible(is_free_form)
         self.freeform_editor.setVisible(is_free_form)
         self.spin_fwhm.setEnabled(not is_dirac)
@@ -2054,9 +2506,9 @@ class ControlWidget(QWidget):
     def update_image_validation_summary(self):
         param_name = self.get_selected_x_param()
         self.lbl_image_param.setText(param_name)
-        self.lbl_image_x_summary.setText(
-            f"Min {self.spin_fx_min.value():.3f} | Max {self.spin_fx_max.value():.3f} | Steps {self.spin_fx_steps.value()}"
-        )
+        self.lbl_image_sweep_min.setText(f"{self.spin_fx_min.value():.3f}")
+        self.lbl_image_sweep_max.setText(f"{self.spin_fx_max.value():.3f}")
+        self.lbl_image_sweep_steps.setText(str(self.spin_fx_steps.value()))
         n_values = max(int(self.spin_fx_steps.value()), 1)
         target_repeats = max(int(self.spin_image_repeats.value()), 1)
         total_pixels = n_values * target_repeats
@@ -2077,6 +2529,201 @@ class ControlWidget(QWidget):
                 return name
         return "tau1"
 
+    def _make_icon_button(self, standard_icon, tooltip, text=""):
+        button = QToolButton()
+        button.setIcon(self.style().standardIcon(standard_icon))
+        button.setAutoRaise(True)
+        button.setToolTip(tooltip)
+        if text:
+            button.setText(text)
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        return button
+
+    def _make_plus_button(self, tooltip):
+        button = QToolButton()
+        button.setText("+")
+        button.setAutoRaise(True)
+        button.setToolTip(tooltip)
+        return button
+
+    def _make_trash_button(self, tooltip):
+        button = QToolButton()
+        button.setText("−")
+        button.setAutoRaise(True)
+        button.setToolTip(tooltip)
+        return button
+
+    def _clear_layout(self, layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            child_layout = item.layout()
+            if widget is not None:
+                widget.deleteLater()
+            elif child_layout is not None:
+                self._clear_layout(child_layout)
+
+    def _append_sweep_value_row(self, key, value=None, index=None):
+        spec = self.sweep_options[key]
+        row_widget = QWidget()
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(4)
+        btn_trash = self._make_trash_button("Remove this sweep value.")
+        if spec.get("row_kind") == "profile":
+            edit = QComboBox()
+            profile_names = [entry.get("name", "") for entry in self.instrument_profile_store.list_profiles()]
+            if not profile_names:
+                profile_names = ["HiLIGHT"]
+            edit.addItems(profile_names)
+            if value is not None and str(value) in profile_names:
+                edit.setCurrentText(str(value))
+            edit.setToolTip("Select one stored instrument profile for this sweep point.")
+            edit.setMinimumWidth(280)
+        else:
+            edit = QLineEdit("" if value is None else f"{float(value):g}")
+            edit.setPlaceholderText("Sweep value")
+            edit.setToolTip("One sweep value for this instrument parameter.")
+        btn_add = self._make_plus_button("Add a new sweep value after this row.")
+        row_layout.addWidget(btn_trash, 0)
+        row_layout.addWidget(edit, 1)
+        row_layout.addWidget(btn_add, 0)
+
+        row_spec = {"widget": row_widget, "edit": edit, "trash": btn_trash, "add": btn_add}
+        values = spec["values"]
+        if index is None or index >= len(values):
+            values.append(row_spec)
+            spec["rows_host_layout"].addWidget(row_widget)
+        else:
+            values.insert(index, row_spec)
+            spec["rows_host_layout"].insertWidget(index, row_widget)
+
+        btn_add.clicked.connect(lambda _checked=False, sweep_key=key, current_edit=edit: self._insert_sweep_value_after(sweep_key, current_edit))
+        btn_trash.clicked.connect(lambda _checked=False, sweep_key=key, current_edit=edit: self._remove_sweep_value_row(sweep_key, current_edit))
+
+    def _insert_sweep_value_after(self, key, edit):
+        spec = self.sweep_options[key]
+        current_index = next((idx for idx, row in enumerate(spec["values"]) if row["edit"] is edit), len(spec["values"]) - 1)
+        self._append_sweep_value_row(key, None, current_index + 1)
+        self._update_sweep_inputs_enabled()
+
+    def _remove_sweep_value_row(self, key, edit):
+        spec = self.sweep_options[key]
+        if len(spec["values"]) <= 1:
+            spec["values"][0]["edit"].clear()
+            return
+        for idx, row in enumerate(spec["values"]):
+            if row["edit"] is edit:
+                removed = spec["values"].pop(idx)
+                removed["widget"].deleteLater()
+                break
+        self._update_sweep_inputs_enabled()
+
+    def _set_sweep_values(self, key, values):
+        spec = self.sweep_options[key]
+        self._clear_layout(spec["rows_host_layout"])
+        spec["values"] = []
+        clean_values = list(values) if values else [None]
+        for value in clean_values:
+            self._append_sweep_value_row(key, value)
+
+    def _get_sweep_values(self, key):
+        spec = self.sweep_options.get(key)
+        if spec is None:
+            return []
+        values = []
+        for row in spec["values"]:
+            if spec.get("row_kind") == "profile":
+                text = row["edit"].currentText().strip()
+                if text:
+                    values.append(text)
+            else:
+                text = row["edit"].text().strip()
+                if not text:
+                    continue
+                try:
+                    values.append(float(text))
+                except ValueError:
+                    continue
+        return values
+
+    def _collect_batch_sweep_defaults_from_ui(self):
+        payload = {}
+        for key, spec in self.sweep_options.items():
+            payload[key] = {
+                "title": spec["title"],
+                "values": self._get_sweep_values(key),
+            }
+            if spec["extra"] is not None:
+                if isinstance(spec["extra"], QComboBox):
+                    extra_value = spec["extra"].currentText()
+                else:
+                    extra_value = spec["extra"].text()
+                if key == "deadtime_fixed_countrate_ns":
+                    payload[key]["extra"] = {"count_rate_kcps": float(extra_value) if str(extra_value).strip() else 100.0}
+                else:
+                    payload[key]["extra"] = {"mode": extra_value}
+        return payload
+
+    def _load_batch_sweep_defaults_into_ui(self, payload):
+        for key, spec in self.sweep_options.items():
+            incoming = payload.get(key, {}) if isinstance(payload, dict) else {}
+            self._set_sweep_values(key, incoming.get("values", []))
+            if spec["extra"] is not None:
+                extra_payload = incoming.get("extra", {}) if isinstance(incoming.get("extra", {}), dict) else {}
+                if isinstance(spec["extra"], QComboBox):
+                    spec["extra"].setCurrentText(str(extra_payload.get("mode", spec["extra"].currentText())))
+                else:
+                    if key == "deadtime_fixed_countrate_ns":
+                        spec["extra"].setText(f"{float(extra_payload.get('count_rate_kcps', 100.0)):g}")
+                    else:
+                        spec["extra"].setText(str(extra_payload.get("value", spec["extra"].text())))
+
+    def _load_batch_sweep_defaults_from_store(self):
+        self.batch_sweep_defaults = self.batch_sweep_store.load_current()
+        self._load_batch_sweep_defaults_into_ui(self.batch_sweep_defaults)
+
+    def _save_batch_sweep_defaults_to_store(self):
+        answer = QMessageBox.question(
+            self,
+            "Overwrite batch sweep defaults?",
+            "Saving will overwrite the current batch-sweep JSON in use. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.batch_sweep_defaults = self._collect_batch_sweep_defaults_from_ui()
+        self.batch_sweep_store.save_current(self.batch_sweep_defaults)
+
+    def _import_batch_sweep_defaults(self):
+        file_path, _filter = QFileDialog.getOpenFileName(
+            self,
+            "Import batch sweep defaults",
+            "",
+            "JSON files (*.json)",
+        )
+        if not file_path:
+            return
+        self.batch_sweep_defaults = self.batch_sweep_store.import_file(file_path)
+        self._load_batch_sweep_defaults_into_ui(self.batch_sweep_defaults)
+
+    def _export_batch_sweep_defaults(self):
+        file_path, _filter = QFileDialog.getSaveFileName(
+            self,
+            "Export batch sweep defaults",
+            "batch_sweep_defaults.json",
+            "JSON files (*.json)",
+        )
+        if not file_path:
+            return
+        self.batch_sweep_store.save_current(self._collect_batch_sweep_defaults_from_ui())
+        self.batch_sweep_store.export_current(file_path)
+
+    def _reset_batch_sweep_defaults(self):
+        self.batch_sweep_defaults = self.batch_sweep_store.reset_current()
+        self._load_batch_sweep_defaults_into_ui(self.batch_sweep_defaults)
+
     def _update_sweep_inputs_enabled(self):
         batch_enabled = not self.radio_sweep_off.isChecked()
         active_spec = None
@@ -2084,6 +2731,11 @@ class ControlWidget(QWidget):
             active = batch_enabled and spec["radio"].isChecked()
             for widget in spec["widgets"]:
                 widget.setEnabled(active)
+            spec["btn_add_top"].setEnabled(active)
+            for row in spec["values"]:
+                row["edit"].setEnabled(active)
+                row["trash"].setEnabled(active)
+                row["add"].setEnabled(active)
             if active:
                 active_spec = spec
         if active_spec is None:
@@ -2093,6 +2745,7 @@ class ControlWidget(QWidget):
             self.lbl_sweep_detail_title.setText(active_spec["title"])
             self.sweep_detail_stack.show()
             self.sweep_detail_stack.setCurrentWidget(active_spec["detail"])
+        self.sweep_detail_group.adjustSize()
 
     def get_selected_sweep_param(self):
         for key, spec in self.sweep_options.items():
@@ -2101,8 +2754,14 @@ class ControlWidget(QWidget):
         return "laser_pulse_fwhm_ns"
 
     def get_selected_sweep_values_text(self):
-        spec = self.sweep_options.get(self.get_selected_sweep_param())
-        return spec["values"].text() if spec else ""
+        values = self._get_sweep_values(self.get_selected_sweep_param())
+        formatted = []
+        for val in values:
+            if isinstance(val, (int, float)):
+                formatted.append(f"{float(val):g}")
+            else:
+                formatted.append(str(val))
+        return ", ".join(formatted)
 
     def _sync_precision_execution_ui(self, mc_enabled):
         self.chk_compute_ci.setEnabled(mc_enabled)
@@ -2292,7 +2951,7 @@ class ControlWidget(QWidget):
             self._update_irf_ui()
 
             # Instrument params
-            self.spin_photons.setValue(int(round(cfg.a_photons)))
+            self.spin_photons.setValue(int(round(cfg.precision_photons)))
             self.spin_image_repeats.setValue(int(getattr(cfg, "image_mc_repeats", getattr(cfg, "n_repeats", 200))))
             image_fit_map = {
                 "gridded_mle": "Gridded MLE",
@@ -2304,6 +2963,8 @@ class ControlWidget(QWidget):
             )
             self.spin_jitter.setValue(int(round(cfg.timing_jitter)))
             self.spin_deadtime.setValue(int(round(cfg.detector_deadtime)))
+            self.spin_afterpulsing.setValue(float(getattr(cfg, "detector_afterpulsing_probability", 0.0)) * 100.0)
+            self.spin_dark_count_rate.setValue(float(getattr(cfg, "detector_dark_count_rate_cps", 0.0)))
             self.chk_multihit.setChecked(cfg.b_multihit_mode)
             self.event_deadtime_mode = str(getattr(cfg, "event_deadtime_mode", "nonparalyzable")).lower()
             self.event_multihit_capacity = getattr(cfg, "event_multihit_capacity", None)
@@ -2339,11 +3000,9 @@ class ControlWidget(QWidget):
             else:
                 self.radio_sweep_off.setChecked(True)
             if cfg.instr_sweep_vals:
-                self.sweep_options[selected_key]["values"].setText(", ".join(f"{val:g}" for val in cfg.instr_sweep_vals))
+                self._set_sweep_values(selected_key, cfg.instr_sweep_vals)
             if "deadtime_fixed_countrate_ns" in self.sweep_options and self.sweep_options["deadtime_fixed_countrate_ns"]["extra"] is not None:
                 self.sweep_options["deadtime_fixed_countrate_ns"]["extra"].setText(f"{cfg.instr_sweep_fixed_countrate_kcps:g}")
-            if "countrate_fixed_deadtime_kcps" in self.sweep_options and self.sweep_options["countrate_fixed_deadtime_kcps"]["extra"] is not None:
-                self.sweep_options["countrate_fixed_deadtime_kcps"]["extra"].setText(f"{cfg.instr_sweep_fixed_deadtime_ns:g}")
             gate_mode = "Sharp Rise, Sweep Fall" if cfg.instr_sweep_gate_sharp_edge == "sharp_rise" else "Sharp Fall, Sweep Rise"
             burst_mode = "Sharp Rise, Sweep Fall" if cfg.instr_sweep_burst_sharp_edge == "sharp_rise" else "Sharp Fall, Sweep Rise"
             if "gate_edge_one_sharp_ps" in self.sweep_options and self.sweep_options["gate_edge_one_sharp_ps"]["extra"] is not None:
@@ -2358,7 +3017,10 @@ class ControlWidget(QWidget):
             self.update_image_validation_summary()
             self._sync_precision_execution_ui(cfg.precision_validate_mc)
             self._sync_gate_controls()
+            self._sync_ideal_detector_checkbox_from_values()
+            self._sync_ideal_gates_checkbox_from_values()
             self._sync_optimization_ui()
+            self._sync_background_source_controls()
             self._update_sweep_inputs_enabled()
             self.blockSignals(False)
 

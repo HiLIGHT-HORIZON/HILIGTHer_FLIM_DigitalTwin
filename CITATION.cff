@@ -1,10 +1,15 @@
 cff-version: 1.2.0
-message: "Academic and commercial users modifying or distributing this software are required to cite the following in their documentation or publications."
-title: "HILIGHTer Digital Twin"
+message: "If you use this computational model or source code, please cite it as below."
 authors:
   - family-names: "Esposito"
     given-names: "Alessandro"
     orcid: "https://orcid.org/0000-0002-5051-091X"
     affiliation: "Brunel University of London"
+title: "HILIGHTer Digital Twin"
+version: 1.0.0
 date-released: 2026-03-21
-license: "Apache-2.0"
+url: "https://quantitative-biology.org"
+repository-code: "https://github.com/HiLIGHT-HORIZON/DigitalTwin_Matlab"
+abstract: >-
+  A quantitative biological modeling toolkit developed in MATLAB. 
+  For further research and associated publications, visit cengem.org.

@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Digital Twin Controller</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script defer src="assets/app.js"></script>
+</head>
+<body data-page="controller">
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">HILIGHTer Digital Twin<small>Digital Twin Controller</small></div>
+      <nav class="nav">
+        <a data-nav="index" href="index.html">Overview</a>
+        <a data-nav="controller" href="controller.html">Controller</a>
+        <a data-nav="widgets" href="widgets.html">Widgets</a>
+        <a data-nav="apis" href="apis.html">APIs</a>
+        <a data-nav="mcp" href="mcp.html">MCP</a>
+        <a data-nav="backend" href="backend.html">Backend</a>
+        <a data-nav="maths" href="maths.html">Maths</a>
+      </nav>
+      <form class="search-form" data-search-target="search.html">
+        <input type="search" name="q" placeholder="Search controller controls...">
+        <button type="submit">Search</button>
+      </form>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-card toc">
+        <h3>Tabs</h3>
+        <a href="#controller">Controller role</a>
+        <a href="#decay-model">Decay Model</a>
+        <a href="#excitation">Excitation</a>
+        <a href="#detection">Detection</a>
+        <a href="#fisher-information">Fisher Information</a>
+        <a href="#mc-image-validation">MC Image validation</a>
+        <a href="#optimisation">Optimisation</a>
+        <a href="#batch-sweep">Batch Sweep</a>
+        <a href="#actions">Main actions</a>
+      </div>
+    </aside>
+
+    <main class="content">
+      <section class="hero" id="controller">
+        <div class="kicker">Controller</div>
+        <h1>The Digital Twin Controller</h1>
+        <p>The controller is the single most important widget in the desktop workspace. It defines the decay model, laser profile, detector and gate geometry, image-validation settings, optimisation settings, and batch sweep settings. Almost every backend workflow starts by reading these values into <code>PhysicsConfig</code>.</p>
+      </section>
+
+      <section class="card" id="decay-model">
+        <h2>Decay Model tab</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>This tab defines what fluorescence decay is being simulated and how Fisher Information is evaluated. It also tells you which simulation core is active. If you only learn one tab first, learn this one.</p>
+        </div>
+        <div class="specialist-box">
+          <h3>For specialists</h3>
+          <p>This tab controls <code>decay_model</code>, <code>n_components</code>, <code>b_decay_wrapping</code>, the effective simulation-core preference, the active X parameter for Fisher sweeps, the numerical sweep grid, and the Fisher / Monte Carlo execution settings.</p>
+        </div>
+        <table>
+          <tr><th>Element</th><th>What it does</th><th>Why it matters</th></tr>
+          <tr><td><code>Simulation core</code> badge</td><td>Shows whether the effective backend is <code>ideal_poisson</code> or <code>event_driven</code>.</td><td>Green means legacy ideal Poisson, magenta means event-driven, amber means detector event effects are being approximated by the Poisson core.</td></tr>
+          <tr><td><code>Decay</code></td><td>Chooses the mathematical decay family from the built-in or saved custom models. The final entry is <code>Add custom model...</code>.</td><td>Changes the latent fluorescence model, available parameters, default sweep ranges, and gridded-MLE interpretation.</td></tr>
+          <tr><td><code>N components</code></td><td>Sets how many exponential components are active.</td><td>Controls whether <code>tau2</code> and <code>alpha</code> are meaningful.</td></tr>
+          <tr><td><code>Decay wrapping</code></td><td>Wraps long decays over the repetition period.</td><td>Required when earlier pulses contribute to the current measurement window.</td></tr>
+          <tr><td><code>Show model equations</code></td><td>Expands a compact explanation of the current decay equation, laser contribution, and detector transfer model.</td><td>Lets operators inspect the exact mathematical form without leaving the controller.</td></tr>
+          <tr><td><code>Decay parameters</code></td><td>Defines the parameter values and which one becomes the active X-axis target for Fisher sweeps.</td><td>The selected X-axis parameter becomes the variable swept in precision analysis and optimisation.</td></tr>
+          <tr><td><code>Background (%)</code></td><td>Defines background as a percentage of the total decay mass.</td><td>This keeps background sweeps meaningful across different time samplings and gate counts.</td></tr>
+          <tr><td><code>Precision Sweep Configuration</code></td><td>Controls X-axis min, max, steps, sweep spacing, and the MLE fine factor. Defaults come from the active model metadata.</td><td>Defines the design grid used by both Fisher curves and many optimisation workflows.</td></tr>
+          <tr><td><code>Gridded MLE Definition</code></td><td>Shows the derived lookup range and lookup resolution.</td><td>Helps users understand the actual numerical MLE grid implied by the sweep choices.</td></tr>
+          <tr><td><code>Fisher Information</code></td><td>Controls Monte Carlo validation, confidence intervals, photon budget, repeats, p-value threshold, bootstrap count, and F-value photon basis.</td><td>This pane defines how theoretical and MC precision outputs are computed and interpreted.</td></tr>
+        </table>
+      </section>
+
+      <section class="card" id="excitation">
+        <h2>Excitation tab</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>This tab describes the laser pulse shape. It used to be called the IRF profile in many places, but it is now presented more clearly as the laser profile because it drives the excitation envelope used by the decay PDF.</p>
+        </div>
+        <div class="specialist-box">
+          <h3>For specialists</h3>
+          <p>These controls feed <code>dt_excitation()</code> in <code>python/backend/twin_engine.py</code>. Gaussian, rectangular, free-form, and ideal-dirac pulse families are all handled there, including optional burst modulation and detector-jitter broadening.</p>
+        </div>
+        <table>
+          <tr><th>Element</th><th>What it does</th><th>Why it matters</th></tr>
+          <tr><td><code>Period (ns)</code></td><td>Sets the repetition period / acquisition window.</td><td>Used by decay wrapping, phasor frequency, event-driven detection, and gate end anchoring.</td></tr>
+          <tr><td><code>Laser profile</code></td><td>Selects Gaussian, Rectangular, Free Form, or Ideal (Dirac).</td><td>Changes the excitation kernel used by the PDF and diagnostics.</td></tr>
+          <tr><td><code>FWHM / Duration</code></td><td>Defines Gaussian width or rectangular duration.</td><td>Controls temporal broadening of the excitation envelope.</td></tr>
+          <tr><td><code>Position</code></td><td>Sets centre or start time depending on profile.</td><td>Moves the laser pulse in time relative to the decay window and gate start.</td></tr>
+          <tr><td><code>Free-form editor</code></td><td>Visual piecewise waveform editor for user-defined excitation shapes.</td><td>Lets the user describe non-standard pulses and import optimiser-generated free-form solutions.</td></tr>
+          <tr><td><code>Burst Excitation</code></td><td>Adds a sub-pulse train inside the main envelope.</td><td>Lets one laser profile act as the burst envelope.</td></tr>
+        </table>
+      </section>
+
+      <section class="card" id="detection">
+        <h2>Detection tab</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>This tab describes what the detector actually measures: timing blur, deadtime, dwell time, gate shape, gate placement, gate overlap, and whether the Fisher metric should count missed photons or ignore them.</p>
+        </div>
+        <div class="specialist-box">
+          <h3>For specialists</h3>
+          <p>The detector pane drives <code>timing_jitter</code>, <code>detector_deadtime</code>, <code>event_pixel_dwell_time_s</code>, <code>b_multihit_mode</code>, and <code>event_multihit_capacity</code>. The gating pane drives gate distillation, overlap handling, statistical exclusivity, and the shared F-value photon-basis semantics.</p>
+        </div>
+        <table>
+          <tr><th>Element</th><th>What it does</th><th>Why it matters</th></tr>
+          <tr><td><code>Jitter</code></td><td>Sets detector timing jitter in ps.</td><td>Broadens effective timing response and affects gate overlap and PDF alignment.</td></tr>
+          <tr><td><code>Deadtime</code></td><td>Sets detector deadtime in ns.</td><td>Can trigger detector event effects and the event-driven core.</td></tr>
+          <tr><td><code>Pixel dwell</code></td><td>Defines how long one pixel is observed.</td><td>Turns photons-per-pixel into count rate, which determines deadtime severity.</td></tr>
+          <tr><td><code>Avg count rate</code></td><td>Derived from photon count and dwell time.</td><td>Helps users immediately see whether they are asking for a physically aggressive acquisition regime.</td></tr>
+          <tr><td><code>Multihit Detection</code> + <code>Max events/period</code></td><td>Controls how many events can be accepted in one repetition period.</td><td>Sets first-hit or finite-capacity detector behaviour.</td></tr>
+          <tr><td><code>Afterpulsing (%)</code></td><td>Sets the probability that an accepted detector event spawns one delayed afterpulse.</td><td>Adds detector-originated follow-on counts in both simulation cores.</td></tr>
+          <tr><td><code>Dark count rate (cps)</code></td><td>Sets the dark background count rate per second.</td><td>Injects a detector-driven background and disables the manual decay-model background control.</td></tr>
+          <tr><td><code>Gate Type</code></td><td>Equal auto-generates edges; Custom uses explicit edge lists.</td><td>Defines whether the instrument is user-designed directly or derived from constraints.</td></tr>
+          <tr><td><code>Gate Start Alignment</code> / <code>Gate End Alignment</code></td><td>Constrain the first and last gate edges.</td><td>Important for optimisation and for reproducible instrument definitions.</td></tr>
+          <tr><td><code>Gate Collection</code></td><td>Histogram bin or Sequential.</td><td>Sequential still exists as an under-development mode and changes throughput semantics.</td></tr>
+          <tr><td><code>Gate Overlap</code> / <code>Overlap Effect</code></td><td>Sets geometric overlap and the statistical interpretation of overlapping gates.</td><td>Changes how photons are shared, clipped, or duplicated across overlapping gates.</td></tr>
+          <tr><td><code>Wrap around</code></td><td>Wrap gate tails around the period.</td><td>Separate from decay wrapping; this affects gates, not the decay PDF.</td></tr>
+          <tr><td><code>Compute F-value on</code></td><td>Choose <code>All in acquisition period</code>, <code>All</code>, or <code>Only collected (disregard losses)</code>.</td><td>Defines whether missed photons penalise the Fisher metric.</td></tr>
+        </table>
+      </section>
+
+      <section class="card" id="fisher-information">
+        <h2>Fisher Information pane</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>This pane tells the Digital Twin how to calculate precision curves. It defines the photon budget, Monte Carlo validation settings, confidence intervals, and how missed photons should influence the reported <code>F</code> value.</p>
+        </div>
+        <div class="specialist-box">
+          <h3>For specialists</h3>
+          <p>The pane maps onto <code>precision_photons</code>, <code>precision_validate_mc</code>, <code>precision_mc_repeats</code>, <code>precision_eval_ci</code>, <code>precision_ci_level</code>, <code>precision_bootstrap_resamples</code>, <code>precision_accuracy_pvalue</code>, and the shared photon-basis semantics passed into <code>TwinEngine.compute_fisher_info()</code>.</p>
+        </div>
+        <table>
+          <tr><th>Element</th><th>What it does</th><th>Why it matters</th></tr>
+          <tr><td><code>Photons</code></td><td>Sets the shared photon budget used in theory, Monte Carlo, and MC image validation.</td><td>This is the main scale factor for attainable precision and for the detector average count-rate estimate.</td></tr>
+          <tr><td><code>Validate with Monte Carlo</code></td><td>Runs repeat simulations against the theory sweep.</td><td>Helps identify where theory stays trustworthy and where the estimator becomes biased or unstable.</td></tr>
+          <tr><td><code>Evaluate CI</code> + <code>CI Level</code></td><td>Computes bootstrap confidence intervals for Monte Carlo summaries.</td><td>Lets users judge uncertainty in the validation layer rather than only reading point estimates.</td></tr>
+          <tr><td><code>Bootstrap resamples</code></td><td>Sets bootstrap sample count.</td><td>Higher values stabilise CIs at the cost of time.</td></tr>
+          <tr><td><code>Estimator accuracy p-value</code></td><td>Threshold used when labelling MC compatibility.</td><td>Controls how strictly estimator bias is called out in the UI and exports.</td></tr>
+          <tr><td><code>Compute F-value on</code></td><td>Chooses how missed photons should affect the Fisher metric.</td><td>Changes the interpretation of <code>F</code> and <code>F^-2</code>, especially for delayed or lossy gate designs.</td></tr>
+        </table>
+      </section>
+
+      <section class="card" id="mc-image-validation">
+        <h2>MC Image validation tab</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>This tab controls the synthetic 2D validation-image workflow. It lets you generate images using the active sweep parameter, then fit those images and inspect them with map, pixel, and phasor tools.</p>
+        </div>
+        <table>
+          <tr><th>Element</th><th>Purpose</th></tr>
+          <tr><td><code>Avg Photons</code></td><td>Photon budget per synthetic pixel condition.</td></tr>
+          <tr><td><code>Target repeats</code></td><td>How many Monte Carlo repeats should be represented per swept value.</td></tr>
+          <tr><td><code>Derived Validation Geometry</code></td><td>Shows how those repeats are packed into the synthetic image geometry.</td></tr>
+          <tr><td><code>Lifetime fitting</code></td><td>Chooses the fitting method used when fitting the validation image.</td></tr>
+          <tr><td><code>FIT IMAGE</code></td><td>Runs fitting on the most recent generated validation image.</td></tr>
+        </table>
+      </section>
+
+      <section class="card" id="optimisation">
+        <h2>Optimisation tab</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>This tab turns the workspace from a simulator into a design tool. You can optimise detection gates, excitation profile, or both, and then inspect the resulting trajectory in the main analysis widgets.</p>
+        </div>
+        <table>
+          <tr><th>Element</th><th>Purpose</th></tr>
+          <tr><td><code>Optimise detection gates</code></td><td>Enables gate-boundary optimisation.</td></tr>
+          <tr><td><code>Optimise excitation profile</code></td><td>Enables laser-profile optimisation.</td></tr>
+          <tr><td><code>Run Order</code> / <code>Max iterations</code></td><td>Control the alternating joint workflow when both targets are enabled.</td></tr>
+          <tr><td><code>Real-time display</code> / <code>Refresh (s)</code></td><td>Throttle expensive live widget updates while optimisation runs.</td></tr>
+          <tr><td><code>Stored steps</code> / <code>Run MC</code></td><td>Control how many states are retained and whether they receive post-run MC validation.</td></tr>
+          <tr><td><code>Detection Gate Optimisation</code></td><td>Selects the algorithm and start/end anchoring constraints.</td></tr>
+          <tr><td><code>Excitation Optimisation</code></td><td>Selects the profile family, dose/peak constraint, objective, and width/free-form settings.</td></tr>
+          <tr><td><code>Optimisation History</code></td><td>Shows objective and chosen metric histories and allows axis reassignment.</td></tr>
+        </table>
+      </section>
+
+      <section class="card" id="batch-sweep">
+        <h2>Batch Sweep tab</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>Batch Sweep runs the same Fisher workflow several times while sweeping an instrument parameter, so you can compare whole families of precision curves.</p>
+        </div>
+        <table>
+          <tr><th>Sweep family</th><th>Purpose</th></tr>
+          <tr><td>Laser pulse width</td><td>Compare excitation broadening.</td></tr>
+          <tr><td>Detector jitter</td><td>Compare timing blur.</td></tr>
+          <tr><td>Detector deadtime</td><td>Compare deadtime distortion at fixed count rate.</td></tr>
+          <tr><td>Max events/period</td><td>Compare finite multihit capacity.</td></tr>
+          <tr><td>Gate rise/fall</td><td>Compare smooth gate edges.</td></tr>
+          <tr><td>Number of gates</td><td>Compare gate-count architectures.</td></tr>
+          <tr><td>Burst rise/fall</td><td>Compare burst-edge shapes.</td></tr>
+        </table>
+      </section>
+
+      <section class="card" id="actions">
+        <h2>Main actions below the controller</h2>
+        <table>
+          <tr><th>Button</th><th>Role</th></tr>
+          <tr><td><code>Profiles</code></td><td>Open the instrument profile manager. See <a href="profiles.html">Profiles</a>.</td></tr>
+          <tr><td><code>Run Analysis</code></td><td>Run the main Fisher / precision workflow, or <code>Run Optimisation</code> when optimisation mode is active.</td></tr>
+          <tr><td><code>Interrupt</code></td><td>Request interruption of long workflows.</td></tr>
+          <tr><td><code>SAVE AS</code></td><td>Export reports and assets. See <a href="widgets.html#save-as">Widgets and tools</a>.</td></tr>
+          <tr><td><code>2D MC tests</code></td><td>Run the synthetic image-validation workflow. See <a href="mc-image-validation.html">2D MC tests</a>.</td></tr>
+        </table>
+      </section>
+
+      <section class="card" id="custom-model-editor">
+        <h2>Custom model editor</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>The custom model editor lets you define new decay models, name their parameters, assign units, and set the default min/max/step values used for Fisher sweeps. Built-in models can be inspected there as templates and their sweep defaults can also be tuned.</p>
+        </div>
+        <div class="specialist-box">
+          <h3>For specialists</h3>
+          <p>The editor persists user-defined models in <code>python/profiles/decay_models/custom_models.json</code>. Each definition stores a model key, display name, NumPy-compatible expression, parameter metadata, units, and sweep defaults. The backend evaluates the selected decay expression first, then applies the common background, laser, and detector-transfer layers.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

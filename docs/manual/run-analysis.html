@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Run Analysis</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script defer src="assets/app.js"></script>
+</head>
+<body data-page="index">
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">HILIGHTer Digital Twin<small>Run Analysis</small></div>
+      <nav class="nav">
+        <a data-nav="index" href="index.html">Overview</a>
+        <a data-nav="controller" href="controller.html">Controller</a>
+        <a data-nav="widgets" href="widgets.html">Widgets</a>
+        <a data-nav="apis" href="apis.html">APIs</a>
+        <a data-nav="mcp" href="mcp.html">MCP</a>
+        <a data-nav="backend" href="backend.html">Backend</a>
+        <a data-nav="maths" href="maths.html">Maths</a>
+      </nav>
+      <form class="search-form" data-search-target="search.html">
+        <input type="search" name="q" placeholder="Search analysis workflow...">
+        <button type="submit">Search</button>
+      </form>
+    </div>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-card toc">
+        <h3>Workflow</h3>
+        <a href="#overview">What Run Analysis does</a>
+        <a href="#fisher-information">Fisher Information path</a>
+        <a href="#monte-carlo">Monte Carlo validation</a>
+        <a href="#photon-basis">Photon basis</a>
+        <a href="#outputs">Outputs</a>
+      </div>
+    </aside>
+    <main class="content">
+      <section class="hero" id="overview">
+        <div class="kicker">Workflow</div>
+        <h1>Run Analysis</h1>
+        <p><code>Run Analysis</code> is the main one-dimensional instrument-analysis workflow. It reads the current controller state, builds the decay model, distils the gates, computes Fisher Information across the chosen X-axis sweep, and optionally validates the result with Monte Carlo.</p>
+      </section>
+      <section class="card" id="fisher-information">
+        <h2>Fisher Information path</h2>
+        <div class="plain-box"><h3>Plain English</h3><p>This path asks: for a given instrument and a given photon budget, how well can the chosen decay parameter be estimated across the sweep?</p></div>
+        <div class="specialist-box"><h3>For specialists</h3><p>The desktop calls <code>DigitalTwinService.run_precision()</code>, which patches a temporary <code>PhysicsConfig</code>, builds <code>x_range</code>, then asks <code>TwinEngine.compute_ideal_reference()</code> and <code>TwinEngine.compute_fisher_info()</code> for the ideal and instrument-specific curves.</p></div>
+      </section>
+      <section class="card" id="monte-carlo">
+        <h2>Monte Carlo validation</h2>
+        <div class="plain-box"><h3>Plain English</h3><p>Monte Carlo validation checks whether the estimator really behaves as predicted by theory.</p></div>
+        <div class="specialist-box"><h3>For specialists</h3><p>When enabled, the service uses <code>TwinEngine.monte_carlo_precision_curve()</code> and optionally attaches bootstrap confidence intervals. The accuracy p-value threshold is then used to flag estimator compatibility in the UI and exported reports.</p></div>
+      </section>
+      <section class="card" id="photon-basis">
+        <h2>F-value photon basis</h2>
+        <div class="plain-box"><h3>Plain English</h3><p>The same timing design can look better or worse depending on whether you judge it only by the photons it actually measured or by all photons that were present during the acquisition period.</p></div>
+        <div class="specialist-box"><h3>For specialists</h3><p>The three supported interpretations are documented in <a href="maths.html#f-value-basis">Maths</a>. The option is propagated to the Fisher engine so that gated-out photons can be ignored, penalised within the acquisition window, or penalised against the full period.</p></div>
+      </section>
+      <section class="card" id="outputs">
+        <h2>Outputs</h2>
+        <table>
+          <tr><th>Output</th><th>Where it appears</th><th>Meaning</th></tr>
+          <tr><td>Ideal reference</td><td>Precision widget</td><td>The histogram-bin theoretical ceiling.</td></tr>
+          <tr><td>Theory curve</td><td>Precision widget</td><td>The expected performance of the configured instrument.</td></tr>
+          <tr><td>Monte Carlo points and CIs</td><td>Precision widget</td><td>Empirical validation of the theory path.</td></tr>
+          <tr><td>Estimator tracking</td><td>MLE Accuracy widget</td><td>Estimated-vs-truth view of estimator behaviour.</td></tr>
+          <tr><td>Reference PDF and gates</td><td>Instrument Diagnostics</td><td>Timing-domain explanation of the result.</td></tr>
+        </table>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

@@ -1,13 +1,17 @@
 import copy
 import os
 import tempfile
+import json
+import sys
 from typing import Dict, Any, Optional
 
 import numpy as np
 
 from .gui_schema import get_gui_schema
 from .importers import import_sdt
+from .instrument_spec_ingest import load_instrument_source, infer_instrument_profile_patch
 from .models import PhysicsConfig, UnifiedState
+from .profile_store import InstrumentProfileStore
 from .storage import storage
 from .twin_engine import TwinEngine
 
@@ -22,8 +26,28 @@ class DigitalTwinService:
     def __init__(self, engine: Optional[TwinEngine] = None, state: Optional[UnifiedState] = None):
         self.engine = engine or TwinEngine()
         self.state = state or UnifiedState()
+        self.profile_store = InstrumentProfileStore()
+        # Find data directory relative to this service file
+        self.data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+        self.lock_file = os.path.join(self.data_dir, "app_locks.json")
+
+    def _check_access(self, mcp_context=False):
+        """Verify if the requested interface is currently locked by the master GUI."""
+        if not os.path.exists(self.lock_file):
+            return
+        try:
+            with open(self.lock_file, "r") as f:
+                locks = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return
+
+        if mcp_context and locks.get("mcp_server_stopped", False):
+            raise PermissionError("Access Denied: HiLIGHTer MCP server is STOPPED.")
+        if locks.get("backend_api_locked", False):
+            raise PermissionError("Access Denied: HiLIGHTer Backend API is LOCKED.")
 
     def get_status(self) -> Dict[str, Any]:
+        self._check_access(mcp_context=True) # Usually called via MCP
         cfg = self.engine.config
         return {
             "status": "ready",
@@ -40,10 +64,12 @@ class DigitalTwinService:
         }
 
     def get_config(self) -> Dict[str, Any]:
+        self._check_access()
         cfg = self.engine.config
         return cfg.model_dump() if hasattr(cfg, "model_dump") else cfg.dict()
 
     def update_config(self, config_patch: Dict[str, Any]) -> Dict[str, Any]:
+        self._check_access()
         cfg_dict = self.get_config()
         cfg_dict.update(config_patch)
         self.engine.config = PhysicsConfig(**cfg_dict)
@@ -54,7 +80,89 @@ class DigitalTwinService:
     def get_gui_schema(self) -> Dict[str, Any]:
         return get_gui_schema()
 
+    def ingest_instrument_profile_source(
+        self,
+        source: str,
+        profile_name: str,
+        config_patch: Optional[Dict[str, Any]] = None,
+        description: str = "",
+        apply_profile: bool = True,
+        save_profile: bool = True,
+        max_chars: int = 24000,
+    ) -> Dict[str, Any]:
+        self._check_access()
+        payload = load_instrument_source(source, max_chars=max_chars)
+        inferred = infer_instrument_profile_patch(payload.text)
+        suggested_patch = dict(inferred.get("patch") or {})
+        merged_patch = dict(suggested_patch)
+        merged_patch.update(dict(config_patch or {}))
+
+        defaults = PhysicsConfig()
+        default_dict = defaults.model_dump() if hasattr(defaults, "model_dump") else defaults.dict()
+        default_dict.update(merged_patch)
+        cfg = PhysicsConfig(**default_dict)
+        cfg.label = str(profile_name)
+        cfg.active_instrument_profile = str(profile_name)
+
+        saved = False
+        applied = False
+        if save_profile:
+            self.profile_store.save_profile(
+                profile_name,
+                cfg,
+                description=description,
+                metadata={
+                    "source": source,
+                    "source_kind": payload.source_kind,
+                    "content_type": payload.content_type,
+                    "extracted_evidence": inferred.get("evidence", {}),
+                    "llm_supplied_patch": dict(config_patch or {}),
+                },
+            )
+            saved = True
+
+        if apply_profile:
+            self.engine.config = copy.deepcopy(cfg)
+            self.engine.invalidate_grid()
+            self.engine.distill_gates()
+            applied = True
+
+        return {
+            "status": "profile_created" if (saved or applied) else "source_analysed",
+            "profile_name": str(profile_name),
+            "saved": saved,
+            "applied": applied,
+            "source": {
+                "location": payload.source,
+                "kind": payload.source_kind,
+                "content_type": payload.content_type,
+            },
+            "source_excerpt": payload.text[:4000],
+            "suggested_profile_patch": suggested_patch,
+            "applied_profile_patch": merged_patch,
+            "evidence": inferred.get("evidence", {}),
+            "config_summary": {
+                "label": cfg.label,
+                "period_ns": float(cfg.period),
+                "laser_profile": str(cfg.irf_profile),
+                "laser_width_ns": float(cfg.irf_fwhm),
+                "jitter_ps": float(cfg.timing_jitter),
+                "deadtime_ns": float(cfg.detector_deadtime),
+                "n_gates": int(max(0, len(cfg.gate_edges) - 1)),
+                "gate_type": str(cfg.gate_type),
+                "multihit": bool(cfg.b_multihit_mode),
+                "max_events_per_period": (
+                    None if cfg.event_multihit_capacity is None else int(cfg.event_multihit_capacity)
+                ),
+            },
+            "notes": [
+                "Call this tool first without a detailed config_patch to inspect the extracted source text and suggested patch.",
+                "Then call it again with a refined config_patch from the LLM if the heuristics need correction.",
+            ],
+        }
+
     def get_data_summary(self) -> Dict[str, Any]:
+        self._check_access()
         raw = self.engine.raw_data
         tau_map = self.engine.tau_map
         return {
@@ -77,6 +185,7 @@ class DigitalTwinService:
         }
 
     def get_diagnostics_snapshot(self, tau_ref: Optional[float] = None) -> Dict[str, Any]:
+        self._check_access()
         self.engine.distill_gates()
         tau_ref = tau_ref if tau_ref is not None else (self.engine.config.taus[0] if self.engine.config.taus else 2.5)
         pdf = self.engine.dt_pdf(self.engine.time_vector, tau=tau_ref)
@@ -90,6 +199,7 @@ class DigitalTwinService:
         }
 
     def simulate_basic(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        self._check_access()
         a = float(params.get("a", 2000.0))
         tau1 = float(params.get("tau1", 1.0))
         tau2 = float(params.get("tau2", 5.0))
@@ -107,6 +217,7 @@ class DigitalTwinService:
         }
 
     def simulate_advanced(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        self._check_access()
         a = float(params.get("a", 2000.0))
         tau1 = float(params.get("tau1", 1.0))
         tau2 = float(params.get("tau2", 5.0))
@@ -126,6 +237,7 @@ class DigitalTwinService:
         }
 
     def run_validation_image(self, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        self._check_access()
         params = params or {}
         photon_budget = int(params.get("a_photons", self.engine.config.a_photons))
         target_repeats = int(params.get("image_mc_repeats", self.engine.config.image_mc_repeats))
@@ -138,6 +250,7 @@ class DigitalTwinService:
         }
 
     def fit_validation_image(self, method: Optional[str] = None) -> Dict[str, Any]:
+        self._check_access()
         method = str(method or getattr(self.engine.config, "image_fit_method", "gridded_mle")).lower()
         self.engine.run_fit(method=method)
         g_map, s_map = self.engine.calculate_phasor()
@@ -153,6 +266,7 @@ class DigitalTwinService:
         }
 
     def run_precision(self, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        self._check_access()
         params = params or {}
         cfg = copy.deepcopy(self.engine.config)
         if params:
@@ -199,6 +313,7 @@ class DigitalTwinService:
             self.engine.config = baseline
 
     def run_optimization(self, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        self._check_access()
         params = params or {}
         cfg = copy.deepcopy(self.engine.config)
         if params:
@@ -313,28 +428,34 @@ class DigitalTwinService:
             self.engine.config = baseline
 
     def get_tau_map(self) -> Dict[str, Any]:
+        self._check_access()
         if self.engine.tau_map is None:
             return {"data": None, "shape": None}
         return {"data": self.engine.tau_map.tolist(), "shape": list(self.engine.tau_map.shape)}
 
     def get_phasor_map(self, harmonic: int = 1) -> Dict[str, Any]:
+        self._check_access()
         if self.engine.raw_data is None:
             return {"g": None, "s": None, "shape": None}
         g_map, s_map = self.engine.calculate_phasor(harmonic=harmonic)
         return {"g": g_map.tolist(), "s": s_map.tolist(), "shape": list(g_map.shape)}
 
     def get_theoretical_locus(self) -> Dict[str, Any]:
+        self._check_access()
         g, s = self.engine.get_theoretical_locus()
         return {"g": g.tolist(), "s": s.tolist()}
 
     def get_pixel_analysis(self, y: int, x: int) -> Dict[str, Any]:
+        self._check_access()
         return self.engine.get_pixel_fit_payload(y, x)
 
     def clear_workspace(self) -> Dict[str, Any]:
+        self._check_access()
         self.engine.clear_workspace_data()
         return {"status": "workspace_cleared", "data_summary": self.get_data_summary()}
 
     def import_sdt_path(self, file_path: str) -> Dict[str, Any]:
+        self._check_access()
         data, meta = import_sdt(file_path)
         self.engine.raw_data = data
         self.engine.config.gate_edges = np.linspace(0, meta["tac_range"], meta["n_gates"] + 1).tolist()
@@ -342,6 +463,7 @@ class DigitalTwinService:
         return {"status": "imported", "meta": meta, "data_summary": self.get_data_summary()}
 
     def import_sdt_bytes(self, filename: str, payload: bytes) -> Dict[str, Any]:
+        self._check_access()
         with tempfile.NamedTemporaryFile(prefix="hilight_", suffix=f"_{os.path.basename(filename)}", delete=False) as tmp:
             tmp.write(payload)
             tmp_path = tmp.name
@@ -352,6 +474,7 @@ class DigitalTwinService:
                 os.remove(tmp_path)
 
     def save_session(self, session_id: str) -> Dict[str, Any]:
+        self._check_access()
         if self.engine.raw_data is None:
             return {"status": "no_data"}
         session_state = UnifiedState()
@@ -360,6 +483,7 @@ class DigitalTwinService:
         return {"status": "saved", "session_id": session_id}
 
     def load_session(self, session_id: str) -> Dict[str, Any]:
+        self._check_access()
         config, raw_data, tau_map = storage.load_state(session_id)
         self.engine.config = config
         self.engine.raw_data = raw_data

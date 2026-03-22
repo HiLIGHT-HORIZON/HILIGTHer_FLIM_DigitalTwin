@@ -49,7 +49,7 @@ async def root():
         "docs": {
             "openapi": "/openapi.json",
             "backend_status": "/api/v1/backend/status",
-            "manual": "See docs/digital_twin_manual.html for the full API and MCP reference.",
+            "manual": "See docs/manual/index.html for the full API, MCP, workflow, and widget reference.",
         },
     }
 

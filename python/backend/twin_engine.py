@@ -7,6 +7,7 @@ from scipy.optimize import minimize, fmin, minimize_scalar
 from scipy.signal import convolve
 from scipy.special import erf
 from typing import Optional, Tuple, List, Callable, Dict, Any
+from .decay_model_store import DecayModelStore, evaluate_decay_curve
 from .event_driven import (
     ChannelConfig,
     EventDrivenSimulator,
@@ -82,6 +83,7 @@ class TwinEngine:
     """
     def __init__(self, config: Optional[PhysicsConfig] = None):
         self.config = config or PhysicsConfig()
+        self.decay_model_store = DecayModelStore()
         self.raw_data = None  # (nY, nX, nGates)
         self.gate_shapes = None  # (nGates, nTime)
         self.time_vector = None  # (nTime,)
@@ -142,9 +144,10 @@ class TwinEngine:
         f_max = float(cfg.f_x_max)
         n_steps = max(int(cfg.f_x_steps), 2)
         fine_factor = max(int(getattr(cfg, "grid_fine_factor", 100)), 1)
+        selected_meta = self._get_param_meta(cfg.f_x_param) or {}
         use_log_grid = (
             str(cfg.f_x_scale).lower() == "log"
-            and cfg.f_x_param in {"tau1", "tau2", "beta"}
+            and str(selected_meta.get("scale", "")).lower() == "log"
             and f_min > 0
             and f_max > 0
         )
@@ -172,6 +175,9 @@ class TwinEngine:
             cfg.f_x_param,
             cfg.decay_model,
             cfg.n_components,
+            tuple(sorted((cfg.custom_model_params or {}).items())),
+            repr(cfg.decay_model_sweep_defaults or {}),
+            cfg.custom_decay_script,
             tuple(cfg.taus[1:]),
             tuple(cfg.amplitudes),
             cfg.beta,
@@ -261,6 +267,10 @@ class TwinEngine:
         cfg = cfg or self.config
         if float(getattr(cfg, "detector_deadtime", 0.0)) > 0.0:
             return True
+        if self._afterpulse_probability(cfg) > 0.0:
+            return True
+        if self._dark_counts_per_frame(cfg) > 0.0:
+            return True
         capacity = self._effective_event_capacity(cfg)
         return capacity is not None and capacity < 1_000_000
 
@@ -314,6 +324,7 @@ class TwinEngine:
         if total <= 0.0:
             return np.array(pdf, copy=True)
         pdf = pdf / total
+        pdf = self._dark_augmented_pdf(pdf, n_photons, cfg)
 
         if self._is_event_driven_mode() or not self._has_detector_event_effects(cfg):
             return np.array(pdf, copy=True)
@@ -354,7 +365,8 @@ class TwinEngine:
         detected_total = float(np.sum(detected_counts))
         if detected_total <= 0.0:
             return np.array(pdf, copy=True)
-        return detected_counts / detected_total
+        detected_pdf = detected_counts / detected_total
+        return self._apply_afterpulsing_to_pdf(detected_pdf, cfg)
 
     def _apply_detector_transfer_to_probabilities(
         self,
@@ -387,13 +399,19 @@ class TwinEngine:
         if not self._has_detector_event_effects(cfg):
             return np.array(counts, copy=True)
 
+        dark_expected = self._dark_counts_per_frame(cfg)
+        if dark_expected > 0.0:
+            dark_extra = rng.multinomial(int(rng.poisson(dark_expected)), self._uniform_gate_distribution(cfg)).astype(float)
+            counts = counts + dark_extra
+
         total_counts = float(np.sum(counts))
         if total_counts <= 0.0:
             return np.array(counts, copy=True)
 
         transferred_detected = self._detector_transfer_expected_detected(total_counts, cfg)
         scale = float(np.clip(transferred_detected / max(total_counts, 1e-12), 0.0, 1.0))
-        return rng.binomial(np.rint(np.maximum(counts, 0.0)).astype(int), scale).astype(float)
+        transferred = rng.binomial(np.rint(np.maximum(counts, 0.0)).astype(int), scale).astype(float)
+        return self._apply_afterpulsing_to_counts(transferred, rng, cfg)
 
     def _requires_event_driven(self) -> Tuple[bool, str]:
         cfg = self.config
@@ -435,10 +453,12 @@ class TwinEngine:
         """
         t = np.asarray(self.time_vector, dtype=float)
         pdf = self.dt_pdf(t, tau=tau, irf=irf_cached) if tau is not None else self.dt_pdf(t, irf=irf_cached)
+        pdf = self._dark_augmented_pdf(pdf, expected_count_per_frame, self.config)
+        total_expected = float(expected_count_per_frame) + self._dark_counts_per_frame(self.config)
         return TabulatedOpticalModel(
             time_vector=t,
             pdf=np.asarray(pdf, dtype=float),
-            lambda_per_frame=float(max(expected_count_per_frame, 0.0)),
+            lambda_per_frame=float(max(total_expected, 0.0)),
             period_ns=float(max(getattr(self.config, "period", 0.0), 0.0)),
             frame_duration_ns=float(max(getattr(self.config, "event_pixel_dwell_time_s", 1e-3), 1e-12) * 1e9),
         )
@@ -515,7 +535,14 @@ class TwinEngine:
             return_timestamps=False,
             cpu_workers=cpu_workers,
         )
-        return EventDrivenSimulator(sim_cfg).run()
+        result = EventDrivenSimulator(sim_cfg).run()
+        if self._afterpulse_probability(self.config) > 0.0 and result.counts.size:
+            rng = np.random.default_rng()
+            augmented = np.array(result.counts, copy=True, dtype=float)
+            for frame_idx in range(augmented.shape[0]):
+                augmented[frame_idx, :] = self._apply_afterpulsing_to_counts(augmented[frame_idx, :], rng, self.config)
+            result.counts = np.rint(augmented).astype(np.int64)
+        return result
 
     def _simulate_event_driven_frames_with_background(
         self,
@@ -565,6 +592,144 @@ class TwinEngine:
     def _include_lost_category(self, photon_basis_mode: Optional[str] = None) -> bool:
         if photon_basis_mode is None:
             return False
+        return str(photon_basis_mode).lower() in {"period", "all"}
+
+    def _dark_counts_per_frame(self, cfg: Optional[PhysicsConfig] = None) -> float:
+        cfg = cfg or self.config
+        dwell_s = float(max(getattr(cfg, "event_pixel_dwell_time_s", 1e-3), 1e-12))
+        dark_rate = float(max(getattr(cfg, "detector_dark_count_rate_cps", 0.0), 0.0))
+        return dark_rate * dwell_s
+
+    def _dark_augmented_pdf(
+        self,
+        pdf: np.ndarray,
+        signal_count: float,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> np.ndarray:
+        cfg = cfg or self.config
+        pdf = np.asarray(pdf, dtype=float)
+        total = float(np.sum(pdf))
+        if total <= 0.0:
+            return np.array(pdf, copy=True)
+        pdf = pdf / total
+        dark_expected = self._dark_counts_per_frame(cfg)
+        if dark_expected <= 0.0:
+            return pdf
+        bg_fraction = dark_expected / max(float(signal_count) + dark_expected, 1e-12)
+        bg_fraction = float(np.clip(bg_fraction, 0.0, 0.999999))
+        return (1.0 - bg_fraction) * pdf + bg_fraction * np.ones_like(pdf) / max(pdf.size, 1)
+
+    def _afterpulse_probability(self, cfg: Optional[PhysicsConfig] = None) -> float:
+        cfg = cfg or self.config
+        return float(np.clip(getattr(cfg, "detector_afterpulsing_probability", 0.0), 0.0, 1.0))
+
+    def _afterpulse_delay_kernel(self, cfg: Optional[PhysicsConfig] = None) -> np.ndarray:
+        cfg = cfg or self.config
+        t = np.asarray(self.time_vector, dtype=float)
+        if t.size == 0:
+            return np.ones((1,), dtype=float)
+        dt_ns = float(t[1] - t[0]) if t.size > 1 else max(float(getattr(cfg, "period", 12.5)), 1e-6)
+        min_delay = max(float(getattr(cfg, "detector_deadtime", 0.0)), dt_ns, 1e-6)
+        mean_delay = max(min_delay, float(getattr(cfg, "period", 12.5)) / 20.0, 0.1)
+        t_rel = np.maximum(t - float(t[0]), 0.0)
+        kernel = np.zeros_like(t_rel, dtype=float)
+        tail_mask = t_rel >= min_delay
+        kernel[tail_mask] = np.exp(-(t_rel[tail_mask] - min_delay) / max(mean_delay, 1e-6))
+        if np.sum(kernel) <= 0.0:
+            kernel[0] = 1.0
+        return kernel / max(float(np.sum(kernel)), 1e-12)
+
+    def _afterpulse_time_distribution(
+        self,
+        base_pdf: np.ndarray,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> np.ndarray:
+        cfg = cfg or self.config
+        base_pdf = np.asarray(base_pdf, dtype=float)
+        total = float(np.sum(base_pdf))
+        if total <= 0.0:
+            return np.array(base_pdf, copy=True)
+        base_pdf = base_pdf / total
+        kernel = self._afterpulse_delay_kernel(cfg)
+        if bool(getattr(cfg, "b_decay_wrapping", False)):
+            fft_size = base_pdf.size
+            afterpulse_pdf = np.real(
+                np.fft.ifft(np.fft.fft(base_pdf, fft_size) * np.fft.fft(kernel, fft_size))
+            )
+        else:
+            afterpulse_pdf = convolve(base_pdf, kernel, mode="full")[:base_pdf.size]
+        afterpulse_pdf = np.maximum(np.asarray(afterpulse_pdf, dtype=float), 0.0)
+        afterpulse_total = float(np.sum(afterpulse_pdf))
+        if afterpulse_total <= 0.0:
+            return np.array(base_pdf, copy=True)
+        return afterpulse_pdf / afterpulse_total
+
+    def _apply_afterpulsing_to_pdf(
+        self,
+        pdf: np.ndarray,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> np.ndarray:
+        cfg = cfg or self.config
+        probability = self._afterpulse_probability(cfg)
+        pdf = np.asarray(pdf, dtype=float)
+        total = float(np.sum(pdf))
+        if probability <= 0.0 or total <= 0.0:
+            return np.array(pdf, copy=True)
+        pdf = pdf / total
+        afterpulse_pdf = self._afterpulse_time_distribution(pdf, cfg)
+        mixed = (1.0 - probability) * pdf + probability * afterpulse_pdf
+        mixed = np.maximum(mixed, 0.0)
+        mixed_total = float(np.sum(mixed))
+        if mixed_total <= 0.0:
+            return np.array(pdf, copy=True)
+        return mixed / mixed_total
+
+    def _afterpulse_gate_distribution(self, cfg: Optional[PhysicsConfig] = None) -> np.ndarray:
+        cfg = cfg or self.config
+        self.distill_gates()
+        gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
+        base_pdf = np.asarray(self.dt_pdf(self.time_vector), dtype=float)
+        afterpulse_pdf = self._afterpulse_time_distribution(base_pdf, cfg)
+        probs = gate_profiles @ afterpulse_pdf
+        total = float(np.sum(probs))
+        if total <= 0.0:
+            probs = np.ones((gate_profiles.shape[0],), dtype=float)
+            total = float(np.sum(probs))
+        return probs / total
+
+    def _uniform_gate_distribution(self, cfg: Optional[PhysicsConfig] = None) -> np.ndarray:
+        cfg = cfg or self.config
+        self.distill_gates()
+        gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
+        t = np.asarray(self.time_vector, dtype=float)
+        if t.size == 0 or gate_profiles.size == 0:
+            return np.ones((max(gate_profiles.shape[0], 1),), dtype=float)
+        uniform = np.ones_like(t, dtype=float)
+        uniform /= max(float(np.sum(uniform)), 1e-12)
+        probs = gate_profiles @ uniform
+        total = float(np.sum(probs))
+        if total <= 0.0:
+            return np.ones((gate_profiles.shape[0],), dtype=float) / max(gate_profiles.shape[0], 1)
+        return probs / total
+
+    def _apply_afterpulsing_to_counts(
+        self,
+        counts: np.ndarray,
+        rng: np.random.Generator,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> np.ndarray:
+        cfg = cfg or self.config
+        probability = self._afterpulse_probability(cfg)
+        counts = np.asarray(counts, dtype=float)
+        if probability <= 0.0 or np.sum(counts) <= 0.0:
+            return np.array(counts, copy=True)
+        dist = self._afterpulse_gate_distribution(cfg)
+        total_detected = int(max(np.rint(np.sum(counts)), 0))
+        n_after = int(rng.binomial(total_detected, probability))
+        if n_after <= 0:
+            return np.array(counts, copy=True)
+        extra = rng.multinomial(n_after, dist).astype(float)
+        return counts + extra
         return str(photon_basis_mode).lower() in {"period", "all"}
 
     def _acquisition_period_fraction(self, cfg: Optional[PhysicsConfig] = None) -> float:
@@ -1648,16 +1813,7 @@ class TwinEngine:
         if tau is not None:
             decay = np.exp(-t / max(tau, 1e-6))
         else:
-            if cfg.decay_model == "exponential":
-                decay = np.zeros_like(t)
-                for i in range(cfg.n_components):
-                    if i < len(cfg.taus) and i < len(cfg.amplitudes):
-                        decay += cfg.amplitudes[i] * np.exp(-t / max(cfg.taus[i], 1e-6))
-            elif cfg.decay_model == "stretched":
-                t0 = cfg.taus[0] if cfg.taus else 1.0
-                decay = np.exp(-(np.maximum(t, 0) / max(t0, 1e-6))**cfg.beta)
-            else:
-                decay = np.exp(-t / 2.5)
+            decay = evaluate_decay_curve(cfg, t, self.decay_model_store.get(cfg.decay_model))
 
         # 2. Simplified Convolution + Wrapping Logic
         # Instead of 'mode=full', we use the fact that IRF is a narrow pulse
@@ -1681,8 +1837,10 @@ class TwinEngine:
         pdf = np.nan_to_num(pdf, nan=0.0, posinf=0.0, neginf=0.0)
         pdf = np.maximum(pdf, 1e-20)
         
-        # Add background mass
-        pdf += cfg.background_level / len(t)
+        # Add background mass as a fraction of the total decay mass.
+        bg_fraction = min(max(float(getattr(cfg, "background_level", 0.0)), 0.0), 0.999999)
+        if bg_fraction > 0.0:
+            pdf = (1.0 - bg_fraction) * pdf + bg_fraction * np.ones_like(pdf) / max(len(t), 1)
         
         s = np.sum(pdf)
         if s > 0:
@@ -1851,41 +2009,65 @@ class TwinEngine:
             print(f"  DEBUG: f_val[0]={f_values[0]:.6f}, f_val[mid]={f_values[len(f_values)//2]:.6f}")
         return fisher_values, f_values
 
+    def _get_runtime_param_defs(self):
+        return self.decay_model_store.runtime_param_defs(self.config)
+
+    def _get_param_meta(self, name):
+        for item in self._get_runtime_param_defs():
+            if item.get("name") == name:
+                return item
+        return None
+
     def _get_cfg_param(self, name):
-        if name == "tau1": return self.config.taus[0]
-        if name == "tau2": return self.config.taus[1] if len(self.config.taus) > 1 else 1.0
-        if name == "alpha": return self.config.amplitudes[0]
-        if name == "background": return self.config.background_level
-        if name == "beta": return self.config.beta
-        return 0.0
+        if name == "tau1":
+            return self.config.taus[0]
+        if name == "tau2":
+            return self.config.taus[1] if len(self.config.taus) > 1 else 1.0
+        if name == "alpha":
+            return self.config.amplitudes[0]
+        if name == "background":
+            return self.config.background_level
+        if name == "beta":
+            return self.config.beta
+        return float((self.config.custom_model_params or {}).get(name, 0.0))
 
     def _get_cfg_param_bounds(self, name):
-        if name in {"tau1", "tau2"}:
-            return 1e-6, None
-        if name == "alpha":
-            return 0.0, 1.0
-        if name == "background":
-            return 0.0, None
-        if name == "beta":
-            return 1e-6, None
+        meta = self._get_param_meta(name)
+        if meta is not None:
+            lower = meta.get("bounds_min")
+            upper = meta.get("bounds_max")
+            if name == "background":
+                lower = 0.0 if lower is None else lower
+                upper = 1.0 if upper is None else min(float(upper), 1.0)
+            return lower, upper
         return None, None
 
     def _get_cfg_param_step(self, name, value, dt, epsilon):
-        if name in {"tau1", "tau2"}:
+        meta = self._get_param_meta(name) or {}
+        scale = str(meta.get("scale", "")).lower()
+        if scale == "log" or name in {"tau1", "tau2"}:
             return max(epsilon * max(abs(value), 1e-6), 2.0 * dt)
-        if name in {"alpha", "background", "beta"}:
-            return max(epsilon * max(abs(value), 1.0), 1e-4)
+        if name == "background":
+            return max(epsilon * max(abs(value), 0.01), 1e-5)
         return max(epsilon * max(abs(value), 1.0), 1e-4)
 
     def _set_cfg_param(self, name, val):
-        if name == "tau1": self.config.taus[0] = val
-        elif name == "tau2" and len(self.config.taus) > 1: self.config.taus[1] = val
+        if name == "tau1":
+            self.config.taus[0] = val
+        elif name == "tau2" and len(self.config.taus) > 1:
+            self.config.taus[1] = val
         elif name == "alpha" and self.config.amplitudes:
             self.config.amplitudes[0] = val
             if len(self.config.amplitudes) > 1:
                 self.config.amplitudes[1] = max(0.0, 1.0 - val)
-        elif name == "background": self.config.background_level = val
-        elif name == "beta": self.config.beta = val
+        elif name == "background":
+            self.config.background_level = val
+        elif name == "beta":
+            self.config.beta = val
+        else:
+            params = dict(self.config.custom_model_params or {})
+            params[name] = float(val)
+            self.config.custom_model_params = params
 
     def compute_ideal_reference(self, tau_grid: np.ndarray, n_photons: int = 1) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -1913,7 +2095,7 @@ class TwinEngine:
         ideal_cfg.gate_wraparound = True
         
         # Suppress coupling: Fix all but the parameter under test
-        for p in ["tau1", "tau2", "alpha", "background", "beta"]:
+        for p in [item.get("name") for item in self._get_runtime_param_defs()]:
             ideal_cfg.fixed_params[p] = True
         
         # Continuous-limit bins over the active period
@@ -2559,21 +2741,14 @@ class TwinEngine:
         return probs, segment_scores
 
     def _is_cfg_param_available(self, name: str) -> bool:
-        if name == "tau2":
-            return len(getattr(self.config, "taus", [])) > 1
-        if name == "alpha":
-            return len(getattr(self.config, "amplitudes", [])) > 1
-        if name == "beta":
-            return str(getattr(self.config, "decay_model", "exponential")).lower() == "stretched"
-        if name in {"tau1", "background"}:
-            return True
-        return False
+        return self._get_param_meta(name) is not None
 
     def _get_active_compression_params(self) -> List[str]:
         cfg = self.config
         target_param = cfg.f_x_param
         active_params = [target_param]
-        for name in ["tau1", "tau2", "alpha", "background", "beta"]:
+        for definition in self._get_runtime_param_defs():
+            name = str(definition.get("name"))
             if name == target_param:
                 continue
             if not bool(getattr(cfg, "fixed_params", {}).get(name, True)) and self._is_cfg_param_available(name):

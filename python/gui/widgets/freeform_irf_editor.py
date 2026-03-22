@@ -22,9 +22,9 @@ class FreeFormIRFEditor(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         info_row = QHBoxLayout()
-        self.lbl_hint = QLabel("Click a point to select it. Drag to move. Click empty space then Add Point to insert.")
-        self.lbl_hint.setWordWrap(True)
-        info_row.addWidget(self.lbl_hint, 1)
+        
+        
+        info_row.addStretch(1)
         self.btn_add = QPushButton("Add Point")
         self.btn_delete = QPushButton("Delete Selected")
         self.btn_reset = QPushButton("Reset from Start/FWHM")
@@ -87,7 +87,7 @@ class FreeFormIRFEditor(QWidget):
             axis.setPen(pg.mkPen(text))
         self.plot.showGrid(x=True, y=True, alpha=0.25)
         self.curve.setPen(pg.mkPen(curve, width=2))
-        self.lbl_hint.setStyleSheet(f"color: {text};")
+        
 
     def _copy_to_clipboard(self):
         QGuiApplication.clipboard().setPixmap(self.grab())

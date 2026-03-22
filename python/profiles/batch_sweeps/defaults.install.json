@@ -1,0 +1,53 @@
+{
+  "laser_pulse_fwhm_ns": {
+    "title": "Laser Pulse (FWHM, ns)",
+    "values": [0.1, 0.2, 0.5]
+  },
+  "gate_edge_symmetric_ps": {
+    "title": "Gate Rise/Fall Time (ps) - Symmetric Values",
+    "values": [25, 50, 100]
+  },
+  "gate_edge_one_sharp_ps": {
+    "title": "Gate Rise/Fall Time (ps) - One Fixed to Sharp Rise or Fall",
+    "values": [25, 50, 100],
+    "extra": {"mode": "Sharp Rise, Sweep Fall"}
+  },
+  "number_of_gates": {
+    "title": "Number of Gates",
+    "values": [2, 4, 8, 16]
+  },
+  "detector_jitter_ps": {
+    "title": "Detector Jitter (ps)",
+    "values": [0, 25, 50, 100, 150]
+  },
+  "deadtime_fixed_countrate_ns": {
+    "title": "Detector Deadtime (ns)",
+    "values": [0, 10, 25, 45, 90],
+    "extra": {"count_rate_kcps": 100.0}
+  },
+  "multihit_capabilities": {
+    "title": "Max events/period",
+    "values": [1, 2, 4, 8]
+  },
+  "afterpulsing_probability_pct": {
+    "title": "Afterpulsing Probability (%)",
+    "values": [0, 0.5, 1.0, 2.0, 5.0]
+  },
+  "dark_count_rate_cps": {
+    "title": "Detector Dark Count Rate (cps)",
+    "values": [0, 100, 1000, 10000, 100000]
+  },
+  "instrument_profile": {
+    "title": "Instrument Profiles",
+    "values": ["HiLIGHT"]
+  },
+  "burst_edge_symmetric_ns": {
+    "title": "Burst Rise/Fall Time (ns) - Symmetric Values",
+    "values": [0.05, 0.1, 0.2]
+  },
+  "burst_edge_one_sharp_ns": {
+    "title": "Burst Rise/Fall Time (ns) - One Fixed to Sharp Rise or Fall",
+    "values": [0.05, 0.1, 0.2],
+    "extra": {"mode": "Sharp Rise, Sweep Fall"}
+  }
+}

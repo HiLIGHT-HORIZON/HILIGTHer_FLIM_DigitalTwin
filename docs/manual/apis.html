@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>APIs</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script defer src="assets/app.js"></script>
+</head>
+<body data-page="apis">
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">HILIGHTer Digital Twin<small>APIs</small></div>
+      <nav class="nav">
+        <a data-nav="index" href="index.html">Overview</a>
+        <a data-nav="controller" href="controller.html">Controller</a>
+        <a data-nav="widgets" href="widgets.html">Widgets</a>
+        <a data-nav="apis" href="apis.html">APIs</a>
+        <a data-nav="mcp" href="mcp.html">MCP</a>
+        <a data-nav="backend" href="backend.html">Backend</a>
+        <a data-nav="maths" href="maths.html">Maths</a>
+      </nav>
+      <form class="search-form" data-search-target="search.html">
+        <input type="search" name="q" placeholder="Search APIs...">
+        <button type="submit">Search</button>
+      </form>
+    </div>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-card toc">
+        <h3>API layers</h3>
+        <a href="#service-api">Python service API</a>
+        <a href="#http-api">HTTP API</a>
+        <a href="#endpoint-table">Endpoint table</a>
+        <a href="#gui-schema">GUI schema</a>
+      </div>
+    </aside>
+    <main class="content">
+      <section class="hero" id="service-api">
+        <div class="kicker">API</div>
+        <h1>Programmatic APIs</h1>
+        <p>The Digital Twin exposes one orchestration layer and multiple transports. The Python service API is the source of truth. The HTTP API and the MCP server both sit on top of it.</p>
+      </section>
+      <section class="card">
+        <h2>Python service API</h2>
+        <div class="plain-box"><h3>Plain English</h3><p>If another Python process wants to control the Digital Twin directly, this is the easiest layer to call.</p></div>
+        <div class="specialist-box"><h3>For specialists</h3><p><code>python/backend/service_api.py</code> exposes <code>DigitalTwinService</code> methods such as <code>get_status()</code>, <code>update_config()</code>, <code>run_precision()</code>, <code>run_optimization()</code>, <code>run_validation_image()</code>, <code>fit_validation_image()</code>, and session/profile helpers.</p></div>
+      </section>
+      <section class="card" id="http-api">
+        <h2>HTTP API</h2>
+        <p>The FastAPI app in <code>python/backend/main.py</code> mirrors the service layer.</p>
+        <table id="endpoint-table">
+          <tr><th>Endpoint</th><th>Method</th><th>Meaning</th></tr>
+          <tr><td><code>/api/v1/backend/status</code></td><td>GET</td><td>Readiness and config summary.</td></tr>
+          <tr><td><code>/api/v1/backend/config</code></td><td>GET / POST</td><td>Read or patch the current config.</td></tr>
+          <tr><td><code>/api/v1/backend/gui/schema</code></td><td>GET</td><td>Declarative description of the desktop workspace.</td></tr>
+          <tr><td><code>/api/v1/workflows/simulate/basic</code></td><td>POST</td><td>Generate and fit a basic dataset.</td></tr>
+          <tr><td><code>/api/v1/workflows/simulate/advanced</code></td><td>POST</td><td>Generate and fit an advanced simulated dataset.</td></tr>
+          <tr><td><code>/api/v1/workflows/precision</code></td><td>POST</td><td>Run precision analysis.</td></tr>
+          <tr><td><code>/api/v1/workflows/optimisation</code></td><td>POST</td><td>Run the integrated optimisation workflow.</td></tr>
+          <tr><td><code>/api/v1/data/summary</code></td><td>GET</td><td>Shapes, map availability, and warnings.</td></tr>
+          <tr><td><code>/api/v1/data/results</code></td><td>GET</td><td>Snapshot of maps and summaries.</td></tr>
+          <tr><td><code>/api/v1/data/tau-map</code></td><td>GET</td><td>Current lifetime map.</td></tr>
+          <tr><td><code>/api/v1/data/phasor</code></td><td>GET</td><td>Current phasor map for a selected harmonic.</td></tr>
+          <tr><td><code>/api/v1/data/pixel/{y}/{x}</code></td><td>GET</td><td>Per-pixel decay and fit payload.</td></tr>
+          <tr><td><code>/api/v1/data/diagnostics</code></td><td>GET</td><td>Time vector, gates, laser profile, and PDF.</td></tr>
+          <tr><td><code>/api/v1/theory/locus</code></td><td>GET</td><td>Theoretical phasor loci.</td></tr>
+          <tr><td><code>/api/v1/data/import/sdt</code></td><td>POST</td><td>Import SDT data.</td></tr>
+          <tr><td><code>/api/v1/session/save/{session_id}</code></td><td>POST</td><td>Persist current data state.</td></tr>
+          <tr><td><code>/api/v1/session/load/{session_id}</code></td><td>POST</td><td>Restore a saved session.</td></tr>
+        </table>
+      </section>
+      <section class="card" id="gui-schema">
+        <h2>GUI schema API</h2>
+        <p>The GUI schema is a machine-readable description of the desktop workspace. It is used for automation, front-end mirroring, and MCP-guided navigation.</p>
+      </section>
+      <section class="card">
+        <h2>Typical API examples</h2>
+        <pre><code>GET /api/v1/backend/status
+GET /api/v1/backend/config
+POST /api/v1/backend/config
+{
+  "config_patch": {
+    "timing_jitter": 85.0,
+    "detector_deadtime": 45.0
+  }
+}</code></pre>
+        <pre><code>POST /api/v1/workflows/precision
+{
+  "config_patch": {
+    "precision_validate_mc": true,
+    "precision_mc_repeats": 200
+  }
+}</code></pre>
+        <pre><code>POST /api/v1/workflows/optimisation
+{
+  "config_patch": {
+    "optimize_detection_gates": true,
+    "detection_optimization_algorithm": "fisher_compression"
+  }
+}</code></pre>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

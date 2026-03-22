@@ -1,7 +1,7 @@
 import sys
 import os
 import subprocess
-from PyQt6.QtWidgets import QSplashScreen, QApplication
+from PyQt6.QtWidgets import QSplashScreen, QApplication, QLabel
 from PyQt6.QtGui import QPixmap, QFont, QColor, QPainter, QIcon
 from PyQt6.QtCore import Qt, QTimer, QRect
 
@@ -27,6 +27,36 @@ class HILIGHTSplashScreen(QSplashScreen):
         
         # Internal log buffer
         self.log_messages = ["Initializing HILIGHTer Engine..."]
+        
+        # Interactive Labels
+        w = canvas.width()
+        h = canvas.height()
+        
+        self.funding_label = QLabel(self)
+        self.funding_label.setText(
+            '<div style="text-align: right; color: #475569; font-family: \'Segoe UI\'; font-size: 10pt; font-weight: bold;">'
+            'Project funded by EU HORIZON and UKRI<br>'
+            '<a href="https://hilighthorizon.eu" style="color: #2563eb; text-decoration: none;">https://hilighthorizon.eu</a>'
+            '</div>'
+        )
+        self.funding_label.setOpenExternalLinks(True)
+        self.funding_label.setGeometry(w - 550, h - 80, 530, 60)
+        self.funding_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+        self.funding_label.setStyleSheet("background: transparent;")
+        
+        self.creator_label = QLabel(self)
+        self.creator_label.setText(
+            '<div style="text-align: right; color: #475569; font-family: \'Segoe UI\'; font-size: 10pt;">'
+            'Project initiated by Dr Alessandro Esposito<br>'
+            'Brunel University of London<br>'
+            '<a href="https://quantitative-biology.org" style="color: #2563eb; text-decoration: none;"><b>https://quantitative-biology.org</b></a>'
+            '</div>'
+        )
+        self.creator_label.setOpenExternalLinks(True)
+        self.creator_label.setGeometry(w - 650, h - 150, 630, 60)
+        self.creator_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+        self.creator_label.setStyleSheet("background: transparent;")
+
         
         # Attempt to get contributors from Git
         self.contributors = self._get_git_contributors()
@@ -86,18 +116,7 @@ class HILIGHTSplashScreen(QSplashScreen):
         painter.drawText(log_rect, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft, log_txt)
 
         # 2. Credits (Bottom Right)
-        # Funded by EU & UKRI
-        painter.setPen(QColor("#475569"))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        funding_rect = QRect(w - 450, h - 80, 430, 60)
-        painter.drawText(funding_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom, 
-                         "Project funded by EU HORIZON and UKRI\nhttps://hilighthorizon.eu/")
-
-        # Created by
-        painter.setFont(QFont("Segoe UI", 11))
-        creator_rect = QRect(w - 450, h - 130, 430, 40)
-        painter.drawText(creator_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom, 
-                         "Project created by Dr Alessandro Esposito")
+        # Now handled by QLabels in __init__ for interactivity.
 
         # 3. Contributors (Bottom Left)
         painter.setPen(QColor("#0f172a"))

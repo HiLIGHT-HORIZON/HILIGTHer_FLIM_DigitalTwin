@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Run Optimisation</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script defer src="assets/app.js"></script>
+</head>
+<body data-page="index">
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">HILIGHTer Digital Twin<small>Run Optimisation</small></div>
+      <nav class="nav">
+        <a data-nav="index" href="index.html">Overview</a>
+        <a data-nav="controller" href="controller.html">Controller</a>
+        <a data-nav="widgets" href="widgets.html">Widgets</a>
+        <a data-nav="apis" href="apis.html">APIs</a>
+        <a data-nav="mcp" href="mcp.html">MCP</a>
+        <a data-nav="backend" href="backend.html">Backend</a>
+        <a data-nav="maths" href="maths.html">Maths</a>
+      </nav>
+      <form class="search-form" data-search-target="search.html">
+        <input type="search" name="q" placeholder="Search optimisation...">
+        <button type="submit">Search</button>
+      </form>
+    </div>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-card toc">
+        <h3>Workflow</h3>
+        <a href="#overview">Overview</a>
+        <a href="#targets">Targets and order</a>
+        <a href="#detection">Detection algorithms</a>
+        <a href="#excitation">Excitation optimisation</a>
+        <a href="#history">History and retained steps</a>
+        <a href="#exit">Exiting optimisation mode</a>
+      </div>
+    </aside>
+    <main class="content">
+      <section class="hero" id="overview">
+        <div class="kicker">Workflow</div>
+        <h1>Run Optimisation</h1>
+        <p>When at least one optimisation target is checked, the desktop rewires the main action button from <code>Run Analysis</code> to <code>Run Optimisation</code>. The same analysis widgets are then reused as live optimisation surfaces.</p>
+      </section>
+      <section class="card" id="targets">
+        <h2>Targets and order</h2>
+        <div class="plain-box"><h3>Plain English</h3><p>You can optimise detection gates, excitation profile, or both. If both are active, the optimiser alternates between the two according to the chosen run order for up to the configured maximum iteration count.</p></div>
+        <div class="specialist-box"><h3>For specialists</h3><p>The integrated workflow is implemented in <code>TwinEngine.run_optimization_workflow()</code>. It runs a detection stage, an excitation stage, or a sequential combination depending on the optimisation flags and ordering controls.</p></div>
+      </section>
+      <section class="card" id="detection">
+        <h2>Detection-gate algorithms</h2>
+        <table>
+          <tr><th>Algorithm</th><th>Use case</th><th>Implementation note</th></tr>
+          <tr><td>Fisher Compression</td><td>Default choice for compact, information-preserving gate design.</td><td>Supports nuisance-aware Schur-complement scoring and optional auto-compression.</td></tr>
+          <tr><td>Direct Mean F Minimisation</td><td>General-purpose direct numerical search.</td><td>Uses restarts, <code>ftol</code>, and per-restart iteration limits.</td></tr>
+          <tr><td>Partition Theorem Bottom-Up</td><td>Published constructive partitioning strategy.</td><td>Builds from a fine partition upward.</td></tr>
+          <tr><td>Partition Theorem Top-Down</td><td>Published constructive partitioning strategy.</td><td>Merges from a finer partition downward.</td></tr>
+        </table>
+      </section>
+      <section class="card" id="excitation">
+        <h2>Excitation-profile optimisation</h2>
+        <div class="plain-box"><h3>Plain English</h3><p>The optimiser can tune the laser profile as Gaussian width, square width, or a free-form waveform. It can either preserve total light dose or preserve peak amplitude.</p></div>
+        <div class="specialist-box"><h3>For specialists</h3><p>The excitation stage operates on the same <code>dt_excitation()</code> latent model as the normal simulator. Objectives include Fisher Information, Fisher Throughput, Photon Efficiency AUC, and Throughput AUC.</p></div>
+      </section>
+      <section class="card" id="history">
+        <h2>History, retained steps, and live display</h2>
+        <div class="plain-box"><h3>Plain English</h3><p>The optimiser can show the current instrument every few seconds while it runs. It also stores the final history and a chosen number of intermediate steps so the user can inspect how the design evolved.</p></div>
+        <div class="specialist-box"><h3>For specialists</h3><p>Live display is throttled by a real-time refresh interval. Full scalar histories are retained until the next run or until optimisation mode is exited.</p></div>
+      </section>
+      <section class="card" id="exit">
+        <h2>Exiting optimisation mode</h2>
+        <p>Leaving optimisation mode unchecks the target boxes, restores the normal main action button label, and asks whether the optimised result should be imported into the current instrument definition.</p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

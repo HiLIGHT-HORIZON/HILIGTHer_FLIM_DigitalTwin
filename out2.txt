@@ -1,0 +1,16 @@
+{
+  "server": {
+    "name": "hilighter-digital-twin-mcp",
+    "version": "1.5.0"
+  },
+  "tool_count": 18,
+  "resource_count": 8,
+  "prompt_count": 5,
+  "missing_tools": [],
+  "missing_resources": [],
+  "missing_prompts": [],
+  "status_call_ok": true,
+  "precision_call_ok": true,
+  "config_resource_ok": true,
+  "prompt_get_ok": true
+}

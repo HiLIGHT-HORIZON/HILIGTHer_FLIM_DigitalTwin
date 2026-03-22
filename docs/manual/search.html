@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Manual Search</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script defer src="assets/search-index.js"></script>
+  <script defer src="assets/app.js"></script>
+</head>
+<body data-page="index">
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">HILIGHTer Digital Twin<small>Manual search</small></div>
+      <nav class="nav">
+        <a data-nav="index" href="index.html">Overview</a>
+        <a data-nav="controller" href="controller.html">Controller</a>
+        <a data-nav="widgets" href="widgets.html">Widgets</a>
+        <a data-nav="apis" href="apis.html">APIs</a>
+        <a data-nav="mcp" href="mcp.html">MCP</a>
+        <a data-nav="backend" href="backend.html">Backend</a>
+        <a data-nav="maths" href="maths.html">Maths</a>
+      </nav>
+      <form class="search-form" data-search-target="search.html">
+        <input type="search" name="q" placeholder="Search the manual...">
+        <button type="submit">Search</button>
+      </form>
+    </div>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-card">
+        <h3>Search</h3>
+        <p>Search matches page titles, summaries, and keywords from the manual index.</p>
+      </div>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <div class="kicker">Search</div>
+        <h1>Find anything in the manual</h1>
+        <p>Search is client-side and fast enough to use inside the floating support widget.</p>
+      </section>
+      <section class="card">
+        <div id="searchResults" class="search-results"></div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

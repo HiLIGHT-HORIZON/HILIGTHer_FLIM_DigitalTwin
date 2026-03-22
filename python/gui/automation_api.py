@@ -1,3 +1,6 @@
+import os
+import sys
+import json
 from typing import Any, Dict
 
 
@@ -10,8 +13,25 @@ class DesktopAutomationAPI:
 
     def __init__(self, window):
         self.window = window
+        # Find data directory relative to this file
+        self.data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+        self.lock_file = os.path.join(self.data_dir, "app_locks.json")
+
+    def _check_access(self):
+        """Verify if the GUI API is currently locked."""
+        if not os.path.exists(self.lock_file):
+            return
+        try:
+            with open(self.lock_file, "r") as f:
+                locks = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return
+
+        if locks.get("gui_api_locked", False):
+            raise PermissionError("Access Denied: HiLIGHTer GUI API is LOCKED.")
 
     def get_layout(self) -> Dict[str, Any]:
+        self._check_access()
         return {
             "docks": [
                 "dock_params",
@@ -25,11 +45,13 @@ class DesktopAutomationAPI:
         }
 
     def get_controller_state(self) -> Dict[str, Any]:
+        self._check_access()
         self.window.sync_ui_to_config()
         cfg = self.window.engine.config
         return cfg.model_dump() if hasattr(cfg, "model_dump") else cfg.dict()
 
     def set_controller_state(self, config_patch: Dict[str, Any]) -> Dict[str, Any]:
+        self._check_access()
         current = self.get_controller_state()
         current.update(config_patch)
         self.window.engine.config = self.window.engine.config.__class__(**current)
@@ -38,22 +60,27 @@ class DesktopAutomationAPI:
         return self.get_controller_state()
 
     def trigger_run(self):
+        self._check_access()
         self.window.run_precision_analysis()
         return {"status": "run_complete"}
 
     def trigger_test(self):
+        self._check_access()
         self.window.run_image_gen()
         return {"status": "test_complete"}
 
     def trigger_optimisation(self):
+        self._check_access()
         self.window.run_optimization_workflow()
         return {"status": "optimisation_started" if self.window.optimization_running else "optimisation_not_started"}
 
     def trigger_export_preview(self):
+        self._check_access()
         self.window.preview_last_precision_report()
         return {"status": "export_preview_opened"}
 
     def get_precision_plot(self) -> Dict[str, Any]:
+        self._check_access()
         widget = self.window.fisher_widget
         return {
             "x_label": widget.plot_widget.getAxis('bottom').labelText,
@@ -74,6 +101,7 @@ class DesktopAutomationAPI:
         }
 
     def get_accuracy_plot(self) -> Dict[str, Any]:
+        self._check_access()
         widget = self.window.mle_accuracy_widget
         return {
             "x_label": widget.x_label,
@@ -88,6 +116,7 @@ class DesktopAutomationAPI:
         }
 
     def get_diagnostics_frames(self) -> Dict[str, Any]:
+        self._check_access()
         frames = getattr(self.window.diagnostics_widget, "frames", [])
         serialized = []
         for frame in frames:
@@ -101,6 +130,7 @@ class DesktopAutomationAPI:
         return {"frames": serialized}
 
     def get_optimisation_state(self) -> Dict[str, Any]:
+        self._check_access()
         return {
             "mode_active": bool(self.window.optimization_mode_active),
             "running": bool(self.window.optimization_running),

@@ -190,7 +190,7 @@ The event-driven core is slower than the ideal Poisson core. Use modest image si
 
 Main operator manual:
 
-- [docs/digital_twin_manual.html](docs/digital_twin_manual.html)
+- [docs/manual/index.html](docs/manual/index.html)
 
 Architecture notes:
 

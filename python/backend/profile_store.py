@@ -14,6 +14,19 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _normalise_profile_key(value: str) -> str:
+    text = str(value or "").strip().lower()
+    text = text.replace("optimised", "optimized")
+    return "".join(ch for ch in text if ch.isalnum())
+
+
+def _simplified_profile_key(value: str) -> str:
+    text = _normalise_profile_key(value)
+    for token in ("ideal", "profile", "instrument"):
+        text = text.replace(token, "")
+    return text
+
+
 class InstrumentProfileStore:
     """Versioned JSON storage for instrument profiles."""
 
@@ -32,8 +45,19 @@ class InstrumentProfileStore:
         wanted = str(name).strip()
         if not wanted:
             return None
+        wanted_key = _normalise_profile_key(wanted)
+        wanted_simple = _simplified_profile_key(wanted)
         for entry in self.list_profiles():
-            if str(entry.get("name", "")).strip() == wanted:
+            entry_name = str(entry.get("name", "")).strip()
+            entry_path = str(entry.get("path", "")).strip()
+            entry_filename = os.path.splitext(os.path.basename(entry_path))[0]
+            if (
+                entry_name == wanted
+                or _normalise_profile_key(entry_name) == wanted_key
+                or _normalise_profile_key(entry_filename) == wanted_key
+                or _simplified_profile_key(entry_name) == wanted_simple
+                or _simplified_profile_key(entry_filename) == wanted_simple
+            ):
                 return entry.get("path")
         candidate = self._profile_path(wanted)
         return candidate if os.path.exists(candidate) else None

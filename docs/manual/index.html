@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HILIGHTer Digital Twin Manual</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script defer src="assets/app.js"></script>
+</head>
+<body data-page="index">
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">HILIGHTer Digital Twin
+        <small>Operator manual, APIs, MCP, maths, and backend reference</small>
+      </div>
+      <nav class="nav">
+        <a data-nav="index" href="index.html">Overview</a>
+        <a data-nav="controller" href="controller.html">Controller</a>
+        <a data-nav="widgets" href="widgets.html">Widgets</a>
+        <a data-nav="apis" href="apis.html">APIs</a>
+        <a data-nav="mcp" href="mcp.html">MCP</a>
+        <a data-nav="backend" href="backend.html">Backend</a>
+        <a data-nav="maths" href="maths.html">Maths</a>
+      </nav>
+      <form class="search-form" data-search-target="search.html">
+        <input type="search" name="q" placeholder="Search widgets, tools, APIs, workflows...">
+        <button type="submit">Search</button>
+      </form>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-card toc">
+        <h3>Manual map</h3>
+        <a href="#intro">Introduction</a>
+        <a href="#start">Getting started</a>
+        <a href="#help">Support widget</a>
+        <a href="#workflow-map">Workflow map</a>
+        <a href="#screenshots">Examples and screenshots</a>
+      </div>
+      <div class="sidebar-card">
+        <h3>Key entry pages</h3>
+        <ul>
+          <li><a href="run-analysis.html">Run Analysis</a></li>
+          <li><a href="run-optimisation.html">Run Optimisation</a></li>
+          <li><a href="mc-image-validation.html">2D MC tests</a></li>
+          <li><a href="profiles.html">Profiles</a></li>
+        </ul>
+      </div>
+    </aside>
+
+    <main class="content">
+      <section class="hero" id="intro">
+        <div class="kicker">Overview</div>
+        <h1>HILIGHTer Digital Twin documentation set</h1>
+        <p>This manual is the main operator and engineering reference for the Python Digital Twin. It is deliberately split into multiple pages so that users can read the system in layers: plain-English workflow guidance first, specialist details next, and implementation notes directly tied to the actual codebase.</p>
+        <div class="hero-grid">
+          <div class="hero-stat"><strong>Desktop-first</strong><br>Qt workspace for simulation, validation, optimisation, reports, and profiles.</div>
+          <div class="hero-stat"><strong>API-complete</strong><br>Python service API, HTTP API, desktop automation, and MCP share one backend engine.</div>
+          <div class="hero-stat"><strong>Engineering-focused</strong><br>Physics, Fisher analysis, Monte Carlo validation, and design optimisation are all documented with maths and code references.</div>
+        </div>
+      </section>
+
+      <section class="card" id="start">
+        <h2>Getting started</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>If you are new, start the desktop with <code>python\run_desktop.bat</code>. The left column is the Digital Twin Controller. The right side shows the main outputs: precision, estimator accuracy, diagnostics, image validation, and pixel-level analysis. Use this manual to understand what each control means before changing instrument settings aggressively.</p>
+        </div>
+        <div class="specialist-box">
+          <h3>For specialists</h3>
+          <p>The active product is the Python workspace rooted in <code>python/</code>. The core engine is <code>python/backend/twin_engine.py</code>. Controller state is represented by <code>PhysicsConfig</code> in <code>python/backend/models.py</code>. All documented workflows should be reproducible through the service layer in <code>python/backend/service_api.py</code>.</p>
+        </div>
+        <pre class="shell"># Desktop
+python\run_desktop.bat
+
+# HTTP API
+python -m uvicorn python.backend.main:app --reload
+
+# MCP smoke test
+python python/tools/mcp_smoke_test.py</pre>
+      </section>
+
+      <section class="card" id="help">
+        <h2>Support widget and Ctrl+H</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>Press <code>Ctrl+H</code> in the desktop app to open the support widget. It is a floating manual browser with home, back, forward, reload, and manual-search controls. The controller tabs also emit context jumps so the help window can open the relevant manual area while you work.</p>
+        </div>
+        <div class="specialist-box">
+          <h3>For specialists</h3>
+          <p>The support widget is <code>python/gui/widgets/manual_viewer.py</code>. It now targets <code>docs/manual/index.html</code> and routes context identifiers such as <code>controller</code>, <code>simulation</code>, <code>math</code>, and <code>fisher</code> to specific manual pages and anchors.</p>
+        </div>
+      </section>
+
+      <section class="card" id="workflow-map">
+        <h2>Workflow map</h2>
+        <div class="grid">
+          <div class="section-card">
+            <h3><a href="run-analysis.html">Run Analysis</a></h3>
+            <p>Computes Fisher-information curves, optional Monte Carlo validation, confidence intervals, diagnostics, and batch sweeps.</p>
+          </div>
+          <div class="section-card">
+            <h3><a href="run-optimisation.html">Run Optimisation</a></h3>
+            <p>Uses the integrated optimisation mode for detection gates, excitation profile, or both.</p>
+          </div>
+          <div class="section-card">
+            <h3><a href="mc-image-validation.html">2D MC tests</a></h3>
+            <p>Generates synthetic validation images and lets you inspect fitted lifetimes, per-pixel decays, and phasor behaviour.</p>
+          </div>
+          <div class="section-card">
+            <h3><a href="profiles.html">Profiles</a></h3>
+            <p>Apply, save, repair, import, and create instrument profiles, including the MCP-assisted profile-ingest workflow.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Focused workflow guides</h2>
+        <div class="feature-grid">
+          <article class="card">
+            <h3>Run Analysis</h3>
+            <p>One-dimensional Fisher analysis, Monte Carlo validation, and accuracy interpretation.</p>
+            <a href="run-analysis.html">Open analysis guide</a>
+          </article>
+          <article class="card">
+            <h3>Run Optimisation</h3>
+            <p>Detection, excitation, and joint optimisation workflows with retained histories.</p>
+            <a href="run-optimisation.html">Open optimisation guide</a>
+          </article>
+          <article class="card">
+            <h3>2D MC tests</h3>
+            <p>Validation image generation, pixel fits, and phasor-space interpretation.</p>
+            <a href="mc-image-validation.html">Open validation guide</a>
+          </article>
+        </div>
+      </section>
+
+      <section class="card" id="screenshots">
+        <h2>Examples and screenshots</h2>
+        <p class="screenshot-note">This documentation set supports screenshots and local examples, but this revision was generated in a headless environment. The manual therefore focuses on accurate UI descriptions, workflow breakdowns, maths, and code-level implementation references. Curated screenshots can be dropped into <code>docs/manual/assets/</code> later without changing the navigation structure.</p>
+      </section>
+    </main>
+  </div>
+
+  <div class="footer">Manual root: <code>docs/manual/</code>. The legacy single-page manual paths redirect here for compatibility.</div>
+</body>
+</html>

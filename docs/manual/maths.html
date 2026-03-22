@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Maths and Implementation</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script defer src="assets/app.js"></script>
+</head>
+<body data-page="maths">
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">HILIGHTer Digital Twin<small>Maths and implementation</small></div>
+      <nav class="nav">
+        <a data-nav="index" href="index.html">Overview</a>
+        <a data-nav="controller" href="controller.html">Controller</a>
+        <a data-nav="widgets" href="widgets.html">Widgets</a>
+        <a data-nav="apis" href="apis.html">APIs</a>
+        <a data-nav="mcp" href="mcp.html">MCP</a>
+        <a data-nav="backend" href="backend.html">Backend</a>
+        <a data-nav="maths" href="maths.html">Maths</a>
+      </nav>
+      <form class="search-form" data-search-target="search.html">
+        <input type="search" name="q" placeholder="Search maths...">
+        <button type="submit">Search</button>
+      </form>
+    </div>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-card toc">
+        <h3>Topics</h3>
+        <a href="#maths">Overview</a>
+        <a href="#latent-model">Latent optical model</a>
+        <a href="#fisher">Fisher metrics</a>
+        <a href="#f-value-basis">F-value photon basis</a>
+        <a href="#throughput">Throughput metrics</a>
+        <a href="#phasors">Phasors</a>
+        <a href="#optimisation-maths">Optimisation maths</a>
+      </div>
+    </aside>
+    <main class="content">
+      <section class="hero" id="maths">
+        <div class="kicker">Maths</div>
+        <h1>Mathematical model and code mapping</h1>
+        <p>This page explains the model in plain English and then ties each concept back to the current Python implementation.</p>
+      </section>
+      <section class="card" id="latent-model">
+        <h2>Latent optical model</h2>
+        <div class="plain-box"><h3>Plain English</h3><p>The Digital Twin starts from an idealised fluorescence decay, then shapes it with the laser profile and detector timing model before gates or bins collect photons.</p></div>
+        <div class="specialist-box"><h3>For specialists</h3><p>The latent timing model is built around <code>dt_pdf(t, tau)</code> and <code>dt_excitation(t)</code>. The laser profile is the excitation envelope. Gate distillation converts that continuous timing model into gate-domain probabilities.</p></div>
+      </section>
+      <section class="card" id="fisher">
+        <h2>Fisher metrics</h2>
+        <p>The desktop reports three related quantities:
+          <math display="block"><mrow><mi>F</mi><mo>=</mo><msqrt><mfrac><mn>1</mn><mi>I</mi></mfrac></msqrt></mrow></math>
+          <math display="block"><mrow><msup><mi>F</mi><mrow><mo>-</mo><mn>2</mn></mrow></msup><mo>=</mo><mi>I</mi></mrow></math>
+          where <math><mi>I</mi></math> is the Fisher Information for the chosen decay parameter under the chosen photon-basis convention.</p>
+      </section>
+      <section class="card" id="f-value-basis">
+        <h2>F-value photon basis</h2>
+        <div class="plain-box"><h3>Plain English</h3><p>The same detector can be judged three ways: against all photons in the acquisition period, against all photons in the full period, or only against the photons that actually landed in the measured gates.</p></div>
+        <div class="specialist-box"><h3>For specialists</h3><p>The implementation uses three semantics: period-aware full budget, acquisition-window-aware full budget, and collected-only renormalisation. The collected-only mode is conditional on measured photons and does not penalise gated-out counts.</p></div>
+      </section>
+      <section class="card" id="throughput">
+        <h2>Throughput and AUC objectives</h2>
+        <p>The optimisation framework supports instantaneous and area-under-curve throughput-style objectives. Under fixed dose, throughput changes come from information efficiency and detection losses. Under fixed peak, throughput can also increase because the area under the excitation profile is allowed to grow.</p>
+      </section>
+      <section class="card" id="phasors">
+        <h2>Phasors</h2>
+        <p>The phasor coordinates are computed internally from the gated or binned signal, calibrated with the same laser profile used by the decay model. The widget displays both the universal semicircle and the discrete single-exponential locus implied by the actual gate set.</p>
+      </section>
+      <section class="card" id="optimisation-maths">
+        <h2>Optimisation maths</h2>
+        <p>Detection optimisation can be direct, partition-based, or Fisher-compression-based. Fisher Compression also supports nuisance-aware Schur-complement scoring.</p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

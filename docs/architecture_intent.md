@@ -58,6 +58,7 @@ Users should be able to save and load full workspaces, not only export plots. In
 | :--- | :--- | :--- |
 | Physics Engine | `python/backend/twin_engine.py` | Excitation modelling, decay PDFs, gate distillation, Fisher estimation, Monte Carlo, validation-image generation, fitting, pixel payloads, and phasor products. |
 | Shared Models | `python/backend/models.py` | Configuration and lightweight application state objects shared across the stack. |
+| Decay Model Registry | `python/backend/decay_model_store.py` | Built-in and custom decay-model metadata, parameter definitions, sweep defaults, and persisted custom expressions. |
 | Service Layer | `python/backend/service_api.py` | Stable workflow orchestration for scripts, tests, APIs, and automation. |
 | Storage Layer | `python/backend/storage.py` | Workspace persistence and restoration. |
 | Profile Store | `python/backend/profile_store.py` | Instrument profile load/save/import/export/migration helpers. |
@@ -110,14 +111,18 @@ The backend configuration object is the single source of truth for:
 - decay-model settings,
 - laser-profile and excitation settings,
 - gate geometry and overlap semantics,
+- detector event artefacts such as deadtime, dark counts, afterpulsing, and per-period capacity,
 - Fisher-information photon-basis semantics,
 - sweep definitions,
 - Monte Carlo and fitting settings,
 - validation-image settings,
 - optimisation settings,
+- custom decay-model parameter values and sweep defaults,
 - persistence metadata.
 
 The GUI must mirror this state rather than maintaining a separate hidden model.
+
+Batch-sweep default value sets are persisted as profile-style JSON data under `python/profiles/batch_sweeps/`. The installation snapshot in `defaults.install.json` is the immutable reset target, while `defaults.current.json` is the editable runtime copy used by the Batch Sweep tab for load, save, import, export, and reset operations.
 
 ## Testing Intent
 The cleaned repository should be validated with:
@@ -134,6 +139,8 @@ Benchmark comparisons against legacy reports can still exist as documentation or
 The HTML manual should always describe the current Python workspace, including:
 
 - repo layout and launch paths,
+- the canonical multi-page manual rooted at `docs/manual/index.html`,
+- the floating support browser opened by `Ctrl+H`,
 - desktop workflow usage,
 - the compact controller layout and simulation-core badge semantics,
 - workspace persistence,

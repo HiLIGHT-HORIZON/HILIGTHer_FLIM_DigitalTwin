@@ -12,7 +12,7 @@ from mcp_prompts import get_prompts
 
 SERVICE = DigitalTwinService()
 PROMPTS = get_prompts()
-SERVER_INFO = {"name": "hilighter-digital-twin-mcp", "version": "1.4.0"}
+SERVER_INFO = {"name": "hilighter-digital-twin-mcp", "version": "1.5.0"}
 
 
 def _read_message():
@@ -187,6 +187,23 @@ def _tool_definitions():
                 "required": ["session_id"],
             },
         },
+        {
+            "name": "ingest_instrument_profile_source",
+            "description": "Read a local PDF/file or webpage, extract instrument specifications, and create/save/apply an instrument profile. Intended for use with an LLM that reviews the extracted source text and refines the profile patch.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string"},
+                    "profile_name": {"type": "string"},
+                    "config_patch": {"type": "object"},
+                    "description": {"type": "string"},
+                    "apply_profile": {"type": "boolean"},
+                    "save_profile": {"type": "boolean"},
+                    "max_chars": {"type": "integer"},
+                },
+                "required": ["source", "profile_name"],
+            },
+        },
     ]
 
 
@@ -225,6 +242,16 @@ def _call_tool(name: str, arguments: Dict[str, Any]):
         return SERVICE.save_session(str(arguments["session_id"]))
     if name == "load_session":
         return SERVICE.load_session(str(arguments["session_id"]))
+    if name == "ingest_instrument_profile_source":
+        return SERVICE.ingest_instrument_profile_source(
+            source=str(arguments["source"]),
+            profile_name=str(arguments["profile_name"]),
+            config_patch=arguments.get("config_patch", {}),
+            description=str(arguments.get("description", "")),
+            apply_profile=bool(arguments.get("apply_profile", True)),
+            save_profile=bool(arguments.get("save_profile", True)),
+            max_chars=int(arguments.get("max_chars", 24000)),
+        )
     raise KeyError(f"Unknown tool: {name}")
 
 

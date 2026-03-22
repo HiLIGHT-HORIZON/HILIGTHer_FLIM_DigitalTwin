@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Backend Modules</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <script defer src="assets/app.js"></script>
+</head>
+<body data-page="backend">
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">HILIGHTer Digital Twin<small>Backend modules</small></div>
+      <nav class="nav">
+        <a data-nav="index" href="index.html">Overview</a>
+        <a data-nav="controller" href="controller.html">Controller</a>
+        <a data-nav="widgets" href="widgets.html">Widgets</a>
+        <a data-nav="apis" href="apis.html">APIs</a>
+        <a data-nav="mcp" href="mcp.html">MCP</a>
+        <a data-nav="backend" href="backend.html">Backend</a>
+        <a data-nav="maths" href="maths.html">Maths</a>
+      </nav>
+      <form class="search-form" data-search-target="search.html">
+        <input type="search" name="q" placeholder="Search backend modules...">
+        <button type="submit">Search</button>
+      </form>
+    </div>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-card toc">
+        <h3>Modules</h3>
+        <a href="#twin-engine">TwinEngine</a>
+        <a href="#models">Models</a>
+        <a href="#decay-model-store">Decay model store</a>
+        <a href="#service">Service API</a>
+        <a href="#event-driven">Event-driven core</a>
+        <a href="#profiles">Profiles and import</a>
+        <a href="#storage">Storage and sessions</a>
+      </div>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <div class="kicker">Backend</div>
+        <h1>Backend module guide</h1>
+        <p>The backend is organised around a single engine, a stable service layer, and support modules for storage, import, profiles, and the event-driven detection core.</p>
+      </section>
+      <section class="card" id="twin-engine">
+        <h2><code>twin_engine.py</code></h2>
+        <p>This is the computational heart of the Digital Twin. It owns the latent decay model, laser profile generation, gate distillation, Fisher Information calculations, Monte Carlo validation, validation-image synthesis, phasors, optimisation, and the approximation bridge to detector event effects.</p>
+      </section>
+      <section class="card" id="models">
+        <h2><code>models.py</code></h2>
+        <p>Defines configuration and state models. <code>PhysicsConfig</code> is the most important one; it is the contract shared between desktop controls, service API, profiles, decay-model metadata, and MCP.</p>
+      </section>
+      <section class="card" id="decay-model-store">
+        <h2><code>decay_model_store.py</code></h2>
+        <p>This registry merges the hardcoded decay families with user-defined custom models. It also carries parameter metadata such as units, sweep defaults, and descriptions so the controller, gridded-MLE summaries, and editor can all stay in sync.</p>
+      </section>
+      <section class="card" id="service">
+        <h2><code>service_api.py</code></h2>
+        <p>Provides the orchestration layer used by the desktop, HTTP API, and MCP server.</p>
+      </section>
+      <section class="card" id="event-driven">
+        <h2><code>event_driven.py</code></h2>
+        <p>Hosts the additional <code>event_driven</code> simulation modality. It reuses the same latent optical model but replaces the detection model with an explicit chronological event loop.</p>
+      </section>
+      <section class="card" id="profiles">
+        <h2>Profiles and import modules</h2>
+        <p><code>profile_store.py</code> persists instrument profiles. <code>instrument_spec_ingest.py</code> extracts profile candidates from external specifications. <code>importers.py</code> handles external data formats such as SDT.</p>
+      </section>
+      <section class="card" id="storage">
+        <h2><code>storage.py</code> and sessions</h2>
+        <p>Session save/load functions persist available data products so analysis states can be restored programmatically.</p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

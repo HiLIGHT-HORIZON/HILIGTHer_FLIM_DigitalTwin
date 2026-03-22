@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 import numpy as np
 
 class ChannelMetadata(BaseModel):
@@ -85,6 +85,8 @@ class PhysicsConfig(BaseModel):
     timing_jitter: float = 0.0 # [ps] RMS jitter
     dnl_level: float = 0.0 # Differential Non-Linearity [%]
     detector_deadtime: float = 0.0 # [ns]
+    detector_afterpulsing_probability: float = 0.0 # [0..1] probability of one afterpulse per accepted event
+    detector_dark_count_rate_cps: float = 0.0 # [counts/s]
     b_multihit_mode: bool = True # Can track multiple photons per laser pulse
     
     # Instrument Identity (for management)
@@ -108,7 +110,7 @@ class PhysicsConfig(BaseModel):
     # Secondary Instrument Parameter Sweep (Generates Multiple Curves)
     instr_sweep_active: bool = False
     instr_sweep_param: str = "laser_pulse_fwhm_ns"
-    instr_sweep_vals: List[float] = []
+    instr_sweep_vals: List[Any] = []
     instr_sweep_gate_sharp_edge: str = "sharp_rise"
     instr_sweep_burst_sharp_edge: str = "sharp_rise"
     instr_sweep_fixed_countrate_kcps: float = 100.0
@@ -186,13 +188,15 @@ class PhysicsConfig(BaseModel):
     b_interrupt: bool = False
 
     # Decay Model Parameters
-    decay_model: str = "exponential" # exponential, stretched, custom
+    decay_model: str = "exponential" # exponential, stretched, or custom model key
     n_components: int = 1
     taus: List[float] = [2.5, 1.0]       # List of lifetimes [ns]
     amplitudes: List[float] = [1.0, 0.0] # Relative amplitudes/weights (e.g. tau1, alpha)
     beta: float = 1.0               # Stretching factor (for KWW)
-    background_level: float = 0.0   # Constant background per bin
+    background_level: float = 0.0   # Background fraction of the total decay mass [0..1]
     custom_decay_script: str = ""   # Python expression for I(t)
+    custom_model_params: Dict[str, float] = {}
+    decay_model_sweep_defaults: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
 class MonteCarloParams(BaseModel):
     """Parameters for Monte Carlo photon simulations."""
