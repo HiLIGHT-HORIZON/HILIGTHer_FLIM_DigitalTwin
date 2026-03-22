@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "Academic and commercial users modifying or distributing this software are required to cite the following in their documentation or publications."
+title: "HILIGHTer Digital Twin"
+authors:
+  - family-names: "Esposito"
+    given-names: "Alessandro"
+    orcid: "https://orcid.org/0000-0002-5051-091X"
+    affiliation: "Brunel University of London"
+date-released: 2026-03-21
+license: "Apache-2.0"
