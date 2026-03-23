@@ -55,12 +55,12 @@
         <p>The desktop reports three related quantities:
           <math display="block"><mrow><mi>F</mi><mo>=</mo><msqrt><mfrac><mn>1</mn><mi>I</mi></mfrac></msqrt></mrow></math>
           <math display="block"><mrow><msup><mi>F</mi><mrow><mo>-</mo><mn>2</mn></mrow></msup><mo>=</mo><mi>I</mi></mrow></math>
-          where <math><mi>I</mi></math> is the Fisher Information for the chosen decay parameter under the chosen photon-basis convention.</p>
+          where <math><mi>I</mi></math> is the Fisher Information carried by the collected photons for the chosen decay parameter.</p>
       </section>
       <section class="card" id="f-value-basis">
         <h2>F-value photon basis</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>The same detector can be judged three ways: against all photons in the acquisition period, against all photons in the full period, or only against the photons that actually landed in the measured gates.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>The implementation uses three semantics: period-aware full budget, acquisition-window-aware full budget, and collected-only renormalisation. The collected-only mode is conditional on measured photons and does not penalise gated-out counts.</p></div>
+        <div class="plain-box"><h3>Plain English</h3><p>The estimator is always judged from the photons that were actually collected. The three options only decide which photon budget is used when reporting <code>F</code>: collected photons, all photons inside the acquisition period, or the full available photon budget.</p></div>
+        <div class="specialist-box"><h3>For specialists</h3><p>The backend first forms the collected-photon conditional timing distribution and computes Fisher Information from that observed channel set. The selected photon basis then rescales the reported metric by the appropriate photon budget, so <code>All in acquisition period</code> and <code>All</code> do not introduce an explicit lost-photon category into the estimator model.</p></div>
       </section>
       <section class="card" id="throughput">
         <h2>Throughput and AUC objectives</h2>

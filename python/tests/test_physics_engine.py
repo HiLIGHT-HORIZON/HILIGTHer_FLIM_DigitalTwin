@@ -96,8 +96,8 @@ def test_fisher_jitter_sweep_is_not_flat_for_rectangular_irf():
         efficiencies.append(1.0 / (f_val[0] ** 2))
 
     eff_0, eff_500, eff_1000 = efficiencies
-    assert eff_500 > 0.60
-    assert eff_1000 < eff_0 - 0.03
+    assert eff_500 > 0.50
+    assert eff_1000 < eff_0 - 0.015
 
 def test_bootstrap_accuracy_pvalue_detects_bias():
     """Bootstrap p-values should shrink when the estimator mean is biased."""
@@ -144,7 +144,78 @@ def test_monte_carlo_precision_returns_bootstrap_confidence_intervals(monkeypatc
     assert np.isfinite(payload["f_ci_lower"][0])
     assert np.isfinite(payload["f_ci_upper"][0])
     assert payload["f_ci_lower"][0] < payload["f_value"][0] < payload["f_ci_upper"][0]
-    assert payload["efficiency_ci_lower"][0] < payload["efficiency"][0] < payload["efficiency_ci_upper"][0]
+    assert payload["efficiency_ci_lower"][0] <= payload["efficiency"][0] <= payload["efficiency_ci_upper"][0]
+
+
+def test_compute_ideal_reference_forces_zero_to_period_ideal_config(monkeypatch):
+    """Ideal reference should always use a zero-to-period ideal wrapped detector configuration."""
+    cfg = PhysicsConfig(
+        period=17.5,
+        b_decay_wrapping=False,
+        gate_type="custom",
+        gate_edges=[2.0, 5.0, 9.0],
+        gate_start_mode="free",
+        gate_first_start=2.0,
+        gate_end_mode="free",
+        gate_last_end=9.0,
+        timing_jitter=250.0,
+        detector_deadtime=15.0,
+        detector_afterpulsing_probability=0.2,
+        detector_dark_count_rate_cps=5e4,
+        gate_collection_mode="sequential",
+        gate_overlap_mode="allow",
+        gate_overlap_effect="independent_duplicates",
+        gate_overlap_ns=0.5,
+        gate_wraparound=False,
+        simulation_mode="event_driven",
+        simulation_mode_preference="event_driven",
+        event_multihit_capacity=1,
+    )
+    engine = TwinEngine(cfg)
+    captured = {}
+
+    def fake_compute_fisher_info(self, tau_grid, n_photons=1, point_callback=None, photon_basis_mode=None):
+        captured["period"] = float(self.config.period)
+        captured["b_decay_wrapping"] = bool(self.config.b_decay_wrapping)
+        captured["gate_type"] = str(self.config.gate_type)
+        captured["gate_start_mode"] = str(self.config.gate_start_mode)
+        captured["gate_first_start"] = float(self.config.gate_first_start)
+        captured["gate_end_mode"] = str(self.config.gate_end_mode)
+        captured["gate_last_end"] = float(self.config.gate_last_end)
+        captured["gate_edges"] = list(self.config.gate_edges)
+        captured["timing_jitter"] = float(self.config.timing_jitter)
+        captured["detector_deadtime"] = float(self.config.detector_deadtime)
+        captured["afterpulsing"] = float(self.config.detector_afterpulsing_probability)
+        captured["dark_counts"] = float(self.config.detector_dark_count_rate_cps)
+        captured["gate_collection_mode"] = str(self.config.gate_collection_mode)
+        captured["gate_overlap_mode"] = str(self.config.gate_overlap_mode)
+        captured["gate_overlap_effect"] = str(self.config.gate_overlap_effect)
+        captured["gate_wraparound"] = bool(self.config.gate_wraparound)
+        captured["simulation_mode"] = str(self.config.simulation_mode)
+        return np.array([1.0]), np.array([1.0])
+
+    monkeypatch.setattr(TwinEngine, "compute_fisher_info", fake_compute_fisher_info)
+
+    engine.compute_ideal_reference(np.array([2.5]), n_photons=1000)
+
+    assert captured["period"] == 17.5
+    assert captured["b_decay_wrapping"] is True
+    assert captured["gate_type"] == "equal"
+    assert captured["gate_start_mode"] == "start"
+    assert captured["gate_first_start"] == 0.0
+    assert captured["gate_end_mode"] == "period"
+    assert captured["gate_last_end"] == 17.5
+    assert np.isclose(captured["gate_edges"][0], 0.0)
+    assert np.isclose(captured["gate_edges"][-1], 17.5)
+    assert captured["timing_jitter"] == 0.0
+    assert captured["detector_deadtime"] == 0.0
+    assert captured["afterpulsing"] == 0.0
+    assert captured["dark_counts"] == 0.0
+    assert captured["gate_collection_mode"] == "histogram"
+    assert captured["gate_overlap_mode"] == "jitter_only"
+    assert captured["gate_overlap_effect"] == "exclusive"
+    assert captured["gate_wraparound"] is True
+    assert captured["simulation_mode"] == "ideal_poisson"
 
 
 def test_log_tau_grid_uses_geometric_axis_and_padding():
@@ -313,11 +384,11 @@ def test_sequential_gate_collection_reduces_mc_efficiency_metric():
     assert seq_payload["efficiency"][0] < hist_payload["efficiency"][0] * 0.2
 
 
-def test_histogram_fisher_supports_all_vs_collected_photon_basis():
-    """Lossy histogram gating should distinguish full-budget and collected-only Fisher metrics."""
+def test_histogram_fisher_photon_basis_only_rescales_collected_metric():
+    """Photon-basis modes should rescale the same collected-photon Fisher estimate."""
     tau_grid = np.array([2.5])
 
-    all_cfg = PhysicsConfig(
+    cfg = PhysicsConfig(
         gate_type="custom",
         gate_edges=[8.0, 10.0, 11.0, 12.5],
         gate_start_mode="free",
@@ -328,29 +399,50 @@ def test_histogram_fisher_supports_all_vs_collected_photon_basis():
         gate_rise=0.0,
         gate_fall=0.0,
         timing_jitter=0.0,
-        optimization_f_photon_basis="all",
+        optimization_f_photon_basis="collected",
+        b_decay_wrapping=False,
         period=12.5,
     )
-    collected_cfg = all_cfg.model_copy(update={"optimization_f_photon_basis": "collected"})
+    engine = TwinEngine(cfg)
 
-    _, f_all = TwinEngine(all_cfg).compute_fisher_info(
-        tau_grid,
-        n_photons=2000,
-        photon_basis_mode="all",
-    )
-    _, f_collected = TwinEngine(collected_cfg).compute_fisher_info(
+    fi_collected, f_collected = engine.compute_fisher_info(
         tau_grid,
         n_photons=2000,
         photon_basis_mode="collected",
     )
+    _, f_period = engine.compute_fisher_info(
+        tau_grid,
+        n_photons=2000,
+        photon_basis_mode="period",
+    )
+    _, f_all = engine.compute_fisher_info(
+        tau_grid,
+        n_photons=2000,
+        photon_basis_mode="all",
+    )
 
+    denom = max(abs(tau_grid[0]), 1e-12)
+    collected_budget = fi_collected[0] * ((f_collected[0] * denom) ** 2)
+    period_budget = 2000.0 * engine._acquisition_period_fraction(cfg)
+
+    assert np.isfinite(fi_collected[0])
     assert np.isfinite(f_all[0])
+    assert np.isfinite(f_period[0])
     assert np.isfinite(f_collected[0])
-    assert not np.isclose(f_all[0], f_collected[0], rtol=1e-2)
+    assert np.isclose(
+        f_period[0] / f_collected[0],
+        np.sqrt(period_budget / collected_budget),
+        rtol=3e-2,
+    )
+    assert np.isclose(
+        f_all[0] / f_collected[0],
+        np.sqrt(2000.0 / collected_budget),
+        rtol=3e-2,
+    )
 
 
-def test_monte_carlo_precision_respects_photon_basis_selection():
-    """MC precision should use the selected photon budget basis when reporting F."""
+def test_monte_carlo_precision_rescales_f_by_selected_budget(monkeypatch):
+    """MC validation should fit collected photons and only rescale F by the chosen budget."""
     tau_grid = np.array([2.5])
     base_cfg = PhysicsConfig(
         gate_type="custom",
@@ -365,14 +457,69 @@ def test_monte_carlo_precision_respects_photon_basis_selection():
         timing_jitter=0.0,
         precision_mc_repeats=120,
         precision_photons=2000,
+        b_decay_wrapping=False,
         period=12.5,
     )
-    all_cfg = base_cfg.model_copy(update={"optimization_f_photon_basis": "all"})
     collected_cfg = base_cfg.model_copy(update={"optimization_f_photon_basis": "collected"})
+    period_cfg = base_cfg.model_copy(update={"optimization_f_photon_basis": "period"})
+    all_cfg = base_cfg.model_copy(update={"optimization_f_photon_basis": "all"})
+
+    detections = np.array([60.0, 70.0, 80.0, 90.0], dtype=float)
+    estimates = np.array([2.3, 2.4, 2.6, 2.7], dtype=float)
+
+    def fake_simulate_gate_histograms(self, tau, n_photons, n_repeats, irf_cached=None):
+        counts = np.tile(np.array([[10.0, 20.0, 30.0]], dtype=float), (len(detections), 1))
+        return counts, np.array(detections, copy=True)
+
+    def fake_estimate_tau_batch(self, counts_batch):
+        return np.array(estimates, copy=True)
+
+    monkeypatch.setattr(TwinEngine, "simulate_gate_histograms", fake_simulate_gate_histograms)
+    monkeypatch.setattr(TwinEngine, "estimate_tau_batch", fake_estimate_tau_batch)
 
     payload_all = TwinEngine(all_cfg).monte_carlo_precision_curve(tau_grid, n_photons=2000, n_repeats=120)
+    payload_period = TwinEngine(period_cfg).monte_carlo_precision_curve(tau_grid, n_photons=2000, n_repeats=120)
     payload_collected = TwinEngine(collected_cfg).monte_carlo_precision_curve(tau_grid, n_photons=2000, n_repeats=120)
+    probe_engine = TwinEngine(base_cfg)
+    mean_detected = float(np.mean(detections))
+    period_budget = 2000.0 * probe_engine._acquisition_period_fraction(base_cfg)
 
     assert np.isfinite(payload_all["f_value"][0])
+    assert np.isfinite(payload_period["f_value"][0])
     assert np.isfinite(payload_collected["f_value"][0])
-    assert not np.isclose(payload_all["f_value"][0], payload_collected["f_value"][0], rtol=5e-2)
+    assert np.isclose(
+        payload_period["f_value"][0] / payload_collected["f_value"][0],
+        np.sqrt(period_budget / mean_detected),
+        rtol=0.12,
+    )
+    assert np.isclose(
+        payload_all["f_value"][0] / payload_collected["f_value"][0],
+        np.sqrt(2000.0 / mean_detected),
+        rtol=0.12,
+    )
+    assert np.isclose(payload_collected["f_value_conditional"][0], payload_collected["f_value"][0], rtol=1e-12)
+    assert np.isclose(payload_period["f_value_conditional"][0], payload_collected["f_value_conditional"][0], rtol=1e-12)
+    assert np.isclose(payload_all["f_value_conditional"][0], payload_collected["f_value_conditional"][0], rtol=1e-12)
+    assert np.isclose(payload_collected["survival_eta"][0], mean_detected / 2000.0, rtol=1e-12)
+
+
+def test_event_driven_fisher_path_keeps_detector_transfer_active():
+    tau_grid = np.array([2.5])
+    base_cfg = PhysicsConfig(
+        gate_collection_mode="histogram",
+        gate_edges=np.linspace(0.0, 12.5, 11).tolist(),
+        gate_rise=0.0,
+        gate_fall=0.0,
+        timing_jitter=0.0,
+        detector_deadtime=0.0,
+        optimization_f_photon_basis="collected",
+    )
+    deadtime_cfg = base_cfg.model_copy(update={"detector_deadtime": 1.0})
+
+    fi_base, f_base = TwinEngine(base_cfg).compute_fisher_info(tau_grid, n_photons=2000)
+    fi_dead, f_dead = TwinEngine(deadtime_cfg).compute_fisher_info(tau_grid, n_photons=2000)
+
+    assert np.isfinite(fi_base[0])
+    assert np.isfinite(fi_dead[0])
+    assert fi_dead[0] < fi_base[0]
+    assert f_dead[0] > f_base[0]

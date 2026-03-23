@@ -158,6 +158,25 @@ class InstrumentManager(QDialog):
         }
 
     def _format_compatibility(self, inspection, payload):
+        config = dict(payload.get("config") or {})
+        gate_rise = float(config.get("gate_rise", 0.0) or 0.0)
+        gate_fall = float(config.get("gate_fall", gate_rise) or gate_rise)
+        gate_collection_mode = str(config.get("gate_collection_mode", "histogram"))
+        gate_overlap_mode = str(config.get("gate_overlap_mode", "jitter_only"))
+        gate_overlap_ns = float(config.get("gate_overlap_ns", 0.0) or 0.0)
+        gate_overlap_effect = str(config.get("gate_overlap_effect", "exclusive"))
+        gate_wraparound = bool(config.get("gate_wraparound", True))
+        gate_edges = list(config.get("gate_edges") or [])
+        gate_count = max(0, len(gate_edges) - 1)
+        ideal_gates = (
+            gate_rise == 0.0
+            and gate_fall == 0.0
+            and gate_collection_mode == "histogram"
+            and gate_overlap_mode == "never"
+            and gate_overlap_ns == 0.0
+            and gate_overlap_effect == "exclusive"
+            and not gate_wraparound
+        )
         lines = [
             f"Schema version: {payload.get('schema_version', 'legacy')}",
             f"Profile type: {payload.get('profile_type', 'unknown')}",
@@ -174,6 +193,20 @@ class InstrumentManager(QDialog):
             if extra:
                 lines.append(f"Obsolete/unknown parameters: {', '.join(extra)}")
                 lines.append("Behaviour: obsolete values can be ignored or removed by repairing the JSON.")
+        lines.extend(
+            [
+                "",
+                "Gate diagnostics:",
+                f"Ideal gates: {'yes' if ideal_gates else 'no'}",
+                f"Gate count: {gate_count}",
+                f"Gate collection: {gate_collection_mode}",
+                f"Gate overlap mode: {gate_overlap_mode}",
+                f"Gate overlap width: {gate_overlap_ns:g} ns",
+                f"Gate overlap effect: {gate_overlap_effect}",
+                f"Gate wraparound: {'on' if gate_wraparound else 'off'}",
+                f"Gate rise/fall: {gate_rise:g} ns / {gate_fall:g} ns",
+            ]
+        )
         return "\n".join(lines)
 
     def _on_profile_selected(self, current, _previous):

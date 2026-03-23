@@ -3,7 +3,7 @@ import os
 import tempfile
 import json
 import sys
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 import numpy as np
 
@@ -79,6 +79,240 @@ class DigitalTwinService:
 
     def get_gui_schema(self) -> Dict[str, Any]:
         return get_gui_schema()
+
+    def _vendors_info_dir(self) -> str:
+        return os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "docs", "vendors_info")
+
+    def list_vendor_sources(self) -> Dict[str, Any]:
+        self._check_access(mcp_context=True)
+        vendors_dir = os.path.abspath(self._vendors_info_dir())
+        items = []
+        if os.path.isdir(vendors_dir):
+            for filename in sorted(os.listdir(vendors_dir)):
+                path = os.path.join(vendors_dir, filename)
+                if not os.path.isfile(path):
+                    continue
+                items.append(
+                    {
+                        "name": filename,
+                        "path": path,
+                        "size_bytes": int(os.path.getsize(path)),
+                    }
+                )
+        return {"vendors_info_dir": vendors_dir, "sources": items}
+
+    def read_vendor_source(self, source_name: str, max_chars: int = 24000) -> Dict[str, Any]:
+        self._check_access(mcp_context=True)
+        source_name = os.path.basename(str(source_name).strip())
+        if not source_name:
+            raise ValueError("source_name cannot be empty.")
+        path = os.path.join(os.path.abspath(self._vendors_info_dir()), source_name)
+        payload = load_instrument_source(path, max_chars=max_chars)
+        inferred = infer_instrument_profile_patch(payload.text)
+        return {
+            "source": source_name,
+            "path": path,
+            "source_kind": payload.source_kind,
+            "content_type": payload.content_type,
+            "suggested_profile_patch": inferred.get("patch", {}),
+            "evidence": inferred.get("evidence", {}),
+            "text_excerpt": payload.text[:4000],
+        }
+
+    def get_instrument_profile_schema(self) -> Dict[str, Any]:
+        defaults = PhysicsConfig()
+        default_dict = defaults.model_dump() if hasattr(defaults, "model_dump") else defaults.dict()
+        focus_fields = {
+            "label": "Human-readable instrument profile name.",
+            "period": "Laser repetition period in ns.",
+            "irf_profile": "Laser/IRF profile family: gaussian, rectangular, ideal (dirac), or free-form.",
+            "irf_fwhm": "Laser pulse or IRF width in ns.",
+            "irf_position": "Laser/IRF timing offset in ns.",
+            "timing_jitter": "Detector/electronics timing jitter in ps.",
+            "detector_deadtime": "Detector or electronics dead time in ns.",
+            "detector_dark_count_rate_cps": "Detector dark count rate in counts/s.",
+            "b_multihit_mode": "Whether multiple events per repetition period are permitted.",
+            "event_multihit_capacity": "Optional finite event capacity per period; null means unlimited.",
+            "gate_type": "equal or custom.",
+            "gate_edges": "Gate boundaries in ns.",
+            "gate_collection_mode": "histogram or sequential.",
+            "gate_overlap_mode": "jitter_only, never, or allow.",
+            "gate_overlap_effect": "exclusive, duplicate_events, or independent_duplicates.",
+            "event_pixel_dwell_time_s": "Pixel dwell time in seconds for event-driven rate effects.",
+        }
+        return {
+            "schema_version": 2,
+            "profile_type": "instrument_definition",
+            "top_level_required": ["schema_version", "profile_type", "name", "config"],
+            "top_level_optional": ["description", "metadata", "created_at", "updated_at"],
+            "config_focus_fields": focus_fields,
+            "default_config_excerpt": {key: default_dict.get(key) for key in focus_fields if key in default_dict},
+        }
+
+    def _build_instrument_profile_questions(self, merged_patch: Dict[str, Any]) -> List[Dict[str, Any]]:
+        defaults = PhysicsConfig()
+        questions: List[Dict[str, Any]] = []
+
+        def add_question(field: str, prompt: str, suggested_value: Any = None, rationale: str = ""):
+            if field in merged_patch:
+                return
+            questions.append(
+                {
+                    "field": field,
+                    "prompt": prompt,
+                    "suggested_value": suggested_value,
+                    "rationale": rationale,
+                }
+            )
+
+        add_question("period", "What repetition rate or period should the instrument use?", None, "Needed to define the acquisition window and gate placement.")
+        add_question("irf_profile", "Which laser/IRF pulse shape should be assumed?", defaults.irf_profile, "Use a common pulse-family only if the vendor source does not specify it.")
+        add_question("irf_fwhm", "What laser pulse width or IRF FWHM should be used?", defaults.irf_fwhm, "Needed to model reconvolution and timing blur.")
+        add_question("timing_jitter", "What detector/electronics timing jitter should be used (ps)?", defaults.timing_jitter, "If only a typical TTS/jitter figure is available, confirm that value.")
+        add_question("detector_deadtime", "What detector or electronics dead time should be used (ns)?", defaults.detector_deadtime, "Required for rate-dependent losses and distortion.")
+        add_question("detector_dark_count_rate_cps", "What detector dark count rate should be used (counts/s)?", defaults.detector_dark_count_rate_cps, "Use a typical value only with user confirmation.")
+        add_question("b_multihit_mode", "Should multiple photon events per period be allowed?", defaults.b_multihit_mode, "TCSPC electronics often support multihit, but this should be confirmed.")
+        add_question("event_multihit_capacity", "If multihit is finite, what is the maximum events per period?", None, "Leave null for unlimited unless the hardware documents a limit.")
+        if "gate_edges" not in merged_patch and "gate_type" not in merged_patch:
+            questions.append(
+                {
+                    "field": "gate_edges",
+                    "prompt": "How should the time axis be discretized: equal TCSPC bins or a custom gate set?",
+                    "suggested_value": "equal bins across the repetition period",
+                    "rationale": "Electronics specs often give channels/bins rather than explicit gate edges.",
+                }
+            )
+        return questions
+
+    def draft_instrument_profile(
+        self,
+        profile_name: str,
+        sources: Optional[List[str]] = None,
+        component_names: Optional[List[str]] = None,
+        description: str = "",
+        max_chars: int = 24000,
+    ) -> Dict[str, Any]:
+        self._check_access(mcp_context=True)
+        source_list = [str(item).strip() for item in (sources or []) if str(item).strip()]
+        components = [str(item).strip() for item in (component_names or []) if str(item).strip()]
+        if not source_list:
+            raise ValueError("Provide at least one source path or vendor document name.")
+
+        vendors_dir = os.path.abspath(self._vendors_info_dir())
+        merged_patch: Dict[str, Any] = {}
+        evidence_by_source: Dict[str, Any] = {}
+        source_summaries: List[Dict[str, Any]] = []
+        for source in source_list:
+            resolved = source
+            if not os.path.isabs(resolved):
+                candidate = os.path.join(vendors_dir, os.path.basename(source))
+                if os.path.exists(candidate):
+                    resolved = candidate
+            payload = load_instrument_source(resolved, max_chars=max_chars)
+            inferred = infer_instrument_profile_patch(payload.text)
+            merged_patch.update(dict(inferred.get("patch") or {}))
+            evidence_by_source[os.path.basename(resolved)] = inferred.get("evidence", {})
+            source_summaries.append(
+                {
+                    "source": resolved,
+                    "kind": payload.source_kind,
+                    "content_type": payload.content_type,
+                    "text_excerpt": payload.text[:2500],
+                }
+            )
+
+        defaults = PhysicsConfig()
+        default_dict = defaults.model_dump() if hasattr(defaults, "model_dump") else defaults.dict()
+        candidate_dict = copy.deepcopy(default_dict)
+        candidate_dict.update(merged_patch)
+        candidate_dict["label"] = str(profile_name)
+        candidate_dict["active_instrument_profile"] = str(profile_name)
+        cfg = PhysicsConfig(**candidate_dict)
+        profile_payload = {
+            "schema_version": 2,
+            "profile_type": "instrument_definition",
+            "name": str(profile_name),
+            "description": str(description or ""),
+            "metadata": {
+                "components": components,
+                "sources": source_list,
+                "workflow": "mcp_draft",
+            },
+            "config": cfg.model_dump() if hasattr(cfg, "model_dump") else cfg.dict(),
+        }
+        return {
+            "status": "draft_ready",
+            "profile_name": str(profile_name),
+            "components": components,
+            "sources": source_summaries,
+            "merged_patch": merged_patch,
+            "evidence_by_source": evidence_by_source,
+            "draft_profile_json": profile_payload,
+            "missing_or_unconfirmed_specs": self._build_instrument_profile_questions(merged_patch),
+            "profile_json_schema": self.get_instrument_profile_schema(),
+            "notes": [
+                "Ask the user to confirm every item in missing_or_unconfirmed_specs before finalizing the profile.",
+                "Use common settings only when the vendor sources are silent, and record those assumptions in metadata.",
+                "Finalize by calling finalize_instrument_profile with either the completed profile_json or a config_patch.",
+            ],
+        }
+
+    def finalize_instrument_profile(
+        self,
+        profile_name: str,
+        profile_json: Optional[Dict[str, Any]] = None,
+        config_patch: Optional[Dict[str, Any]] = None,
+        description: str = "",
+        metadata: Optional[Dict[str, Any]] = None,
+        apply_profile: bool = True,
+        save_profile: bool = True,
+    ) -> Dict[str, Any]:
+        self._check_access(mcp_context=True)
+        base_config = {}
+        if isinstance(profile_json, dict):
+            base_config.update(dict(profile_json.get("config") or {}))
+            if not description:
+                description = str(profile_json.get("description", ""))
+            profile_metadata = profile_json.get("metadata")
+            if metadata is None and isinstance(profile_metadata, dict):
+                metadata = dict(profile_metadata)
+        base_config.update(dict(config_patch or {}))
+        sanitized = self.profile_store.sanitize_config_dict(base_config)
+        cfg = PhysicsConfig(**sanitized)
+        cfg.label = str(profile_name)
+        cfg.active_instrument_profile = str(profile_name)
+
+        saved = False
+        applied = False
+        payload = None
+        if save_profile:
+            payload = self.profile_store.save_profile(profile_name, cfg, description=description, metadata=metadata)
+            saved = True
+        if apply_profile:
+            self.engine.config = copy.deepcopy(cfg)
+            self.engine.invalidate_grid()
+            self.engine.distill_gates()
+            applied = True
+
+        return {
+            "status": "profile_finalized",
+            "profile_name": str(profile_name),
+            "saved": saved,
+            "applied": applied,
+            "profile_payload": payload,
+            "config_summary": {
+                "label": cfg.label,
+                "period_ns": float(cfg.period),
+                "irf_profile": str(cfg.irf_profile),
+                "irf_fwhm_ns": float(cfg.irf_fwhm),
+                "timing_jitter_ps": float(cfg.timing_jitter),
+                "detector_deadtime_ns": float(cfg.detector_deadtime),
+                "dark_count_rate_cps": float(cfg.detector_dark_count_rate_cps),
+                "multihit": bool(cfg.b_multihit_mode),
+                "event_multihit_capacity": None if cfg.event_multihit_capacity is None else int(cfg.event_multihit_capacity),
+                "n_gates": int(max(0, len(cfg.gate_edges) - 1)),
+            },
+        }
 
     def ingest_instrument_profile_source(
         self,
@@ -302,7 +536,7 @@ class DigitalTwinService:
                     "f_value": theory_f.tolist(),
                 },
             }
-            if cfg.precision_validate_mc and cfg.f_x_param == "tau1" and cfg.n_components == 1 and cfg.decay_model == "exponential":
+            if cfg.precision_validate_mc:
                 payload["monte_carlo"] = self.engine.monte_carlo_precision_curve(
                     x_range,
                     int(cfg.precision_photons),

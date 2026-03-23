@@ -112,7 +112,7 @@ The backend configuration object is the single source of truth for:
 - laser-profile and excitation settings,
 - gate geometry and overlap semantics,
 - detector event artefacts such as deadtime, dark counts, afterpulsing, and per-period capacity,
-- Fisher-information photon-basis semantics,
+- Fisher-information photon-basis semantics, with collected-photon estimation and optional rescaling to acquisition-period or full-budget references,
 - sweep definitions,
 - Monte Carlo and fitting settings,
 - validation-image settings,

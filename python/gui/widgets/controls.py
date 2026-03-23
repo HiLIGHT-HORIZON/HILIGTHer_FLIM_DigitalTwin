@@ -1,3 +1,8 @@
+import base64
+import html
+import re
+from io import BytesIO
+
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                              QDoubleSpinBox, QSpinBox, QPushButton,
                              QComboBox, QLabel, QGroupBox, QTabWidget,
@@ -7,6 +12,8 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                              QDialogButtonBox, QMessageBox, QStyle)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QGuiApplication, QColor
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
 import numpy as np
 import pyqtgraph as pg
 from .freeform_irf_editor import FreeFormIRFEditor
@@ -18,6 +25,10 @@ try:
     from backend.profile_store import InstrumentProfileStore
 except ImportError:
     from python.backend.profile_store import InstrumentProfileStore
+try:
+    from backend.decay_model_store import DecayModelStore
+except ImportError:
+    from python.backend.decay_model_store import DecayModelStore
 
 class ControlWidget(QWidget):
     context_changed = pyqtSignal(str) # Emits section ID for manual
@@ -54,9 +65,11 @@ class ControlWidget(QWidget):
         self._ideal_gates_syncing = False
         self.batch_sweep_store = BatchSweepStore()
         self.instrument_profile_store = InstrumentProfileStore()
+        self.decay_model_store = DecayModelStore()
+        self._math_render_cache = {}
         self.batch_sweep_defaults = self.batch_sweep_store.load_current()
         layout = QVBoxLayout(self)
-        
+
         # Main Tab Container
         self.tabs = QTabWidget()
         self.tabs.currentChanged.connect(self._on_tab_changed)
@@ -71,17 +84,16 @@ class ControlWidget(QWidget):
             row_layout.addWidget(QLabel(right_label))
             row_layout.addWidget(right_widget, 1)
             return row
-        
+
         # --- TAB 0: DECAY MODEL (NOW FIRST) ---
         decay_tab = QWidget()
         decay_layout = QVBoxLayout(decay_tab)
-        
+
         model_group = QGroupBox("Model Architecture")
         model_form = QFormLayout(model_group)
         model_form.setHorizontalSpacing(6)
         model_form.setVerticalSpacing(6)
         self.combo_decay_model = QComboBox()
-        self.combo_decay_model.addItems(["Exponential", "Stretched", "Custom"])
         self.combo_decay_model.setToolTip("Select the mathematical form used for the fluorescence decay.")
         self.spin_n_comp = QSpinBox()
         self.spin_n_comp.setRange(1, 10)
@@ -94,37 +106,62 @@ class ControlWidget(QWidget):
         model_row_layout.addWidget(self.combo_decay_model, 2)
         model_row_layout.addWidget(QLabel("N components:"))
         model_row_layout.addWidget(self.spin_n_comp, 1)
+        self.combo_decay_model.setMaximumWidth(190)
+        self.spin_n_comp.setMaximumWidth(64)
+        self.btn_edit_model = QPushButton()
+        self.btn_edit_model.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
+        self.btn_edit_model.setToolTip("Open the decay-model editor for custom models and sweep defaults.")
+        self.btn_edit_model.setFixedWidth(32)
+        self.btn_edit_model.clicked.connect(self.custom_model_editor_requested.emit)
+        model_row_layout.addWidget(self.btn_edit_model)
+
+        self.btn_model_math = QPushButton()
+        self.btn_model_math.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation))
+        self.btn_model_math.setToolTip("Show or hide the decay-model mathematics.")
+        self.btn_model_math.setFixedWidth(32)
+        self.btn_model_math.setCheckable(True)
+        self.btn_model_math.setChecked(False)
+        self.btn_model_math.clicked.connect(lambda checked: self.model_math_panel.setVisible(bool(checked)))
+        model_row_layout.addWidget(self.btn_model_math)
         model_form.addRow(model_row)
 
         self.chk_pulse_train_decay = QCheckBox("Decay wrapping")
         self.chk_pulse_train_decay.setToolTip("Wrap long fluorescence decays across the repetition period so previous pulses contribute to the current acquisition window.")
-        model_form.addRow(self.chk_pulse_train_decay)
-
         self.btn_simulation_mode_badge = QToolButton()
-        self.btn_simulation_mode_badge.setText("Ideal Poisson (auto)")
-        self.btn_simulation_mode_badge.setToolTip("Click to cycle simulation core preference.")
+        self.btn_simulation_mode_badge.setText("Poisson (+DTF)")
+        self.btn_simulation_mode_badge.setToolTip("Click to cycle simulation-core preference. DTF = detector transfer function.")
         self.btn_simulation_mode_badge.clicked.connect(self._cycle_simulation_mode_preference)
         self.validation_mode_preference = "ideal_poisson"
         self.btn_validation_mode_badge = QToolButton()
-        self.btn_validation_mode_badge.setToolTip("Click to cycle validation-core preference.")
+        self.btn_validation_mode_badge.setToolTip("Click to cycle validation-core preference. DTF = detector transfer function.")
         self.btn_validation_mode_badge.clicked.connect(self._cycle_validation_mode_preference)
         core_row = QWidget()
         core_row_layout = QHBoxLayout(core_row)
         core_row_layout.setContentsMargins(0, 0, 0, 0)
         core_row_layout.setSpacing(6)
-        core_row_layout.addWidget(QLabel("Simulation core:"))
-        core_row_layout.addWidget(self.btn_simulation_mode_badge, 1)
-        core_row_layout.addWidget(QLabel("Validation core:"))
-        core_row_layout.addWidget(self.btn_validation_mode_badge, 1)
+        core_row_layout.addWidget(self.chk_pulse_train_decay)
+        core_row_layout.addSpacing(10)
+        core_row_layout.addWidget(QLabel("Sim. core:"))
+        core_row_layout.addWidget(self.btn_simulation_mode_badge, 0)
+        core_row_layout.addSpacing(8)
+        core_row_layout.addWidget(QLabel("Val. core:"))
+        core_row_layout.addWidget(self.btn_validation_mode_badge, 0)
+        core_row_layout.addStretch()
         model_form.addRow(core_row)
-        
+
+        self.model_math_panel = QTextEdit()
+        self.model_math_panel.setReadOnly(True)
+        self.model_math_panel.setVisible(False)
+        self.model_math_panel.setMinimumHeight(120)
+        model_form.addRow(self.model_math_panel)
+
         decay_layout.addWidget(model_group)
 
         # Precision Parameters Table/Matrix
         param_group = QGroupBox("Decay parameters")
         param_vbox = QVBoxLayout(param_group)
         self.param_grid = QFormLayout()
-        
+
         # Row storage for dynamic visibility
         self.param_rows = {} # name -> {label, widgets}
 
@@ -138,28 +175,33 @@ class ControlWidget(QWidget):
             h.addWidget(val, 2)
             h.addWidget(fix_chk, 1)
             h.addWidget(x_chk, 1)
-            
+
             label = QLabel(label_text)
             self.param_grid.addRow(label, h)
+            label.setToolTip(tooltip)
+            val.setToolTip(tooltip)
             self.param_rows[name] = {'label': label, 'layout': h, 'val': val, 'fix': fix_chk, 'x': x_chk}
             return val, fix_chk, x_chk
 
         self.p_tau1, self.f_tau1, self.x_tau1 = add_param_row("tau1", "Tau 1 (ns):", "Primary lifetime")
         self.p_tau2, self.f_tau2, self.x_tau2 = add_param_row("tau2", "Tau 2 (ns):", "Secondary lifetime")
         self.p_alpha, self.f_alpha, self.x_alpha = add_param_row("alpha", "Alpha 1 (frac):", "Fractional contribution")
-        self.p_bg, self.f_bg, self.x_bg = add_param_row("background", "Background:", "Constant offset")
+        self.p_bg, self.f_bg, self.x_bg = add_param_row("background", "Background (%):", "Background fraction of the total decay in percent.")
         self.p_beta, self.f_beta, self.x_beta = add_param_row("beta", "Beta (KWW):", "Stretching factor")
-        
+        self._add_param_row_helper = add_param_row
+        self.base_param_names = {"tau1", "tau2", "alpha", "background", "beta"}
+        self._last_decay_model_key = "exponential"
+
         # Single selection logic for X-axis (Radio-style)
         self.x_group = {
-            "tau1": self.x_tau1, "tau2": self.x_tau2, 
+            "tau1": self.x_tau1, "tau2": self.x_tau2,
             "alpha": self.x_alpha, "background": self.x_bg, "beta": self.x_beta
         }
         self.default_x_ranges = {
             "tau1": (0.5, 7.5),
             "tau2": (0.5, 7.5),
             "alpha": (0.0, 1.0),
-            "background": (0.0, 0.25),
+            "background": (0.0, 25.0),
         }
         self.default_x_scales = {
             "tau1": "Log",
@@ -171,13 +213,14 @@ class ControlWidget(QWidget):
         for name, chk in self.x_group.items():
             chk.setProperty("param_name", name)
             chk.clicked.connect(self._handle_x_selection)
-            
+
         param_vbox.addLayout(self.param_grid)
         decay_layout.addWidget(param_group)
 
         # Connect architecture changes to visibility
-        self.combo_decay_model.currentIndexChanged.connect(self.update_param_visibility)
+        self.combo_decay_model.currentIndexChanged.connect(self._handle_decay_model_selection_changed)
         self.spin_n_comp.valueChanged.connect(self.update_param_visibility)
+        self.refresh_decay_model_options("exponential")
         self.update_param_visibility()
 
         # F-Value Curve Resolution
@@ -256,7 +299,7 @@ class ControlWidget(QWidget):
         self.spin_ci_level.setRange(50.0, 99.999)
         self.spin_ci_level.setDecimals(3)
         self.spin_ci_level.setSingleStep(0.5)
-        self.spin_ci_level.setValue(95.0)
+        self.spin_ci_level.setValue(99.7)
         mc_toggle_row = QWidget()
         mc_toggle_layout = QHBoxLayout(mc_toggle_row)
         mc_toggle_layout.setContentsMargins(0, 0, 0, 0)
@@ -318,14 +361,14 @@ class ControlWidget(QWidget):
         self.spin_fx_steps.valueChanged.connect(self.update_gridded_mle_summary)
         self.spin_grid_fine_factor.valueChanged.connect(self.update_gridded_mle_summary)
         self.update_gridded_mle_summary()
-        
+
         decay_layout.addStretch()
         self.tabs.addTab(decay_tab, "Decay Model")
 
         # --- TAB 1: IMAGES / VALIDATION ---
         acq_tab = QWidget()
         acq_layout = QVBoxLayout(acq_tab)
-        
+
         stat_group = QGroupBox("Image Synthesis")
         stat_layout = QFormLayout(stat_group)
         self.spin_photons = QSpinBox()
@@ -415,25 +458,25 @@ class ControlWidget(QWidget):
         laser_layout.setHorizontalSpacing(6)
         laser_layout.setVerticalSpacing(6)
         laser_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
-        
+
         self.spin_period = QDoubleSpinBox(); self.spin_period.setRange(0.1, 1000); self.spin_period.setValue(12.5)
         laser_layout.addRow("Period (ns):", self.spin_period)
-        
+
         self.combo_profile = QComboBox()
         self.combo_profile.addItems(["Gaussian", "Rectangular", "Free Form", "Ideal (Dirac)"])
         laser_layout.addRow("Laser profile:", self.combo_profile)
-        
+
         self.spin_fwhm = QDoubleSpinBox(); self.spin_fwhm.setValue(0.25)
         laser_layout.addRow("FWHM / Duration (ns):", self.spin_fwhm)
-        
+
         self.spin_irf_pos = QDoubleSpinBox(); self.spin_irf_pos.setRange(-10, 1000); self.spin_irf_pos.setValue(0.0)
         self.label_irf_pos = QLabel("Position (Center):")
         laser_layout.addRow(self.label_irf_pos, self.spin_irf_pos)
-        
+
         self.spin_rise = QDoubleSpinBox(); self.spin_rise.setValue(0.05)
         self.label_rise = QLabel("Rise Time (ns):")
         laser_layout.addRow(self.label_rise, self.spin_rise)
-        
+
         self.spin_fall = QDoubleSpinBox(); self.spin_fall.setValue(0.05)
         self.label_fall = QLabel("Fall Time (ns):")
         laser_layout.addRow(self.label_fall, self.spin_fall)
@@ -469,7 +512,7 @@ class ControlWidget(QWidget):
         freeform_container_layout.addWidget(self.lbl_freeform_help, 0, Qt.AlignmentFlag.AlignLeft)
         freeform_container_layout.addWidget(self.freeform_editor)
         laser_layout.addRow(freeform_container)
-        
+
         # Burst Excitation Sub-group
         self.group_burst = QGroupBox("Burst Excitation")
         self.group_burst.setCheckable(True)
@@ -479,7 +522,7 @@ class ControlWidget(QWidget):
         burst_l = QFormLayout(self.group_burst)
         burst_l.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
         burst_l.setVerticalSpacing(4)
-        
+
         lbl_burst_period = QLabel("Pulse distance (ps):")
         lbl_burst_period.setMinimumWidth(130)
         self.spin_burst_period = QDoubleSpinBox()
@@ -487,7 +530,7 @@ class ControlWidget(QWidget):
         self.spin_burst_period.setValue(1000.0)
         self.spin_burst_period.setToolTip("Peak-to-peak distance between sub-pulses in the burst (ps).")
         burst_l.addRow(lbl_burst_period, self.spin_burst_period)
-        
+
         lbl_burst_fwhm = QLabel("Burst FWHM (ps):")
         lbl_burst_fwhm.setMinimumWidth(130)
         self.spin_burst_fwhm = QDoubleSpinBox()
@@ -495,7 +538,7 @@ class ControlWidget(QWidget):
         self.spin_burst_fwhm.setValue(100.0)
         self.spin_burst_fwhm.setToolTip("Pulse-width (FWHM) of each sub-pulse in the burst (ps).")
         burst_l.addRow(lbl_burst_fwhm, self.spin_burst_fwhm)
-        
+
         input_width = 140
         self.combo_profile.setFixedWidth(input_width)
         self.spin_period.setFixedWidth(input_width)
@@ -511,12 +554,12 @@ class ControlWidget(QWidget):
         burst_container.addWidget(self.group_burst)
         burst_container.addStretch()
         laser_layout.addRow(burst_container)
-        
+
         laser_main_layout.addWidget(laser_inner_widget)
         laser_main_layout.addStretch()
-        
+
         self.tabs.addTab(laser_tab, "Excitation")
-        
+
         # Connect IRF profile changes for the excitation-specific controls
         self.combo_profile.currentIndexChanged.connect(self._update_irf_ui)
         self.btn_freeform_mode.toggled.connect(self._on_freeform_mode_toggled)
@@ -532,7 +575,21 @@ class ControlWidget(QWidget):
         detector_group = QGroupBox("Detector Properties")
         hw_layout = QFormLayout(detector_group)
         self.chk_ideal_detector = QCheckBox("Ideal detector")
-        hw_layout.addRow(self.chk_ideal_detector)
+        self.btn_detector_math = QPushButton()
+        self.btn_detector_math.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation))
+        self.btn_detector_math.setToolTip("Show or hide the detector transfer mathematics.")
+        self.btn_detector_math.setCheckable(True)
+        self.btn_detector_math.setChecked(False)
+        self.btn_detector_math.setFixedWidth(32)
+        self.btn_detector_math.clicked.connect(lambda checked: self.detector_math_panel.setVisible(bool(checked)))
+        detector_header_row = QWidget()
+        detector_header_layout = QHBoxLayout(detector_header_row)
+        detector_header_layout.setContentsMargins(0, 0, 0, 0)
+        detector_header_layout.setSpacing(6)
+        detector_header_layout.addWidget(self.chk_ideal_detector)
+        detector_header_layout.addWidget(self.btn_detector_math, 0)
+        detector_header_layout.addStretch()
+        hw_layout.addRow(detector_header_row)
         self.spin_jitter = QSpinBox(); self.spin_jitter.setValue(150)
         self.spin_deadtime = QSpinBox(); self.spin_deadtime.setValue(45)
         self.spin_pixel_dwell = QDoubleSpinBox()
@@ -602,6 +659,11 @@ class ControlWidget(QWidget):
         ):
             widget.setFixedWidth(detector_input_width)
         self.combo_pixel_dwell_unit.setFixedWidth(70)
+        self.detector_math_panel = QTextEdit()
+        self.detector_math_panel.setReadOnly(True)
+        self.detector_math_panel.setVisible(False)
+        self.detector_math_panel.setMinimumHeight(120)
+        hw_layout.addRow(self.detector_math_panel)
         detection_layout.addWidget(detector_group)
 
         # Gating
@@ -637,20 +699,20 @@ class ControlWidget(QWidget):
         # Radio button group for gate start mode
         start_group = QGroupBox("Gate Start Alignment")
         start_layout = QVBoxLayout(start_group)
-        
+
         self.radio_gate_irf = QRadioButton("Stick to IRF (3σ decay)")
         self.radio_gate_start = QRadioButton("Stick to start (0)")
         self.radio_gate_free = QRadioButton("Free")
         self.radio_gate_start.setChecked(True)
-        
+
         self.gate_start_bg = QButtonGroup()
         self.gate_start_bg.addButton(self.radio_gate_irf)
         self.gate_start_bg.addButton(self.radio_gate_start)
         self.gate_start_bg.addButton(self.radio_gate_free)
-        
+
         start_layout.addWidget(self.radio_gate_irf)
         start_layout.addWidget(self.radio_gate_start)
-        
+
         free_layout = QHBoxLayout()
         free_layout.addWidget(self.radio_gate_free)
         self.spin_gate_first = QDoubleSpinBox()
@@ -659,7 +721,7 @@ class ControlWidget(QWidget):
         self.spin_gate_first.setEnabled(False)
         free_layout.addWidget(self.spin_gate_first)
         start_layout.addLayout(free_layout)
-        
+
         end_group = QGroupBox("Gate End Alignment")
         end_layout = QVBoxLayout(end_group)
 
@@ -756,7 +818,7 @@ class ControlWidget(QWidget):
             self.spin_gate_overlap,
         ):
             widget.setFixedWidth(detector_input_width)
-        
+
         # Connect radio buttons
         self.radio_gate_free.toggled.connect(self.spin_gate_first.setEnabled)
         self.radio_gate_end_free.toggled.connect(self.spin_gate_last.setEnabled)
@@ -1287,6 +1349,11 @@ class ControlWidget(QWidget):
             extra_widget=deadtime_rate,
             extra_label="Count rate (kcps):",
         )
+        add_sweep_option(
+            "countrate_via_dwell_hz",
+            "Count Rate via Pixel Dwell",
+            "100000, 1000000, 10000000, 100000000, 1000000000",
+        )
         add_sweep_option("multihit_capabilities", "Max events/period", "1, 2, 4, 8")
         add_sweep_option("afterpulsing_probability_pct", "Afterpulsing Probability (%)", "0, 0.5, 1, 2, 5")
         add_sweep_option("dark_count_rate_cps", "Detector Dark Count Rate (cps)", "0, 100, 1000, 10000, 100000")
@@ -1311,6 +1378,7 @@ class ControlWidget(QWidget):
         )
 
         self._load_batch_sweep_defaults_into_ui(self.batch_sweep_defaults)
+        self.sweep_options["countrate_via_dwell_hz"]["radio"].toggled.connect(self._sync_countrate_sweep_defaults)
         self.btn_sweep_load.clicked.connect(self._load_batch_sweep_defaults_from_store)
         self.btn_sweep_save.clicked.connect(self._save_batch_sweep_defaults_to_store)
         self.btn_sweep_import.clicked.connect(self._import_batch_sweep_defaults)
@@ -1333,25 +1401,25 @@ class ControlWidget(QWidget):
         tabs_scroll.setWidgetResizable(True)
         tabs_scroll.setWidget(tabs_container)
         layout.addWidget(tabs_scroll, 1)
-        
+
         # --- UNIFIED ACTION AREA ---
         action_layout = QHBoxLayout()
         btn_height = 40
-        
+
         self.btn_manage_inst = QPushButton("🔬 Profiles")
         self.btn_manage_inst.setMinimumHeight(btn_height)
         self.btn_manage_inst.setStyleSheet(
             "QPushButton { background-color: #374151; color: white; font-weight: bold; }"
             "QPushButton:disabled { background-color: #1f2937; color: #6b7280; }"
         )
-        
+
         self.btn_precision = QPushButton("Run Analysis")
         self.btn_precision.setStyleSheet(
             "QPushButton { background-color: #1e3a8a; color: white; font-weight: bold; }"
             "QPushButton:disabled { background-color: #1f2937; color: #6b7280; }"
         )
         self.btn_precision.setMinimumHeight(btn_height)
-        
+
         self.btn_export = QPushButton("SAVE AS")
         self.btn_export.setStyleSheet("background-color: #334155; color: white; font-weight: bold;")
         self.btn_export.setMinimumHeight(btn_height)
@@ -1363,18 +1431,18 @@ class ControlWidget(QWidget):
         )
         self.btn_simulate.setMinimumHeight(btn_height)
         self.btn_simulate.setMinimumWidth(90)
-        
+
         self.btn_interrupt = QPushButton("🛑")
         self.btn_interrupt.setFixedWidth(40)
         self.btn_interrupt.setMinimumHeight(btn_height)
         self.btn_interrupt.setStyleSheet("background-color: #7f1d1d; color: white;")
-        
+
         action_layout.addWidget(self.btn_manage_inst, 1)
         action_layout.addWidget(self.btn_precision, 2)
         action_layout.addWidget(self.btn_interrupt, 0)
         action_layout.addWidget(self.btn_export, 1)
         action_layout.addWidget(self.btn_simulate, 1)
-        
+
         layout.addLayout(action_layout)
         self._apply_tooltips()
         self.set_theme("dark")
@@ -1404,6 +1472,12 @@ class ControlWidget(QWidget):
         self.spin_dark_count_rate.valueChanged.connect(self._sync_ideal_detector_checkbox_from_values)
         self.chk_multihit.toggled.connect(self._sync_ideal_detector_checkbox_from_values)
         self.spin_max_events_per_period.valueChanged.connect(self._sync_ideal_detector_checkbox_from_values)
+        self.spin_jitter.valueChanged.connect(self._update_detector_math_panel)
+        self.spin_deadtime.valueChanged.connect(self._update_detector_math_panel)
+        self.spin_afterpulsing.valueChanged.connect(self._update_detector_math_panel)
+        self.spin_dark_count_rate.valueChanged.connect(self._update_detector_math_panel)
+        self.chk_multihit.toggled.connect(self._update_detector_math_panel)
+        self.chk_ideal_detector.toggled.connect(self._update_detector_math_panel)
         self.spin_gate_rise.valueChanged.connect(self._sync_ideal_gates_checkbox_from_values)
         self.spin_gate_fall.valueChanged.connect(self._sync_ideal_gates_checkbox_from_values)
         self.radio_overlap_jitter.toggled.connect(self._sync_ideal_gates_checkbox_from_values)
@@ -1413,9 +1487,13 @@ class ControlWidget(QWidget):
         self.radio_overlap_effect_exclusive.toggled.connect(self._sync_ideal_gates_checkbox_from_values)
         self.radio_overlap_effect_duplicate.toggled.connect(self._sync_ideal_gates_checkbox_from_values)
         self.radio_overlap_effect_independent.toggled.connect(self._sync_ideal_gates_checkbox_from_values)
+        self.spin_num_gates.valueChanged.connect(self._update_detector_math_panel)
+        self.chk_ideal_gates.toggled.connect(self._update_detector_math_panel)
         self._sync_gate_controls()
         self._sync_ideal_detector_checkbox_from_values()
         self._sync_ideal_gates_checkbox_from_values()
+        self._update_model_math_panel()
+        self._update_detector_math_panel()
         self._update_simulation_mode_badge(
             {
                 "preference": self.simulation_mode_preference,
@@ -1602,7 +1680,7 @@ class ControlWidget(QWidget):
             # If user tries to uncheck the ONLY checked box, turn it back on
             sender.setChecked(True)
             return
-        
+
         # Uncheck all others
         selected_name = sender.property("param_name")
         for name, chk in self.x_group.items():
@@ -1612,26 +1690,134 @@ class ControlWidget(QWidget):
                 self.param_rows[name]['fix'].setChecked(name != selected_name)
         self._apply_default_x_range(selected_name)
         self._apply_default_x_scale(selected_name)
+        self._update_model_math_panel()
 
     def get_selected_decay_model_key(self):
-        text = self.combo_decay_model.currentText().strip().lower()
-        if text == "add custom model...":
-            return "exponential"
-        if text == "custom":
-            return "custom"
-        return text
+        key = self.combo_decay_model.currentData()
+        if isinstance(key, str) and key and key != "__add_custom__":
+            return key
+        return str(getattr(self, "_last_decay_model_key", "exponential") or "exponential")
+
+    def refresh_decay_model_options(self, selected_key=None):
+        current_key = str(selected_key or self.get_selected_decay_model_key() or "exponential")
+        self.combo_decay_model.blockSignals(True)
+        self.combo_decay_model.clear()
+        for definition in self.decay_model_store.all_models():
+            self.combo_decay_model.addItem(str(definition.get("name", definition.get("key", ""))), str(definition.get("key", "")))
+        self.combo_decay_model.addItem("Add custom model...", "__add_custom__")
+        match_index = self.combo_decay_model.findData(current_key)
+        if match_index < 0:
+            match_index = self.combo_decay_model.findData("exponential")
+        if match_index < 0:
+            match_index = 0
+        self.combo_decay_model.setCurrentIndex(match_index)
+        self.combo_decay_model.blockSignals(False)
+        self._last_decay_model_key = self.get_selected_decay_model_key()
+        self.update_param_visibility()
+
+    def _runtime_cfg_for_defs(self):
+        try:
+            from backend.models import PhysicsConfig
+        except ImportError:
+            from python.backend.models import PhysicsConfig
+
+        cfg = PhysicsConfig()
+        cfg.decay_model = self.get_selected_decay_model_key()
+        cfg.n_components = int(self.spin_n_comp.value())
+        if "tau1" in self.param_rows:
+            cfg.taus[0] = float(self.param_rows["tau1"]["val"].value())
+        if "tau2" in self.param_rows:
+            cfg.taus[1] = float(self.param_rows["tau2"]["val"].value())
+        if "alpha" in self.param_rows:
+            cfg.amplitudes[0] = float(self.param_rows["alpha"]["val"].value())
+            if len(cfg.amplitudes) > 1:
+                cfg.amplitudes[1] = max(0.0, 1.0 - cfg.amplitudes[0])
+        if "background" in self.param_rows:
+            cfg.background_level = float(self.param_rows["background"]["val"].value()) / 100.0
+        if "beta" in self.param_rows:
+            cfg.beta = float(self.param_rows["beta"]["val"].value())
+        params = {}
+        for name, row in self.param_rows.items():
+            if name in self.base_param_names:
+                continue
+            params[name] = float(row["val"].value())
+        cfg.custom_model_params = params
+        return cfg
+
+    def _runtime_param_meta(self, param_name):
+        cfg = self._runtime_cfg_for_defs()
+        for item in self.decay_model_store.runtime_param_defs(cfg):
+            if str(item.get("name", "")) == str(param_name):
+                return item
+        return {}
+
+    def _ensure_param_row(self, name, definition):
+        row = self.param_rows.get(name)
+        if row is None:
+            unit = str(definition.get("unit", "") or "").strip()
+            label_text = str(definition.get("label", name.title()))
+            if unit:
+                label_text = f"{label_text} ({unit}):"
+            else:
+                label_text = f"{label_text}:"
+            tooltip = str(definition.get("description", "") or label_text)
+            val, fix_chk, x_chk = self._add_param_row_helper(name, label_text, tooltip)
+            x_chk.setProperty("param_name", name)
+            x_chk.clicked.connect(self._handle_x_selection)
+            self.x_group[name] = x_chk
+            row = self.param_rows[name]
+            row["val"].setValue(float(definition.get("default", 0.0) or 0.0))
+        return row
+
+    def _remove_dynamic_param_row(self, name):
+        row = self.param_rows.pop(name, None)
+        if row is None:
+            return
+        if name in self.x_group:
+            self.x_group.pop(name, None)
+        label = row["label"]
+        self.param_grid.removeWidget(label)
+        label.deleteLater()
+        for idx in range(row["layout"].count()):
+            widget = row["layout"].itemAt(idx).widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _handle_decay_model_selection_changed(self, *_args):
+        key = self.combo_decay_model.currentData()
+        if key == "__add_custom__":
+            revert_index = self.combo_decay_model.findData(getattr(self, "_last_decay_model_key", "exponential"))
+            if revert_index >= 0:
+                self.combo_decay_model.blockSignals(True)
+                self.combo_decay_model.setCurrentIndex(revert_index)
+                self.combo_decay_model.blockSignals(False)
+            self.custom_model_editor_requested.emit()
+            return
+        self._last_decay_model_key = self.get_selected_decay_model_key()
+        self.update_param_visibility()
 
     def _apply_default_x_range(self, param_name):
-        if param_name not in self.default_x_ranges:
-            return
-        min_val, max_val = self.default_x_ranges[param_name]
+        meta = self._runtime_param_meta(param_name)
+        min_val = meta.get("sweep_min")
+        max_val = meta.get("sweep_max")
+        if min_val is None or max_val is None:
+            if param_name not in self.default_x_ranges:
+                return
+            min_val, max_val = self.default_x_ranges[param_name]
         self.spin_fx_min.setValue(min_val)
         self.spin_fx_max.setValue(max_val)
 
     def _apply_default_x_scale(self, param_name):
-        if param_name not in self.default_x_scales:
+        meta = self._runtime_param_meta(param_name)
+        scale = str(meta.get("scale", "") or "").lower()
+        if scale == "log":
+            self.combo_fx_scale.setCurrentText("Log")
             return
-        self.combo_fx_scale.setCurrentText(self.default_x_scales[param_name])
+        if scale == "linear":
+            self.combo_fx_scale.setCurrentText("Linear")
+            return
+        if param_name in self.default_x_scales:
+            self.combo_fx_scale.setCurrentText(self.default_x_scales[param_name])
 
     def _apply_tooltips(self):
         self.tabs.setTabToolTip(0, "Decay model, precision target, Monte Carlo validation, and bootstrap settings.")
@@ -1701,9 +1887,9 @@ class ControlWidget(QWidget):
             self.spin_gate_last: "Manual end time for the last gate when Free is selected.",
             self.radio_gate_collection_hist: "Histogram-style gating: photons are binned into gates without being discarded.",
             self.radio_gate_collection_seq: "Sequential gating: each gate is acquired in a separate pass and photons outside the active gate are lost in that pass.",
-            self.radio_f_basis_period: "Evaluate F against all photons that fall inside the acquisition period, including photons lost because the gates do not collect them.",
-            self.radio_f_basis_all: "Evaluate F against all photons that could be detected, including photons lost because of both gate losses and a finite acquisition window.",
-            self.radio_f_basis_collected: "Evaluate F using only the photons actually collected by the measurement gates, disregarding photon losses.",
+            self.radio_f_basis_period: "Estimate precision from the photons actually collected, then report F against the photons that fell inside the acquisition period before gate or pile-up losses.",
+            self.radio_f_basis_all: "Estimate precision from the photons actually collected, then report F against the full available photon budget, including photons outside the acquisition period.",
+            self.radio_f_basis_collected: "Estimate and report F on the collected-photon basis only, with no loss rescaling.",
             self.radio_overlap_jitter: "Allow only the natural overlap caused by jittered or skewed gate tails.",
             self.radio_overlap_never: "Do not allow gate overlap. Overlapping tails are clipped and can create photon-loss gaps between gates.",
             self.radio_overlap_yes: "Allow user-specified geometric overlap between adjacent gates.",
@@ -1776,40 +1962,109 @@ class ControlWidget(QWidget):
 
     def update_param_visibility(self):
         """Hides parameters not used in current model architecture."""
-        model = self.combo_decay_model.currentText().lower()
-        n = self.spin_n_comp.value()
-        
-        # Mapping parameter names to visibility rules
-        # tau1: always
-        # tau2: if n > 1
-        # alpha: if n > 1
-        # bg: always
-        # beta: if model == 'stretched'
-        
-        rules = {
-            "tau1": True,
-            "tau2": n > 1,
-            "alpha": n > 1,
-            "background": True,
-            "beta": model == "stretched"
-        }
-        
-        for name, visible in rules.items():
+        cfg = self._runtime_cfg_for_defs()
+        model = self.decay_model_store.get(cfg.decay_model)
+        supports_components = bool(model.get("supports_components", False))
+        if not supports_components:
+            self.spin_n_comp.blockSignals(True)
+            self.spin_n_comp.setValue(1)
+            self.spin_n_comp.blockSignals(False)
+            cfg.n_components = 1
+        self.spin_n_comp.setEnabled(supports_components)
+
+        runtime_defs = self.decay_model_store.runtime_param_defs(cfg)
+        desired_names = [str(item.get("name", "")) for item in runtime_defs]
+        for name in list(self.param_rows.keys()):
+            if name not in desired_names and name not in self.base_param_names:
+                self._remove_dynamic_param_row(name)
+
+        for definition in runtime_defs:
+            name = str(definition.get("name", ""))
+            row = self._ensure_param_row(name, definition)
+            unit = str(definition.get("unit", "") or "").strip()
+            label_text = str(definition.get("label", name.title()))
+            row["label"].setText(f"{label_text} ({unit}):" if unit else f"{label_text}:")
+            tooltip = str(definition.get("description", "") or label_text)
+            row["label"].setToolTip(tooltip)
+            row["val"].setToolTip(tooltip)
+            lower = definition.get("bounds_min")
+            upper = definition.get("bounds_max")
+            row["val"].setRange(float(lower if lower is not None else 0.0), float(upper if upper is not None else 1000.0))
+            row["val"].setVisible(True)
+            row["label"].setVisible(True)
+            for i in range(row["layout"].count()):
+                w = row["layout"].itemAt(i).widget()
+                if w:
+                    w.setVisible(True)
+
+        for name in list(self.param_rows.keys()):
+            if name in desired_names:
+                continue
             row = self.param_rows[name]
-            row['label'].setVisible(visible)
-            # Find the actual row in the form layout
-            # Widgets in the layout are the label and the QHBoxLayout container
-            # We must also hide the individual widgets in the layout
-            for i in range(row['layout'].count()):
-                w = row['layout'].itemAt(i).widget()
-                if w: w.setVisible(visible)
-            
-            # If a parameter becomes invisible but was the X-axis, 
-            # we must move X-axis to a visible one
-            if not visible and row['x'].isChecked():
-                row['x'].setChecked(False)
-        
+            row["label"].setVisible(False)
+            for i in range(row["layout"].count()):
+                w = row["layout"].itemAt(i).widget()
+                if w:
+                    w.setVisible(False)
+            if row["x"].isChecked():
+                row["x"].setChecked(False)
         self.enforce_single_x_selection()
+        self._update_model_math_panel()
+        self._update_detector_math_panel()
+
+    def _update_model_math_panel(self):
+        if not hasattr(self, "model_math_panel"):
+            return
+        model_key = self.get_selected_decay_model_key()
+        definition = self.decay_model_store.get(model_key)
+        equation = str(definition.get("equation_html") or definition.get("expression") or "n/a")
+        description = str(definition.get("description_specialist") or definition.get("description_plain") or "")
+        params = []
+        for item in self.decay_model_store.runtime_param_defs(self._runtime_cfg_for_defs()):
+            name = str(item.get("name", ""))
+            if name not in self.param_rows:
+                continue
+            params.append(f"{item.get('label', name)} = {self.param_rows[name]['val'].value():g} {item.get('unit', '')}".strip())
+        model_name = str(definition.get("name", model_key))
+        self.model_math_panel.setHtml(
+            f"<b>{model_name}</b><br>"
+            f"<span style='color:#93c5fd;'>I(t)</span> = <code>{equation}</code><br><br>"
+            f"{description}<br><br>"
+            f"<b>Active parameters</b><br>{'<br>'.join(params) if params else 'None'}"
+        )
+
+    def _update_detector_math_panel(self):
+        if not hasattr(self, "detector_math_panel") or not hasattr(self, "chk_ideal_detector"):
+            return
+        ideal_detector = bool(self.chk_ideal_detector.isChecked())
+        ideal_gates = bool(self.chk_ideal_gates.isChecked())
+        deadtime_ns = float(self.spin_deadtime.value())
+        jitter_ps = float(self.spin_jitter.value())
+        afterpulse_pct = float(self.spin_afterpulsing.value())
+        dark_cps = float(self.spin_dark_count_rate.value())
+        multihit = bool(self.chk_multihit.isChecked())
+        gate_count = int(self.spin_num_gates.value())
+        transfer_terms = [
+            "<b>Detector transfer</b>",
+            "p_det(t) ∝ G(t) · [p_latent(t) * T_det(t)]",
+            f"Ideal detector: {'yes' if ideal_detector else 'no'}",
+            f"Ideal gates: {'yes' if ideal_gates else 'no'}",
+            f"Gate count: {gate_count}",
+            f"Timing jitter σ_t = {jitter_ps:g} ps",
+            f"Dead time t_d = {deadtime_ns:g} ns",
+            f"Multihit enabled: {'yes' if multihit else 'no'}",
+            f"Afterpulsing = {afterpulse_pct:g}%",
+            f"Dark count rate = {dark_cps:g} cps",
+        ]
+        if ideal_gates:
+            transfer_terms.append("G(t) is ideal contiguous binning with no overlap and no wraparound.")
+        else:
+            transfer_terms.append("G(t) includes finite rise/fall, overlap rules, and optional wraparound.")
+        if ideal_detector:
+            transfer_terms.append("T_det(t)=1 except for gating; detector-event distortions are disabled.")
+        else:
+            transfer_terms.append("T_det(t) includes timing blur, dead time, multihit constraints, afterpulsing, and dark counts.")
+        self.detector_math_panel.setHtml("<br>".join(transfer_terms))
 
     def _update_detection_algorithm_settings_tooltip(self):
         algorithm = self.combo_detection_algorithm.currentText().lower()
@@ -1838,6 +2093,87 @@ class ControlWidget(QWidget):
                 f"Max F^-2 loss: {float(self.detection_opt_fc_max_f_loss_pct):g}%"
             )
         self.btn_detection_algorithm_settings.setToolTip(text)
+
+    def _normalise_latex_expression(self, expression: str) -> str:
+        text = str(expression or "").strip()
+        if not text:
+            return r"\mathrm{n/a}"
+        text = text.replace("\\\\", "\\")
+        text = text.replace("⋅", r"\cdot ")
+        text = re.sub(r"(?<!\\)alpha", r"\\alpha", text)
+        text = re.sub(r"(?<!\\)beta", r"\\beta", text)
+        text = re.sub(r"(?<!\\)tau", r"\\tau", text)
+        return text
+
+    def _render_latex_block(self, latex: str, color: str) -> str:
+        uri = self._latex_to_data_uri(latex, color=color)
+        if uri:
+            return f"<div style='margin:4px 0;'><img src='{uri}'></div>"
+        return f"<pre style='margin:4px 0; color:{color};'>{html.escape(latex)}</pre>"
+
+    def _latex_to_data_uri(self, latex: str, color: str = "#e5e7eb", fontsize: float = 14.0) -> str:
+        key = (latex, color, float(fontsize))
+        cached = self._math_render_cache.get(key)
+        if cached:
+            return cached
+        try:
+            fig = Figure(figsize=(0.01, 0.01), dpi=200)
+            fig.patch.set_alpha(0.0)
+            canvas = FigureCanvasAgg(fig)
+            text_artist = fig.text(0.0, 0.0, f"${latex}$", color=color, fontsize=fontsize)
+            canvas.draw()
+            bbox = text_artist.get_window_extent(renderer=canvas.get_renderer()).expanded(1.02, 1.12)
+            fig.set_size_inches(max(bbox.width / fig.dpi, 0.01), max(bbox.height / fig.dpi, 0.01))
+            text_artist.set_position((0.0, 0.0))
+            canvas.draw()
+            buffer = BytesIO()
+            fig.savefig(buffer, format="png", dpi=200, transparent=True, bbox_inches="tight", pad_inches=0.02)
+            data = base64.b64encode(buffer.getvalue()).decode("ascii")
+            uri = f"data:image/png;base64,{data}"
+            self._math_render_cache[key] = uri
+            return uri
+        except Exception:
+            return ""
+
+    def _update_model_math_panel(self):
+        if not hasattr(self, "model_math_panel"):
+            return
+        model_key = self.get_selected_decay_model_key()
+        definition = self.decay_model_store.get(model_key)
+        equation = str(definition.get("equation_html") or definition.get("expression") or "n/a").strip()
+        description = str(definition.get("description_specialist") or definition.get("description_plain") or "")
+        model_name = str(definition.get("name", model_key))
+        self.model_math_panel.setHtml(
+            "<div style='line-height:1.45;'>"
+            f"<div style='font-weight:700; color:#ffffff; margin-bottom:6px;'>{html.escape(model_name)}</div>"
+            f"{self._render_latex_block(self._normalise_latex_expression(equation), '#dbeafe')}"
+            f"<div style='margin-top:8px; color:#cbd5e1;'>{html.escape(description)}</div>"
+            "</div>"
+        )
+
+    def _update_detector_math_panel(self):
+        if not hasattr(self, "detector_math_panel") or not hasattr(self, "chk_ideal_detector"):
+            return
+        ideal_detector = bool(self.chk_ideal_detector.isChecked())
+        ideal_gates = bool(self.chk_ideal_gates.isChecked())
+        multihit = bool(self.chk_multihit.isChecked())
+        eq_main = r"p_{\mathrm{det}}(t)\propto G(t)\,\left[p_{\mathrm{latent}}(t)\ast T_{\mathrm{det}}(t)\right]"
+        eq_gates = r"G(t)=\sum_k \mathbf{1}_{[t_k,t_{k+1})}(t)" if ideal_gates else r"G(t)\ \mathrm{includes\ rise/fall,\ overlap,\ and\ optional\ wraparound}"
+        eq_transfer = r"T_{\mathrm{det}}(t)=1" if ideal_detector else r"T_{\mathrm{det}}(t)\ \mathrm{encodes\ jitter,\ dead\ time,\ multihit,\ afterpulsing,\ and\ dark\ counts}"
+        notes = [
+            "Ideal gates use contiguous non-overlapping bins over the acquisition window." if ideal_gates else "Non-ideal gates include the configured edge transitions and overlap rules.",
+            "Ideal detector disables detector-event distortions beyond gating." if ideal_detector else "Detector transfer function is active. DTF models detector-event distortions applied to the latent decay.",
+            "Multihit collection is enabled." if multihit else "Single-hit collection is enforced per excitation period.",
+        ]
+        self.detector_math_panel.setHtml(
+            "<div style='line-height:1.45;'>"
+            "<div style='font-weight:700; color:#ffffff; margin-bottom:6px;'>Detector transfer</div>"
+            f"{self._render_latex_block(eq_main, '#dbeafe')}"
+            f"{self._render_latex_block(eq_gates, '#cbd5e1')}"
+            f"{self._render_latex_block(eq_transfer, '#cbd5e1')}"
+            f"<div style='margin-top:8px; color:#cbd5e1;'>{'<br>'.join(html.escape(item) for item in notes)}</div>"
+            "</div>"
+        )
 
     def _open_detection_algorithm_settings(self):
         dialog = QDialog(self)
@@ -2342,6 +2678,50 @@ class ControlWidget(QWidget):
             tooltip += "\nDetector event effects are being approximated by the Ideal Poisson core."
         button.setToolTip(tooltip)
 
+    def _set_core_badge(self, button, status):
+        preference = str((status or {}).get("preference", "auto")).lower()
+        effective = str((status or {}).get("effective_mode", "ideal_poisson")).lower()
+        required = bool((status or {}).get("requires_event_driven", False))
+        approximated = bool((status or {}).get("approximated_event_effects", False))
+        reason = str((status or {}).get("reason", ""))
+
+        if effective == "event_driven":
+            text = "Event-driven"
+            bg = "#d946ef"
+        elif approximated and effective == "ideal_poisson":
+            text = "Poisson (+DTF)"
+            bg = "#f59e0b"
+        else:
+            text = "Poisson"
+            bg = "#16a34a"
+
+        button.setText(text)
+        button.setStyleSheet(
+            f"QToolButton {{ background-color: {bg}; color: white; font-weight: bold; border-radius: 6px; padding: 4px 8px; }}"
+        )
+
+        pref_label = {
+            "auto": "auto",
+            "ideal_poisson": "Poisson",
+            "event_driven": "event-driven",
+        }.get(preference, preference)
+        eff_label = {
+            "ideal_poisson": "Poisson",
+            "event_driven": "event-driven",
+        }.get(effective, effective)
+        lines = [
+            f"Effective core: {eff_label}",
+            f"Preference: {pref_label}",
+        ]
+        if approximated and effective == "ideal_poisson":
+            lines.append("DTF = detector transfer function.")
+            lines.append("Detector event effects are being approximated by the Poisson core.")
+        if required and preference == "auto":
+            lines.append("The current detector configuration requires the event-driven core.")
+        if reason:
+            lines.append(f"Reason: {reason}")
+        button.setToolTip("\n".join(lines))
+
     def _update_simulation_mode_badge(self, status):
         self._set_core_badge(self.btn_simulation_mode_badge, status)
         validation_pref = str(getattr(self, "validation_mode_preference", "ideal_poisson")).lower()
@@ -2450,7 +2830,7 @@ class ControlWidget(QWidget):
             self.spin_fwhm.blockSignals(False)
         elif self.spin_fwhm.value() <= 0.0 and not is_free_form:
             self.spin_fwhm.setValue(0.25)
-        
+
         if is_rect or is_free_form:
             self.label_irf_pos.setText("Position (Start ns):")
         else:
@@ -2463,23 +2843,11 @@ class ControlWidget(QWidget):
 
     def update_gridded_mle_summary(self):
         param_name = self.get_selected_x_param()
-        unit_map = {
-            "tau1": "ns",
-            "tau2": "ns",
-            "alpha": "fraction",
-            "background": "counts",
-            "beta": "",
-        }
-        label_map = {
-            "tau1": "Tau 1",
-            "tau2": "Tau 2",
-            "alpha": "Alpha 1",
-            "background": "Background",
-            "beta": "Beta",
-        }
-        units = unit_map.get(param_name, "")
+        meta = self._runtime_param_meta(param_name)
+        units = str(meta.get("unit", "") or "")
         unit_suffix = f" ({units})" if units else ""
-        self.lbl_fx_min.setText(f"Min {label_map.get(param_name, param_name.title())}{unit_suffix}:")
+        label = str(meta.get("label", param_name.title()) or param_name.title())
+        self.lbl_fx_min.setText(f"Min {label}{unit_suffix}:")
         self.lbl_grid_mle_min.setText(f"Grid MLE min{unit_suffix}:")
         use_log_grid = (
             self.combo_fx_scale.currentText().lower() == "log"
@@ -2747,6 +3115,10 @@ class ControlWidget(QWidget):
             self.sweep_detail_stack.setCurrentWidget(active_spec["detail"])
         self.sweep_detail_group.adjustSize()
 
+    def _sync_countrate_sweep_defaults(self, checked):
+        if checked:
+            self.spin_precision_photons.setValue(1000)
+
     def get_selected_sweep_param(self):
         for key, spec in self.sweep_options.items():
             if spec["radio"].isChecked():
@@ -2774,12 +3146,7 @@ class ControlWidget(QWidget):
         self.blockSignals(True)
         try:
             # Decay model / sweep controls
-            decay_model_map = {
-                "exponential": "Exponential",
-                "stretched": "Stretched",
-                "custom": "Custom",
-            }
-            self.combo_decay_model.setCurrentText(decay_model_map.get(cfg.decay_model, "Exponential"))
+            self.refresh_decay_model_options(getattr(cfg, "decay_model", "exponential"))
             self.spin_n_comp.setValue(cfg.n_components)
             self.chk_pulse_train_decay.setChecked(cfg.b_decay_wrapping)
             self.spin_fx_min.setValue(cfg.f_x_min)
@@ -2794,7 +3161,7 @@ class ControlWidget(QWidget):
             self.spin_mc_repeats.setValue(cfg.precision_mc_repeats)
             self.spin_accuracy_pvalue.setValue(getattr(cfg, "precision_accuracy_pvalue", 0.0001))
             self.spin_bootstrap_samples.setValue(getattr(cfg, "precision_bootstrap_samples", 2000))
-            self.spin_ci_level.setValue(getattr(cfg, "precision_ci_level", 95.0))
+            self.spin_ci_level.setValue(getattr(cfg, "precision_ci_level", 99.7))
 
             # Laser / Physics
             self.spin_period.setValue(cfg.period)
@@ -2816,7 +3183,7 @@ class ControlWidget(QWidget):
             else:
                 self.freeform_editor.reset_rectangular(cfg.irf_position, cfg.irf_fwhm, cfg.period)
             self.btn_freeform_mode.setChecked(bool(getattr(cfg, "irf_freeform_edit_mode", True)))
-            
+
             # Burst Excitation
             self.group_burst.setChecked(cfg.burst_enabled)
             self.spin_burst_period.setValue(cfg.burst_sub_period * 1000.0) # ns to ps
@@ -2824,13 +3191,14 @@ class ControlWidget(QWidget):
 
             # Model params (dynamic rows)
             p_map = {"tau1": cfg.taus[0], "tau2": cfg.taus[1] if len(cfg.taus)>1 else 1.0,
-                    "alpha": cfg.amplitudes[0], "background": cfg.background_level, "beta": cfg.beta}
+                    "alpha": cfg.amplitudes[0], "background": cfg.background_level * 100.0, "beta": cfg.beta}
+            p_map.update(dict(getattr(cfg, "custom_model_params", {}) or {}))
             for name, val in p_map.items():
                 if name in self.param_rows:
                     self.param_rows[name]['val'].setValue(val)
                     self.param_rows[name]['fix'].setChecked(cfg.fixed_params.get(name, False))
                     self.param_rows[name]['x'].setChecked(cfg.f_x_param == name)
-            
+
             # Gating alignment
             gate_type_map = {"equal": "Equal", "custom": "Custom"}
             self.spin_num_gates.setValue(max(2, len(cfg.gate_edges) - 1))
@@ -3009,7 +3377,7 @@ class ControlWidget(QWidget):
                 self.sweep_options["gate_edge_one_sharp_ps"]["extra"].setCurrentText(gate_mode)
             if "burst_edge_one_sharp_ns" in self.sweep_options and self.sweep_options["burst_edge_one_sharp_ns"]["extra"] is not None:
                 self.sweep_options["burst_edge_one_sharp_ns"]["extra"].setCurrentText(burst_mode)
-            
+
         finally:
             self._update_irf_ui()
             self.update_param_visibility()
@@ -3021,6 +3389,8 @@ class ControlWidget(QWidget):
             self._sync_ideal_gates_checkbox_from_values()
             self._sync_optimization_ui()
             self._sync_background_source_controls()
+            self._update_model_math_panel()
+            self._update_detector_math_panel()
             self._update_sweep_inputs_enabled()
             self.blockSignals(False)
 
@@ -3047,7 +3417,7 @@ class ControlWidget(QWidget):
         self.optimization_best_f_plot.getPlotItem().getViewBox().setBorder(pg.mkPen(grid))
         self._style_optimization_history_controls()
         self._update_optimization_history_curve_styles()
-        
+
         # Reset tab and group color, will be re-applied if active in set_optimization_mode_active
         default_color = QColor(text)
         self.tabs.tabBar().setTabTextColor(4, default_color)
@@ -3071,7 +3441,7 @@ class ControlWidget(QWidget):
             self.lbl_optimization_banner.setStyleSheet(
                 "padding: 8px 10px; border-radius: 8px; background: #334155; color: white; font-weight: bold;"
             )
-        
+
         # Update tab color and groupbox titles to red if active
         dark = self.current_theme == "dark"
         if active:

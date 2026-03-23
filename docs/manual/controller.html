@@ -120,7 +120,7 @@
           <tr><td><code>Gate Collection</code></td><td>Histogram bin or Sequential.</td><td>Sequential still exists as an under-development mode and changes throughput semantics.</td></tr>
           <tr><td><code>Gate Overlap</code> / <code>Overlap Effect</code></td><td>Sets geometric overlap and the statistical interpretation of overlapping gates.</td><td>Changes how photons are shared, clipped, or duplicated across overlapping gates.</td></tr>
           <tr><td><code>Wrap around</code></td><td>Wrap gate tails around the period.</td><td>Separate from decay wrapping; this affects gates, not the decay PDF.</td></tr>
-          <tr><td><code>Compute F-value on</code></td><td>Choose <code>All in acquisition period</code>, <code>All</code>, or <code>Only collected (disregard losses)</code>.</td><td>Defines whether missed photons penalise the Fisher metric.</td></tr>
+          <tr><td><code>Compute F-value on</code></td><td>Choose <code>All in acquisition period</code>, <code>All</code>, or <code>Only collected (disregard losses)</code>.</td><td>Keeps the collected-photon estimator fixed, but changes which photon budget the reported <code>F</code> is normalised against.</td></tr>
         </table>
       </section>
 
@@ -128,7 +128,7 @@
         <h2>Fisher Information pane</h2>
         <div class="plain-box">
           <h3>Plain English</h3>
-          <p>This pane tells the Digital Twin how to calculate precision curves. It defines the photon budget, Monte Carlo validation settings, confidence intervals, and how missed photons should influence the reported <code>F</code> value.</p>
+          <p>This pane tells the Digital Twin how to calculate precision curves. It defines the photon budget, Monte Carlo validation settings, confidence intervals, and which photon budget the reported <code>F</code> value is referenced to.</p>
         </div>
         <div class="specialist-box">
           <h3>For specialists</h3>
@@ -141,7 +141,7 @@
           <tr><td><code>Evaluate CI</code> + <code>CI Level</code></td><td>Computes bootstrap confidence intervals for Monte Carlo summaries.</td><td>Lets users judge uncertainty in the validation layer rather than only reading point estimates.</td></tr>
           <tr><td><code>Bootstrap resamples</code></td><td>Sets bootstrap sample count.</td><td>Higher values stabilise CIs at the cost of time.</td></tr>
           <tr><td><code>Estimator accuracy p-value</code></td><td>Threshold used when labelling MC compatibility.</td><td>Controls how strictly estimator bias is called out in the UI and exports.</td></tr>
-          <tr><td><code>Compute F-value on</code></td><td>Chooses how missed photons should affect the Fisher metric.</td><td>Changes the interpretation of <code>F</code> and <code>F^-2</code>, especially for delayed or lossy gate designs.</td></tr>
+          <tr><td><code>Compute F-value on</code></td><td>Chooses whether <code>F</code> is referenced to collected photons, photons in the acquisition period, or the full available photon budget.</td><td>Changes the reported normalization of <code>F</code> and <code>F^-2</code> without changing the underlying collected-photon estimator.</td></tr>
         </table>
       </section>
 

@@ -126,22 +126,42 @@ class TwinEngine:
 
     def build_precision_x_range(self) -> np.ndarray:
         cfg = self.config
+        lower_bound, upper_bound = self._get_cfg_param_bounds(getattr(cfg, "f_x_param", "tau1"))
+        x_min = float(cfg.f_x_min)
+        x_max = float(cfg.f_x_max)
+        if lower_bound is not None:
+            x_min = max(x_min, float(lower_bound))
+            x_max = max(x_max, float(lower_bound))
+        if upper_bound is not None:
+            x_min = min(x_min, float(upper_bound))
+            x_max = min(x_max, float(upper_bound))
+        if x_max < x_min:
+            x_min, x_max = x_max, x_min
         scale = str(cfg.f_x_scale).lower()
         n_steps = max(int(cfg.f_x_steps), 2)
         if scale == "log":
-            lo = max(float(cfg.f_x_min), 1e-6)
-            hi = max(float(cfg.f_x_max), lo * 1.0001)
+            lo = max(x_min, 1e-6)
+            hi = max(x_max, lo * 1.0001)
             return np.logspace(np.log10(lo), np.log10(hi), n_steps)
         if scale == "linear":
-            return np.linspace(float(cfg.f_x_min), float(cfg.f_x_max), n_steps)
-        lo = max(float(cfg.f_x_min), 1e-6)
-        hi = max(float(cfg.f_x_max), lo * 1.0001)
+            return np.linspace(x_min, x_max, n_steps)
+        lo = max(x_min, 1e-6)
+        hi = max(x_max, lo * 1.0001)
         return np.geomspace(lo, hi, n_steps)
 
     def _sync_grid_definition_from_precision_config(self):
         cfg = self.config
         f_min = float(cfg.f_x_min)
         f_max = float(cfg.f_x_max)
+        lower_bound, upper_bound = self._get_cfg_param_bounds(getattr(cfg, "f_x_param", "tau1"))
+        if lower_bound is not None:
+            f_min = max(f_min, float(lower_bound))
+            f_max = max(f_max, float(lower_bound))
+        if upper_bound is not None:
+            f_min = min(f_min, float(upper_bound))
+            f_max = min(f_max, float(upper_bound))
+        if f_max < f_min:
+            f_min, f_max = f_max, f_min
         n_steps = max(int(cfg.f_x_steps), 2)
         fine_factor = max(int(getattr(cfg, "grid_fine_factor", 100)), 1)
         selected_meta = self._get_param_meta(cfg.f_x_param) or {}
@@ -311,23 +331,23 @@ class TwinEngine:
         rate_out = rate_in / max(1.0 + rate_in * deadtime_s, 1.0)
         return float(min(rate_out * dwell_s, expected_detected))
 
-    def _effective_detected_pdf(
+    def _detector_transfer_pdf_and_survival(
         self,
         pdf: np.ndarray,
         n_photons: float,
         cfg: Optional[PhysicsConfig] = None,
-    ) -> np.ndarray:
+    ) -> Tuple[np.ndarray, float]:
         cfg = cfg or self.config
         pdf = np.asarray(pdf, dtype=float)
         pdf = np.maximum(pdf, 0.0)
         total = float(np.sum(pdf))
         if total <= 0.0:
-            return np.array(pdf, copy=True)
+            return np.array(pdf, copy=True), 0.0
         pdf = pdf / total
         pdf = self._dark_augmented_pdf(pdf, n_photons, cfg)
 
-        if self._is_event_driven_mode() or not self._has_detector_event_effects(cfg):
-            return np.array(pdf, copy=True)
+        if not self._has_detector_event_effects(cfg):
+            return np.array(pdf, copy=True), 1.0
 
         dwell_s = float(max(getattr(cfg, "event_pixel_dwell_time_s", 1e-3), 1e-12))
         period_ns = float(max(getattr(cfg, "period", 0.0), 1e-12))
@@ -362,11 +382,43 @@ class TwinEngine:
                 if total_detected > 0.0 and total_detected > per_period_target:
                     detected_counts *= per_period_target / total_detected
 
+        raw_total = float(np.sum(raw_period_counts))
         detected_total = float(np.sum(detected_counts))
         if detected_total <= 0.0:
-            return np.array(pdf, copy=True)
+            return np.array(pdf, copy=True), 0.0
         detected_pdf = detected_counts / detected_total
-        return self._apply_afterpulsing_to_pdf(detected_pdf, cfg)
+        detected_pdf = self._apply_afterpulsing_to_pdf(detected_pdf, cfg)
+        survival = detected_total / max(raw_total, 1e-12)
+        return detected_pdf, float(np.clip(survival, 0.0, 1.0))
+
+    def _effective_detected_pdf(
+        self,
+        pdf: np.ndarray,
+        n_photons: float,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> np.ndarray:
+        detected_pdf, _survival = self._detector_transfer_pdf_and_survival(pdf, n_photons, cfg)
+        return detected_pdf
+
+    def _gate_statistics_from_pdf(
+        self,
+        pdf: np.ndarray,
+        n_photons: float,
+        gate_profiles: np.ndarray,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> Tuple[np.ndarray, float]:
+        cfg = cfg or self.config
+        gate_profiles = np.asarray(gate_profiles, dtype=float)
+        n_gates = gate_profiles.shape[0]
+        detected_pdf, detector_survival = self._detector_transfer_pdf_and_survival(pdf, n_photons, cfg)
+        gate_probs = np.asarray(gate_profiles @ detected_pdf, dtype=float)
+        gate_probs = gate_probs * self._collection_efficiency_scale(n_gates) * detector_survival
+        collected_fraction = max(float(np.sum(gate_probs)), 0.0)
+        if collected_fraction > 0.0:
+            conditional_gate_probs = gate_probs / collected_fraction
+        else:
+            conditional_gate_probs = np.full(n_gates, 1.0 / max(n_gates, 1))
+        return conditional_gate_probs, collected_fraction
 
     def _apply_detector_transfer_to_probabilities(
         self,
@@ -593,6 +645,29 @@ class TwinEngine:
         if photon_basis_mode is None:
             return False
         return str(photon_basis_mode).lower() in {"period", "all"}
+
+    def _resolve_f_photon_basis_mode(self, photon_basis_mode: Optional[str] = None) -> str:
+        if photon_basis_mode is None:
+            photon_basis_mode = getattr(self.config, "optimization_f_photon_basis", "period")
+        return str(photon_basis_mode).lower()
+
+    def _f_value_reference_budget(
+        self,
+        n_photons: float,
+        collected_fraction: float,
+        photon_basis_mode: Optional[str] = None,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> float:
+        cfg = cfg or self.config
+        total_budget = max(float(n_photons), 0.0)
+        collected_budget = total_budget * max(float(collected_fraction), 0.0)
+        mode = self._resolve_f_photon_basis_mode(photon_basis_mode)
+        if mode == "collected":
+            return collected_budget
+        if mode == "all":
+            return total_budget
+        acquisition_budget = total_budget * self._acquisition_period_fraction(cfg)
+        return max(acquisition_budget, 0.0)
 
     def _dark_counts_per_frame(self, cfg: Optional[PhysicsConfig] = None) -> float:
         cfg = cfg or self.config
@@ -891,6 +966,15 @@ class TwinEngine:
         self.gate_shapes = np.zeros((n_gates, n_time))
         
         t = self.time_vector
+        ideal_gates = (
+            max(float(getattr(cfg, "gate_rise", 0.0)), 0.0) <= 0.0
+            and max(float(getattr(cfg, "gate_fall", getattr(cfg, "gate_rise", 0.0))), 0.0) <= 0.0
+            and str(getattr(cfg, "gate_collection_mode", "histogram")).lower() == "histogram"
+            and str(getattr(cfg, "gate_overlap_mode", "jitter_only")).lower() == "never"
+            and max(float(getattr(cfg, "gate_overlap_ns", 0.0)), 0.0) <= 0.0
+            and str(getattr(cfg, "gate_overlap_effect", "exclusive")).lower() == "exclusive"
+            and not bool(getattr(cfg, "gate_wraparound", True))
+        )
 
         def edge_gate_profile(time_axis: np.ndarray, gate_start: float, gate_end: float) -> np.ndarray:
             rise_sigma = max(float(getattr(cfg, "gate_rise", 0.0)), 0.0)
@@ -924,7 +1008,7 @@ class TwinEngine:
 
             self.gate_shapes[i, :] = np.clip(shape, 0, 1.0)
 
-        gate_jitter_sigma = self._gate_jitter_sigma_ns()
+        gate_jitter_sigma = 0.0 if ideal_gates else self._gate_jitter_sigma_ns()
         if gate_jitter_sigma > 0.0 and n_time > 1:
             dt = float(t[1] - t[0])
             for i in range(n_gates):
@@ -1013,10 +1097,13 @@ class TwinEngine:
         for i, param_val in enumerate(self.grid_tau_axis):
             self._set_cfg_param(cfg.f_x_param, param_val)
             pdf = self.dt_pdf(t)
-            pdf = self._effective_detected_pdf(pdf, float(getattr(cfg, "a_photons", 0.0)), cfg)
-            p_vec = stat_gate_shapes @ pdf
-            p_sum = np.sum(p_vec)
-            self.grid_templates[i, :] = p_vec / p_sum if p_sum > 0 else np.full(n_gates, 1.0 / n_gates)
+            p_vec, _collected_fraction = self._gate_statistics_from_pdf(
+                pdf,
+                float(getattr(cfg, "a_photons", 0.0)),
+                stat_gate_shapes,
+                cfg,
+            )
+            self.grid_templates[i, :] = p_vec
         self._set_cfg_param(cfg.f_x_param, original_param_value)
         self.grid_signature = self._grid_signature()
 
@@ -1026,20 +1113,20 @@ class TwinEngine:
             gate_profiles = self.gate_shapes
         gate_profiles = self._statistical_gate_profiles(gate_profiles)
         pdf = self.dt_pdf(t, irf=irf_cached)
-        pdf = self._effective_detected_pdf(pdf, float(getattr(self.config, "a_photons", 0.0)), self.config)
-        probs = gate_profiles @ pdf
-        probs = probs * self._collection_efficiency_scale(gate_profiles.shape[0])
-        if not self._is_event_driven_mode():
-            probs = self._apply_detector_transfer_to_probabilities(probs, float(getattr(self.config, "a_photons", 0.0)), self.config)
+        probs, collected_fraction = self._gate_statistics_from_pdf(
+            pdf,
+            float(getattr(self.config, "a_photons", 0.0)),
+            gate_profiles,
+            self.config,
+        )
         if self._use_raw_gate_statistics():
-            return probs
-        p_sum = np.sum(probs)
-        if p_sum <= 0:
+            return probs * collected_fraction
+        if collected_fraction <= 0:
             return np.full(gate_profiles.shape[0], 1.0 / gate_profiles.shape[0])
-        return probs / p_sum
+        return probs
 
-    def estimate_tau_batch(self, counts_batch: np.ndarray) -> np.ndarray:
-        """Returns gridded-MLE estimates for the currently selected X-axis parameter."""
+    def _estimate_param_batch_gridded(self, counts_batch: np.ndarray) -> np.ndarray:
+        counts_batch = np.asarray(counts_batch, dtype=float)
         self.ensure_grid_current()
 
         totals = np.sum(counts_batch, axis=1, keepdims=True)
@@ -1081,6 +1168,25 @@ class TwinEngine:
 
         estimates[valid] = np.clip(refined, self.grid_tau_axis[0], self.grid_tau_axis[-1])
         return estimates
+
+    def estimate_tau_batch(self, counts_batch: np.ndarray) -> np.ndarray:
+        """Returns gridded-MLE estimates for the currently selected X-axis parameter."""
+        counts_batch = np.asarray(counts_batch, dtype=float)
+        target = str(getattr(self.config, "f_x_param", "tau1"))
+        fast_gridded = (
+            str(getattr(self.config, "decay_model", "exponential")).lower() == "exponential"
+            and int(getattr(self.config, "n_components", 1)) == 1
+            and target == "tau1"
+        )
+        if not fast_gridded:
+            estimates = np.full(counts_batch.shape[0], np.nan)
+            for idx, obs in enumerate(counts_batch):
+                if np.sum(obs) <= 0:
+                    continue
+                estimates[idx] = self._fit_param_refined(obs)
+            return estimates
+
+        return self._estimate_param_batch_gridded(counts_batch)
 
     def plan_validation_image_geometry(self, n_values: Optional[int] = None,
                                        target_repeats: Optional[int] = None) -> Dict[str, int]:
@@ -1169,7 +1275,7 @@ class TwinEngine:
                     counts = np.random.poisson(lam, size=(n_y, x_end - x_start, n_gates))
                 self.raw_data[:, x_start:x_end, :] = counts
                 self.validation_param_map[:, x_start:x_end] = float(x_val)
-                self.validation_truth_map[:, x_start:x_end] = self._effective_lifetime_ns()
+                self.validation_truth_map[:, x_start:x_end] = float(x_val)
                 band_index_map[:, x_start:x_end] = idx
                 if progress_callback is not None:
                     progress_callback(idx + 1, len(x_values))
@@ -1199,7 +1305,7 @@ class TwinEngine:
         }
 
     def _fit_param_gridded(self, obs: np.ndarray) -> float:
-        return float(self.estimate_tau_batch(np.asarray(obs, dtype=float).reshape(1, -1))[0])
+        return float(self._estimate_param_batch_gridded(np.asarray(obs, dtype=float).reshape(1, -1))[0])
 
     def _tail_fit_mask(self, obs: np.ndarray) -> np.ndarray:
         obs = np.asarray(obs, dtype=float)
@@ -1240,7 +1346,7 @@ class TwinEngine:
     def _fit_param_mle(self, obs: np.ndarray) -> float:
         target = str(self.config.f_x_param)
         current_value = float(self._get_cfg_param(target))
-        lower, upper = self._get_cfg_param_bounds(target)
+        lower, upper = self._fit_search_bounds(target)
         if lower is None:
             lower = max(current_value * 0.1, 1e-6)
         if upper is None:
@@ -1263,6 +1369,61 @@ class TwinEngine:
         try:
             result = minimize_scalar(objective, bounds=(float(lower), float(upper)), method="bounded")
             return float(result.x) if result.success else np.nan
+        finally:
+            self._set_cfg_param(target, current_value)
+
+    def _fit_param_refined(self, obs: np.ndarray) -> float:
+        target = str(self.config.f_x_param)
+        coarse = self._fit_param_gridded(obs)
+        if not np.isfinite(coarse):
+            return self._fit_param_mle(obs)
+
+        lower, upper = self._fit_search_bounds(target)
+        if lower is None:
+            lower = float(np.nanmin(np.asarray(self.grid_tau_axis, dtype=float))) if self.grid_tau_axis is not None else max(coarse * 0.25, 1e-6)
+        if upper is None:
+            upper = float(np.nanmax(np.asarray(self.grid_tau_axis, dtype=float))) if self.grid_tau_axis is not None else max(coarse * 4.0, lower * 1.001)
+        lower = float(lower)
+        upper = float(max(upper, lower * 1.000001 if lower > 0 else lower + 1e-6))
+        if upper <= lower:
+            return coarse
+
+        self.ensure_grid_current()
+        axis = np.asarray(self.grid_tau_axis, dtype=float)
+        if axis.size < 3:
+            return self._fit_param_mle(obs)
+        center_idx = int(np.argmin(np.abs(axis - coarse)))
+        lower_idx = max(center_idx - 2, 0)
+        upper_idx = min(center_idx + 2, axis.size - 1)
+        local_lower = max(float(axis[lower_idx]), lower)
+        local_upper = min(float(axis[upper_idx]), upper)
+        if not np.isfinite(local_lower) or not np.isfinite(local_upper) or local_upper <= local_lower:
+            local_lower, local_upper = lower, upper
+
+        current_value = float(self._get_cfg_param(target))
+        total = float(np.sum(obs))
+        irf_cached = self.dt_excitation(self.time_vector)
+        irf_sum = np.sum(irf_cached)
+        if irf_sum > 0:
+            irf_cached = irf_cached / irf_sum
+
+        def objective(param_value: float) -> float:
+            self._set_cfg_param(target, float(param_value))
+            probs = self._gate_probabilities_for_current_config(self.time_vector, irf_cached=irf_cached)
+            lam = np.maximum(total * probs, 1e-12)
+            return float(np.sum(lam - (np.asarray(obs, dtype=float) * np.log(lam))))
+
+        try:
+            result = minimize_scalar(objective, bounds=(local_lower, local_upper), method="bounded")
+            if result.success and np.isfinite(result.x):
+                local_best = float(result.x)
+                edge_tol = max((local_upper - local_lower) * 1e-3, 1e-6)
+                if target == "background" or local_best <= local_lower + edge_tol or local_best >= local_upper - edge_tol:
+                    global_result = minimize_scalar(objective, bounds=(lower, upper), method="bounded")
+                    if global_result.success and np.isfinite(global_result.x):
+                        return float(global_result.x)
+                return local_best
+            return self._fit_param_mle(obs)
         finally:
             self._set_cfg_param(target, current_value)
 
@@ -1404,7 +1565,11 @@ class TwinEngine:
         lifetime_map = None
         if self.tau_map is not None and np.any(np.isfinite(self.tau_map)):
             lifetime_map = np.asarray(self.tau_map, dtype=float)
-        elif self.validation_truth_map is not None and np.any(np.isfinite(self.validation_truth_map)):
+        elif (
+            self.validation_truth_map is not None
+            and np.any(np.isfinite(self.validation_truth_map))
+            and str(self.config.f_x_param) in {"tau1", "tau2"}
+        ):
             lifetime_map = np.asarray(self.validation_truth_map, dtype=float)
         elif self.validation_param_map is not None and str(self.config.f_x_param) in {"tau1", "tau2"}:
             lifetime_map = np.asarray(self.validation_param_map, dtype=float)
@@ -1877,10 +2042,7 @@ class TwinEngine:
         
         # Prepare gates using the exact same distillation logic as the simulation path.
         n_gates = len(cfg.gate_edges) - 1
-        collection_scale = self._collection_efficiency_scale(n_gates)
-        normalize_probs = self._should_normalize_gate_probabilities(photon_basis_mode)
-        photon_basis_mode_norm = str(photon_basis_mode or "").lower()
-        include_lost_category = self._include_lost_category(photon_basis_mode)
+        photon_basis_mode_norm = self._resolve_f_photon_basis_mode(photon_basis_mode)
         original_dt_override = cfg.dt_override
         try:
             cfg.dt_override = dt
@@ -1907,6 +2069,12 @@ class TwinEngine:
             try:
                 param_val = float(x_val)
                 lower_bound, upper_bound = self._get_cfg_param_bounds(cfg.f_x_param)
+                if (
+                    str(cfg.f_x_param) == "tau2"
+                    and len(getattr(cfg, "taus", [])) > 1
+                    and np.isclose(param_val, float(self.config.taus[0]), rtol=0.0, atol=max(5.0 * dt, 1e-6))
+                ):
+                    param_val = float(self.config.taus[0]) + max(5.0 * dt, 1e-6)
                 delta_param = self._get_cfg_param_step(cfg.f_x_param, param_val, dt, epsilon)
                 plus_val = param_val + delta_param
                 minus_val = param_val - delta_param
@@ -1926,50 +2094,33 @@ class TwinEngine:
 
                 # Central value
                 self._set_cfg_param(cfg.f_x_param, param_val)
-                p_cen_pdf  = self.dt_pdf(t, irf=irf_cached)
-                p_cen_pdf = self._effective_detected_pdf(p_cen_pdf, float(n_photons), cfg)
-                p_cen_gates = gate_profiles @ p_cen_pdf
-                p_cen_gates = p_cen_gates * collection_scale
-                if photon_basis_mode_norm == "all":
-                    p_cen_gates = p_cen_gates * self._acquisition_period_fraction(cfg)
-                if not self._is_event_driven_mode():
-                    p_cen_gates = self._apply_detector_transfer_to_probabilities(p_cen_gates, n_photons, cfg)
-                p_cen_sum = np.sum(p_cen_gates)
-                if normalize_probs and p_cen_sum > 0:
-                    p_cen_gates = p_cen_gates / p_cen_sum
+                p_cen_pdf = self.dt_pdf(t, irf=irf_cached)
+                p_cen_gates, p_cen_sum = self._gate_statistics_from_pdf(
+                    p_cen_pdf,
+                    float(n_photons),
+                    gate_profiles,
+                    cfg,
+                )
 
                 # Forward
                 self._set_cfg_param(cfg.f_x_param, plus_val)
-                p_plus_pdf   = self.dt_pdf(t, irf=irf_cached)
-                p_plus_pdf = self._effective_detected_pdf(p_plus_pdf, float(n_photons), cfg)
-                p_plus_gates = gate_profiles @ p_plus_pdf
-                p_plus_gates = p_plus_gates * collection_scale
-                if photon_basis_mode_norm == "all":
-                    p_plus_gates = p_plus_gates * self._acquisition_period_fraction(cfg)
-                if not self._is_event_driven_mode():
-                    p_plus_gates = self._apply_detector_transfer_to_probabilities(p_plus_gates, n_photons, cfg)
-                p_plus_sum = np.sum(p_plus_gates)
-                if normalize_probs and p_plus_sum > 0:
-                    p_plus_gates = p_plus_gates / p_plus_sum
+                p_plus_pdf = self.dt_pdf(t, irf=irf_cached)
+                p_plus_gates, _p_plus_sum = self._gate_statistics_from_pdf(
+                    p_plus_pdf,
+                    float(n_photons),
+                    gate_profiles,
+                    cfg,
+                )
 
                 # Backward
                 self._set_cfg_param(cfg.f_x_param, minus_val)
-                p_minus_pdf   = self.dt_pdf(t, irf=irf_cached)
-                p_minus_pdf = self._effective_detected_pdf(p_minus_pdf, float(n_photons), cfg)
-                p_minus_gates = gate_profiles @ p_minus_pdf
-                p_minus_gates = p_minus_gates * collection_scale
-                if photon_basis_mode_norm == "all":
-                    p_minus_gates = p_minus_gates * self._acquisition_period_fraction(cfg)
-                if not self._is_event_driven_mode():
-                    p_minus_gates = self._apply_detector_transfer_to_probabilities(p_minus_gates, n_photons, cfg)
-                p_minus_sum = np.sum(p_minus_gates)
-                if normalize_probs and p_minus_sum > 0:
-                    p_minus_gates = p_minus_gates / p_minus_sum
-
-                if include_lost_category:
-                    p_cen_gates = np.append(p_cen_gates, max(1.0 - float(np.sum(p_cen_gates)), 0.0))
-                    p_plus_gates = np.append(p_plus_gates, max(1.0 - float(np.sum(p_plus_gates)), 0.0))
-                    p_minus_gates = np.append(p_minus_gates, max(1.0 - float(np.sum(p_minus_gates)), 0.0))
+                p_minus_pdf = self.dt_pdf(t, irf=irf_cached)
+                p_minus_gates, _p_minus_sum = self._gate_statistics_from_pdf(
+                    p_minus_pdf,
+                    float(n_photons),
+                    gate_profiles,
+                    cfg,
+                )
 
                 # Central-difference derivative with respect to the currently targeted parameter.
                 dP_dparam = (p_plus_gates - p_minus_gates) / max(plus_val - minus_val, 1e-12)
@@ -1977,20 +2128,31 @@ class TwinEngine:
                 # Fisher Information (scalar): FI = N * sum((dP/dtau)^2 / P)
                 p_safe = np.maximum(p_cen_gates, 1e-15)
                 fi_elem = (dP_dparam ** 2) / p_safe
-                fisher_info = n_photons * np.sum(fi_elem)
+                collected_fraction = max(float(p_cen_sum), 0.0)
+                detected_photons = float(n_photons) * collected_fraction
+                fisher_info = detected_photons * np.sum(fi_elem)
                 fisher_values[k] = fisher_info
 
                 # Signal & sensitivity diagnostics (first point only)
                 if k == 0:
-                    sig_sum  = np.sum(p_cen_gates)
+                    sig_sum  = collected_fraction
                     jac_norm = np.linalg.norm(dP_dparam)
                     print(f"  [DIAG] x={x_val:.4f}: Signal={sig_sum:.6f}, dP_norm={jac_norm:.4e}, FI={fisher_info:.4e}")
 
                 # CRLB for the selected parameter. F uses relative precision for the active X-axis parameter.
                 if fisher_info > 0:
                     sigma_param = 1.0 / np.sqrt(fisher_info)
-                    denom = max(abs(param_val), 1e-12)
-                    f_values[k] = (sigma_param / denom) * np.sqrt(n_photons)
+                    if abs(param_val) <= 1e-12:
+                        f_values[k] = np.nan
+                    else:
+                        denom = abs(param_val)
+                        photon_budget = self._f_value_reference_budget(
+                            float(n_photons),
+                            collected_fraction,
+                            photon_basis_mode=photon_basis_mode_norm,
+                            cfg=cfg,
+                        )
+                        f_values[k] = (sigma_param / denom) * np.sqrt(photon_budget) if photon_budget > 0 else np.nan
                 else:
                     f_values[k] = np.nan
                 if point_callback is not None:
@@ -2026,10 +2188,21 @@ class TwinEngine:
         if name == "alpha":
             return self.config.amplitudes[0]
         if name == "background":
-            return self.config.background_level
+            return self.config.background_level * 100.0
         if name == "beta":
             return self.config.beta
         return float((self.config.custom_model_params or {}).get(name, 0.0))
+
+    def _fit_search_bounds(self, name):
+        lower, upper = self._get_cfg_param_bounds(name)
+        if str(name) == str(getattr(self.config, "f_x_param", "")):
+            sweep_min = float(getattr(self.config, "f_x_min", lower if lower is not None else 0.0))
+            sweep_max = float(getattr(self.config, "f_x_max", upper if upper is not None else sweep_min))
+            if sweep_max < sweep_min:
+                sweep_min, sweep_max = sweep_max, sweep_min
+            lower = sweep_min if lower is None else max(float(lower), sweep_min)
+            upper = sweep_max if upper is None else min(float(upper), sweep_max)
+        return lower, upper
 
     def _get_cfg_param_bounds(self, name):
         meta = self._get_param_meta(name)
@@ -2038,7 +2211,7 @@ class TwinEngine:
             upper = meta.get("bounds_max")
             if name == "background":
                 lower = 0.0 if lower is None else lower
-                upper = 1.0 if upper is None else min(float(upper), 1.0)
+                upper = 100.0 if upper is None else min(float(upper), 100.0)
             return lower, upper
         return None, None
 
@@ -2048,20 +2221,20 @@ class TwinEngine:
         if scale == "log" or name in {"tau1", "tau2"}:
             return max(epsilon * max(abs(value), 1e-6), 2.0 * dt)
         if name == "background":
-            return max(epsilon * max(abs(value), 0.01), 1e-5)
+            return max(epsilon * max(abs(value), 1.0), 1e-3)
         return max(epsilon * max(abs(value), 1.0), 1e-4)
 
     def _set_cfg_param(self, name, val):
         if name == "tau1":
             self.config.taus[0] = val
         elif name == "tau2" and len(self.config.taus) > 1:
-            self.config.taus[1] = val
+            self.config.taus[1] = max(float(val), 1e-6)
         elif name == "alpha" and self.config.amplitudes:
             self.config.amplitudes[0] = val
             if len(self.config.amplitudes) > 1:
                 self.config.amplitudes[1] = max(0.0, 1.0 - val)
         elif name == "background":
-            self.config.background_level = val
+            self.config.background_level = float(val) / 100.0
         elif name == "beta":
             self.config.beta = val
         else:
@@ -2069,13 +2242,19 @@ class TwinEngine:
             params[name] = float(val)
             self.config.custom_model_params = params
 
-    def compute_ideal_reference(self, tau_grid: np.ndarray, n_photons: int = 1) -> Tuple[np.ndarray, np.ndarray]:
+    def compute_ideal_reference(
+        self,
+        tau_grid: np.ndarray,
+        n_photons: int = 1,
+        photon_basis_mode: Optional[str] = None,
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Calculates the 'Ideal Case' reference benchmark:
         - Dirac excitation (Zero Timing Jitter)
         - 256 High-resolution linear bins over the active period
         - Zero Background & No Parameter Coupling
-        - Inherits 'period' and 'b_decay_wrapping' from the active configuration
+        - Uses the live period with decay wrapping enabled
+        - Forces the first gate to start at 0 and the last gate to end at the period
         """
         import copy
         ideal_cfg = copy.deepcopy(self.config)
@@ -2085,15 +2264,25 @@ class TwinEngine:
         ideal_cfg.gate_fall = 0.0
         ideal_cfg.timing_jitter = 0
         ideal_cfg.detector_deadtime = 0
+        ideal_cfg.detector_afterpulsing_probability = 0.0
+        ideal_cfg.detector_dark_count_rate_cps = 0.0
         ideal_cfg.b_multihit_mode = True
+        ideal_cfg.event_multihit_capacity = None
         ideal_cfg.background_level = 0
-        # ideal_cfg.b_decay_wrapping and ideal_cfg.period are inherited from the active configuration
+        ideal_cfg.b_decay_wrapping = True
         ideal_cfg.gate_collection_mode = "histogram"
         ideal_cfg.gate_overlap_mode = "jitter_only"
         ideal_cfg.gate_overlap_effect = "exclusive"
         ideal_cfg.gate_overlap_ns = 0.0
         ideal_cfg.gate_wraparound = True
-        
+        ideal_cfg.gate_type = "equal"
+        ideal_cfg.gate_start_mode = "start"
+        ideal_cfg.gate_first_start = 0.0
+        ideal_cfg.gate_end_mode = "period"
+        ideal_cfg.gate_last_end = float(ideal_cfg.period)
+        ideal_cfg.simulation_mode = "ideal_poisson"
+        ideal_cfg.simulation_mode_preference = "ideal_poisson"
+
         # Suppress coupling: Fix all but the parameter under test
         for p in [item.get("name") for item in self._get_runtime_param_defs()]:
             ideal_cfg.fixed_params[p] = True
@@ -2107,7 +2296,11 @@ class TwinEngine:
         orig_cfg = self.config
         self.config = ideal_cfg
         try:
-            fi, f_val = self.compute_fisher_info(tau_grid, n_photons)
+            fi, f_val = self.compute_fisher_info(
+                tau_grid,
+                n_photons,
+                photon_basis_mode=photon_basis_mode,
+            )
         finally:
             self.config = orig_cfg
             
@@ -2139,7 +2332,8 @@ class TwinEngine:
 
     def _bootstrap_precision_intervals(self, estimates: np.ndarray, detections: np.ndarray, truth: float,
                                        n_bootstrap: int, rng: np.random.Generator,
-                                       photon_budget: Optional[float] = None) -> dict:
+                                       photon_budget: Optional[float] = None,
+                                       conditional_photon_budget: Optional[float] = None) -> dict:
         estimates = np.asarray(estimates, dtype=float)
         detections = np.asarray(detections, dtype=float)
         finite_mask = np.isfinite(estimates) & np.isfinite(detections)
@@ -2148,6 +2342,8 @@ class TwinEngine:
         empty = {
             "f_ci_lower": np.nan,
             "f_ci_upper": np.nan,
+            "f_ci_lower_conditional": np.nan,
+            "f_ci_upper_conditional": np.nan,
             "efficiency_ci_lower": np.nan,
             "efficiency_ci_upper": np.nan,
         }
@@ -2159,10 +2355,14 @@ class TwinEngine:
         boot_detections = detections[boot_idx]
         std_boot = np.std(boot_estimates, axis=1, ddof=1)
         photon_budget = float(photon_budget if photon_budget is not None else np.mean(detections))
+        conditional_photon_budget = float(
+            conditional_photon_budget if conditional_photon_budget is not None else np.mean(boot_detections)
+        )
         denom = max(abs(truth), 1e-12)
         f_boot = (std_boot / denom) * np.sqrt(max(photon_budget, 0.0))
+        f_boot_conditional = (std_boot / denom) * np.sqrt(max(conditional_photon_budget, 0.0))
         eff_boot = np.where(f_boot > 0, np.minimum(1.0, 1.0 / (f_boot ** 2)), np.nan)
-        ci_level = float(getattr(self.config, "precision_ci_level", 95.0))
+        ci_level = float(getattr(self.config, "precision_ci_level", 99.7))
         ci_level = min(max(ci_level, 1.0), 99.999)
         alpha = (100.0 - ci_level) / 100.0
         lower_pct = 100.0 * (alpha / 2.0)
@@ -2171,6 +2371,8 @@ class TwinEngine:
         return {
             "f_ci_lower": float(np.nanpercentile(f_boot, lower_pct)),
             "f_ci_upper": float(np.nanpercentile(f_boot, upper_pct)),
+            "f_ci_lower_conditional": float(np.nanpercentile(f_boot_conditional, lower_pct)),
+            "f_ci_upper_conditional": float(np.nanpercentile(f_boot_conditional, upper_pct)),
             "efficiency_ci_lower": float(np.nanpercentile(eff_boot, lower_pct)),
             "efficiency_ci_upper": float(np.nanpercentile(eff_boot, upper_pct)),
         }
@@ -2197,7 +2399,11 @@ class TwinEngine:
         mean_tau = np.full(len(x_grid), np.nan)
         std_tau = np.full(len(x_grid), np.nan)
         f_values = np.full(len(x_grid), np.nan)
+        f_values_conditional = np.full(len(x_grid), np.nan)
+        f_values_effective = np.full(len(x_grid), np.nan)
         p_eff = np.full(len(x_grid), np.nan)
+        p_eff_conditional = np.full(len(x_grid), np.nan)
+        survival_eta = np.full(len(x_grid), np.nan)
         p_values = np.full(len(x_grid), np.nan)
         compatible = np.full(len(x_grid), False, dtype=bool)
         n_valid = np.zeros(len(x_grid), dtype=int)
@@ -2206,11 +2412,19 @@ class TwinEngine:
         bootstrap_samples = max(200, int(getattr(self.config, "precision_bootstrap_samples", 2000)))
         f_ci_lower = np.full(len(x_grid), np.nan)
         f_ci_upper = np.full(len(x_grid), np.nan)
+        f_ci_lower_conditional = np.full(len(x_grid), np.nan)
+        f_ci_upper_conditional = np.full(len(x_grid), np.nan)
         eff_ci_lower = np.full(len(x_grid), np.nan)
         eff_ci_upper = np.full(len(x_grid), np.nan)
         rng = np.random.default_rng()
 
         for idx, param_val in enumerate(x_grid):
+            if (
+                str(target_param) == "tau2"
+                and len(getattr(self.config, "taus", [])) > 1
+                and np.isclose(float(param_val), float(self.config.taus[0]), rtol=0.0, atol=max(5.0 * float(getattr(self.config, "dt_input", 0.01)), 1e-6))
+            ):
+                param_val = float(self.config.taus[0]) + max(5.0 * float(getattr(self.config, "dt_input", 0.01)), 1e-6)
             self._set_cfg_param(target_param, param_val)
             force_deadtime_mc = bool(getattr(self.config, "metadata", {}).get("force_precision_deadtime_mc", False))
             if (
@@ -2240,13 +2454,27 @@ class TwinEngine:
             mean_tau[idx] = np.nanmean(param_est)
             std_tau[idx] = np.nanstd(param_est, ddof=1) if np.sum(np.isfinite(param_est)) > 1 else 0.0
             mean_detected = float(np.nanmean(n_detections)) if len(n_detections) else 0.0
-            photon_basis_mode = str(getattr(self.config, "optimization_f_photon_basis", "period")).lower()
-            photon_budget = float(mean_detected if photon_basis_mode == "collected" else n_photons)
-            denom = max(abs(param_val), 1e-12)
+            photon_basis_mode = self._resolve_f_photon_basis_mode()
+            collected_fraction = (mean_detected / float(n_photons)) if float(n_photons) > 0 else 0.0
+            survival_eta[idx] = collected_fraction
+            photon_budget = self._f_value_reference_budget(
+                float(n_photons),
+                collected_fraction,
+                photon_basis_mode=photon_basis_mode,
+                cfg=self.config,
+            )
+            denom = abs(param_val)
+            if np.isfinite(std_tau[idx]) and mean_detected > 0:
+                if denom > 1e-12:
+                    f_values_conditional[idx] = (std_tau[idx] / denom) * np.sqrt(mean_detected)
+                    if f_values_conditional[idx] > 0:
+                        p_eff_conditional[idx] = min(1.0, 1.0 / (f_values_conditional[idx] ** 2))
             if np.isfinite(std_tau[idx]) and photon_budget > 0:
-                f_values[idx] = (std_tau[idx] / denom) * np.sqrt(photon_budget)
-                if f_values[idx] > 0:
-                    p_eff[idx] = min(1.0, 1.0 / (f_values[idx] ** 2))
+                if denom > 1e-12:
+                    f_values_effective[idx] = (std_tau[idx] / denom) * np.sqrt(photon_budget)
+                    f_values[idx] = f_values_effective[idx]
+                    if f_values_effective[idx] > 0:
+                        p_eff[idx] = min(1.0, 1.0 / (f_values_effective[idx] ** 2))
             if n_valid[idx] >= 2:
                 p_values[idx] = self._bootstrap_accuracy_pvalue(
                     finite_est,
@@ -2266,9 +2494,12 @@ class TwinEngine:
                     bootstrap_samples,
                     rng,
                     photon_budget=photon_budget,
+                    conditional_photon_budget=mean_detected,
                 )
                 f_ci_lower[idx] = ci_payload["f_ci_lower"]
                 f_ci_upper[idx] = ci_payload["f_ci_upper"]
+                f_ci_lower_conditional[idx] = ci_payload["f_ci_lower_conditional"]
+                f_ci_upper_conditional[idx] = ci_payload["f_ci_upper_conditional"]
                 eff_ci_lower[idx] = ci_payload["efficiency_ci_lower"]
                 eff_ci_upper[idx] = ci_payload["efficiency_ci_upper"]
             if point_callback is not None:
@@ -2294,7 +2525,13 @@ class TwinEngine:
             "mean_estimate": mean_tau,
             "std_estimate": std_tau,
             "f_value": f_values,
+            "f_value_conditional": f_values_conditional,
+            "f_value_effective": f_values_effective,
             "efficiency": p_eff,
+            "efficiency_conditional": p_eff_conditional,
+            "survival_eta": survival_eta,
+            "f_ci_lower_conditional": f_ci_lower_conditional,
+            "f_ci_upper_conditional": f_ci_upper_conditional,
             "p_value": p_values,
             "compatible": compatible,
             "n_valid": n_valid,
@@ -2772,10 +3009,7 @@ class TwinEngine:
             dt = max(dt, 0.005)
 
         n_gates = len(cfg.gate_edges) - 1
-        collection_scale = self._collection_efficiency_scale(n_gates)
-        normalize_probs = self._should_normalize_gate_probabilities(photon_basis_mode)
-        photon_basis_mode_norm = str(photon_basis_mode or "").lower()
-        include_lost_category = self._include_lost_category(photon_basis_mode)
+        photon_basis_mode_norm = self._resolve_f_photon_basis_mode(photon_basis_mode)
         original_dt_override = cfg.dt_override
         try:
             cfg.dt_override = dt
@@ -2800,13 +3034,12 @@ class TwinEngine:
                 param_val = float(x_val)
                 self._set_cfg_param(target_param, param_val)
                 p_cen_pdf = self.dt_pdf(t, irf=irf_cached)
-                p_cen_gates = gate_profiles @ p_cen_pdf
-                p_cen_gates = p_cen_gates * collection_scale
-                if photon_basis_mode_norm == "all":
-                    p_cen_gates = p_cen_gates * self._acquisition_period_fraction(cfg)
-                p_cen_sum = np.sum(p_cen_gates)
-                if normalize_probs and p_cen_sum > 0:
-                    p_cen_gates = p_cen_gates / p_cen_sum
+                p_cen_gates, p_cen_sum = self._gate_statistics_from_pdf(
+                    p_cen_pdf,
+                    float(n_photons),
+                    gate_profiles,
+                    cfg,
+                )
 
                 deriv_rows = np.zeros((len(active_params), len(p_cen_gates)), dtype=float)
                 for param_idx, param_name in enumerate(active_params):
@@ -2828,38 +3061,31 @@ class TwinEngine:
 
                     self._set_cfg_param(param_name, plus_val)
                     p_plus_pdf = self.dt_pdf(t, irf=irf_cached)
-                    p_plus_gates = gate_profiles @ p_plus_pdf
-                    p_plus_gates = p_plus_gates * collection_scale
-                    if photon_basis_mode_norm == "all":
-                        p_plus_gates = p_plus_gates * self._acquisition_period_fraction(cfg)
-                    p_plus_sum = np.sum(p_plus_gates)
-                    if normalize_probs and p_plus_sum > 0:
-                        p_plus_gates = p_plus_gates / p_plus_sum
+                    p_plus_gates, _p_plus_sum = self._gate_statistics_from_pdf(
+                        p_plus_pdf,
+                        float(n_photons),
+                        gate_profiles,
+                        cfg,
+                    )
 
                     self._set_cfg_param(param_name, minus_val)
                     p_minus_pdf = self.dt_pdf(t, irf=irf_cached)
-                    p_minus_gates = gate_profiles @ p_minus_pdf
-                    p_minus_gates = p_minus_gates * collection_scale
-                    if photon_basis_mode_norm == "all":
-                        p_minus_gates = p_minus_gates * self._acquisition_period_fraction(cfg)
-                    p_minus_sum = np.sum(p_minus_gates)
-                    if normalize_probs and p_minus_sum > 0:
-                        p_minus_gates = p_minus_gates / p_minus_sum
-
-                    if include_lost_category:
-                        p_plus_gates = np.append(p_plus_gates, max(1.0 - float(np.sum(p_plus_gates)), 0.0))
-                        p_minus_gates = np.append(p_minus_gates, max(1.0 - float(np.sum(p_minus_gates)), 0.0))
+                    p_minus_gates, _p_minus_sum = self._gate_statistics_from_pdf(
+                        p_minus_pdf,
+                        float(n_photons),
+                        gate_profiles,
+                        cfg,
+                    )
 
                     self._set_cfg_param(param_name, base_val)
                     deriv_rows[param_idx] = (p_plus_gates - p_minus_gates) / max(plus_val - minus_val, 1e-12)
 
-                if include_lost_category:
-                    p_cen_gates = np.append(p_cen_gates, max(1.0 - float(np.sum(p_cen_gates)), 0.0))
-
                 p_safe = np.maximum(p_cen_gates, 1e-15)
                 fim = (deriv_rows / p_safe) @ deriv_rows.T
+                collected_fraction = max(float(p_cen_sum), 0.0)
+                detected_photons = float(n_photons) * collected_fraction
                 if len(active_params) == 1:
-                    fisher_info = n_photons * float(fim[0, 0])
+                    fisher_info = detected_photons * float(fim[0, 0])
                 else:
                     a = float(fim[0, 0])
                     b = fim[1:, 0]
@@ -2868,13 +3094,19 @@ class TwinEngine:
                         correction = float(b.T @ np.linalg.solve(c, b))
                     except np.linalg.LinAlgError:
                         correction = float(b.T @ (np.linalg.pinv(c) @ b))
-                    fisher_info = n_photons * max(a - correction, 0.0)
+                    fisher_info = detected_photons * max(a - correction, 0.0)
                 fisher_values[k] = fisher_info
 
                 if fisher_info > 0:
                     sigma_param = 1.0 / np.sqrt(fisher_info)
                     denom = max(abs(param_val), 1e-12)
-                    f_values[k] = (sigma_param / denom) * np.sqrt(n_photons)
+                    photon_budget = self._f_value_reference_budget(
+                        float(n_photons),
+                        collected_fraction,
+                        photon_basis_mode=photon_basis_mode_norm,
+                        cfg=cfg,
+                    )
+                    f_values[k] = (sigma_param / denom) * np.sqrt(photon_budget) if photon_budget > 0 else np.nan
                 else:
                     f_values[k] = np.nan
             except Exception:

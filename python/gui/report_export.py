@@ -1118,7 +1118,7 @@ def _build_report_html(payload, asset_dir_name, table_entries, image_entries):
           </mrow>
         </math>
       </div>
-      <p class="meta">The ideal reference is always computed as an ideal histogram-bin ceiling. It does not inherit sequential-gating penalties or non-ideal overlap modes from the live configuration.</p>
+      <p class="meta">The ideal reference is always computed as an ideal histogram-bin ceiling using the live period, decay wrapping enabled, an ideal detector, ideal gates, and a zero-to-period gate span. It does not inherit sequential-gating penalties or non-ideal overlap modes from the live configuration.</p>
     </section>
 
     <section class="panel">

@@ -219,7 +219,7 @@ class DecayModelStore:
                     "unit": "%",
                     "default": float(getattr(cfg, "background_level", 0.0)) * 100.0,
                     "sweep_min": 0.0,
-                    "sweep_max": 0.5,
+                    "sweep_max": 25.0,
                     "sweep_steps": 20,
                     "scale": "linear",
                     "bounds_min": 0.0,

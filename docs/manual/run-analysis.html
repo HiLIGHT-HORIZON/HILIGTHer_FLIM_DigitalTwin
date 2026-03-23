@@ -55,8 +55,8 @@
       </section>
       <section class="card" id="photon-basis">
         <h2>F-value photon basis</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>The same timing design can look better or worse depending on whether you judge it only by the photons it actually measured or by all photons that were present during the acquisition period.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>The three supported interpretations are documented in <a href="maths.html#f-value-basis">Maths</a>. The option is propagated to the Fisher engine so that gated-out photons can be ignored, penalised within the acquisition window, or penalised against the full period.</p></div>
+        <div class="plain-box"><h3>Plain English</h3><p>The timing estimate is always based on the photons that were actually collected. This option only decides whether the reported <code>F</code> is referenced to those collected photons, to all photons in the acquisition period, or to the full available photon budget.</p></div>
+        <div class="specialist-box"><h3>For specialists</h3><p>The three supported interpretations are documented in <a href="maths.html#f-value-basis">Maths</a>. The option is propagated to the Fisher and Monte Carlo precision paths as a post-estimation normalization choice rather than a different lost-photon likelihood model.</p></div>
       </section>
       <section class="card" id="outputs">
         <h2>Outputs</h2>

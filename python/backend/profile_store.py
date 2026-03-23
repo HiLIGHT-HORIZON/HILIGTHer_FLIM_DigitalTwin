@@ -27,6 +27,14 @@ def _simplified_profile_key(value: str) -> str:
     return text
 
 
+def _profile_search_tokens(value: str) -> list[str]:
+    raw = str(value or "").strip().lower()
+    cleaned = "".join(ch if ch.isalnum() else " " for ch in raw)
+    tokens = [token for token in cleaned.split() if token]
+    drop = {"ideal", "profile", "instrument", "bins"}
+    return [token for token in tokens if token not in drop]
+
+
 class InstrumentProfileStore:
     """Versioned JSON storage for instrument profiles."""
 
@@ -47,10 +55,14 @@ class InstrumentProfileStore:
             return None
         wanted_key = _normalise_profile_key(wanted)
         wanted_simple = _simplified_profile_key(wanted)
+        wanted_tokens = _profile_search_tokens(wanted)
+        best_partial_match: Optional[str] = None
+        best_partial_score = -1
         for entry in self.list_profiles():
             entry_name = str(entry.get("name", "")).strip()
             entry_path = str(entry.get("path", "")).strip()
             entry_filename = os.path.splitext(os.path.basename(entry_path))[0]
+            entry_tokens = set(_profile_search_tokens(entry_name) + _profile_search_tokens(entry_filename))
             if (
                 entry_name == wanted
                 or _normalise_profile_key(entry_name) == wanted_key
@@ -59,6 +71,13 @@ class InstrumentProfileStore:
                 or _simplified_profile_key(entry_filename) == wanted_simple
             ):
                 return entry.get("path")
+            if wanted_tokens:
+                score = sum(1 for token in wanted_tokens if token in entry_tokens)
+                if score > best_partial_score and score > 0:
+                    best_partial_score = score
+                    best_partial_match = entry.get("path")
+        if best_partial_match and best_partial_score >= max(2, len(wanted_tokens) - 1):
+            return best_partial_match
         candidate = self._profile_path(wanted)
         return candidate if os.path.exists(candidate) else None
 

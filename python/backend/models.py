@@ -135,7 +135,7 @@ class PhysicsConfig(BaseModel):
     precision_photons: int = 2000
     precision_accuracy_pvalue: float = 0.0001
     precision_bootstrap_samples: int = 2000
-    precision_ci_level: float = 95.0
+    precision_ci_level: float = 99.7
     sweep_autoplay: bool = True
 
     # Optimization Controller
@@ -144,7 +144,7 @@ class PhysicsConfig(BaseModel):
     optimization_mode: str = "sequential"  # legacy compatibility field; joint optimisation now alternates sequentially
     optimization_first: str = "detection"  # detection, excitation
     optimization_iterations: int = 20
-    optimization_f_photon_basis: str = "period"  # period, all, collected
+    optimization_f_photon_basis: str = "collected"  # collected, period, all
     optimization_objective: str = "fisher_throughput"  # fisher_information, fisher_throughput, photon_efficiency_auc, throughput_auc
     optimization_max_fi_loss_pct: float = 5.0
     optimization_realtime_visualization: bool = False

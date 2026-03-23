@@ -16,7 +16,7 @@ def test_mcp_connection():
     }
     
     request_str = json.dumps(request)
-    full_request = f"Content-Length: {len(request_str)}\r\n\r\n{request_str}"
+    full_request = f"{request_str}\n"
     
     # Run the server
     process = subprocess.Popen(

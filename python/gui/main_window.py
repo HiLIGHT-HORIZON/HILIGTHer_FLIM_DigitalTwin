@@ -88,6 +88,7 @@ class HILIGHTMainWindow(QMainWindow):
         self.phasor_widget = PhasorWidget()
         self.decay_widget = DecayWidget()
         self.control_widget = ControlWidget()
+        self.control_widget.decay_model_store = self.decay_model_store
         self.control_widget.custom_model_editor_requested.connect(self.open_custom_model_editor)
         self.fisher_widget = FisherWidget()
         self.mle_accuracy_widget = MLEAccuracyWidget()
@@ -106,6 +107,7 @@ class HILIGHTMainWindow(QMainWindow):
         self.optimization_baseline_snapshot = None
         self.optimization_x_range = None
         self.optimization_ideal_f = None
+        self.optimization_ideal_f_conditional = None
         self.optimization_autoplay_previous = None
         self.last_validation_run = None
         self.validation_fit_summary = None
@@ -545,6 +547,9 @@ class HILIGHTMainWindow(QMainWindow):
         self.control_widget.btn_manage_inst.clicked.connect(self.open_instrument_manager)
         self.control_widget.chk_opt_detection.toggled.connect(self._on_optimization_scope_toggled)
         self.control_widget.chk_opt_excitation.toggled.connect(self._on_optimization_scope_toggled)
+        self.control_widget.radio_f_basis_period.toggled.connect(self._on_f_basis_changed)
+        self.control_widget.radio_f_basis_all.toggled.connect(self._on_f_basis_changed)
+        self.control_widget.radio_f_basis_collected.toggled.connect(self._on_f_basis_changed)
         self.control_widget.advanced_config_changed.connect(self.refresh_diagnostics)
         
         # Auto-refresh diagnostics on any param change
@@ -709,6 +714,172 @@ class HILIGHTMainWindow(QMainWindow):
         cfg = self._coerce_physics_config(cfg_like)
         return float(self.engine._throughput_metric(cfg, float(reference_excitation_area)))
 
+    def _resolvability_enabled(self, cfg_like):
+        cfg = self._coerce_physics_config(cfg_like)
+        return (
+            str(getattr(cfg, "decay_model", "exponential")).lower() == "exponential"
+            and int(getattr(cfg, "n_components", 1)) == 1
+            and str(getattr(cfg, "f_x_param", "tau1")).lower() == "tau1"
+        )
+
+    def _current_f_basis_mode(self):
+        cw = self.control_widget
+        if cw.radio_f_basis_collected.isChecked():
+            return "collected"
+        if cw.radio_f_basis_all.isChecked():
+            return "all"
+        return "period"
+
+    def _selected_photon_budget(self, cfg_like, collected_budget):
+        cfg = self._coerce_physics_config(cfg_like)
+        total_budget = float(max(getattr(cfg, "precision_photons", 0), 0.0))
+        mode = self._current_f_basis_mode()
+        collected = np.asarray(collected_budget, dtype=float)
+        if mode == "collected":
+            return np.maximum(collected, 0.0)
+        if mode == "all":
+            return total_budget
+        return total_budget * float(self.engine._acquisition_period_fraction(cfg))
+
+    def _rescale_f_from_conditional(self, x_range, f_conditional, collected_budget, cfg_like):
+        x_arr = np.asarray(x_range, dtype=float)
+        f_cond = np.asarray(f_conditional, dtype=float)
+        collected = np.asarray(collected_budget, dtype=float)
+        target_budget = np.asarray(self._selected_photon_budget(cfg_like, collected), dtype=float)
+        if target_budget.ndim == 0:
+            target_budget = np.full_like(collected, float(target_budget))
+        scale = np.full_like(f_cond, np.nan, dtype=float)
+        valid = np.isfinite(f_cond) & np.isfinite(collected) & (collected > 0.0) & np.isfinite(target_budget) & (target_budget >= 0.0)
+        scale[valid] = np.sqrt(target_budget[valid] / collected[valid])
+        out = np.full_like(f_cond, np.nan, dtype=float)
+        out[valid] = f_cond[valid] * scale[valid]
+        return out
+
+    def _theory_conditional_curve(self, snapshot, x_range):
+        if snapshot.get("theory_f_conditional") is not None:
+            return np.asarray(snapshot["theory_f_conditional"], dtype=float)
+        return np.asarray(snapshot.get("theory_f", np.full(len(x_range), np.nan)), dtype=float)
+
+    def _theory_collected_budget(self, snapshot, x_range):
+        theory_cond = self._theory_conditional_curve(snapshot, x_range)
+        fisher = np.asarray(snapshot.get("theory_fisher", np.full(len(x_range), np.nan)), dtype=float)
+        x_arr = np.asarray(x_range, dtype=float)
+        denom = np.maximum(np.abs(x_arr), 1e-12)
+        budget = fisher * np.square(theory_cond * denom)
+        budget[~np.isfinite(budget)] = np.nan
+        return budget
+
+    def _display_theory_curve(self, snapshot, x_range):
+        theory_cond = self._theory_conditional_curve(snapshot, x_range)
+        collected_budget = self._theory_collected_budget(snapshot, x_range)
+        return self._rescale_f_from_conditional(x_range, theory_cond, collected_budget, snapshot.get("config", self.engine.config))
+
+    def _display_mc_payload(self, mc_payload, cfg_like):
+        if mc_payload is None:
+            return None
+        payload = copy.deepcopy(mc_payload)
+        f_cond = payload.get("f_value_conditional")
+        survival = payload.get("survival_eta")
+        if f_cond is None or survival is None:
+            return payload
+        f_cond_arr = np.asarray(f_cond, dtype=float)
+        survival_arr = np.asarray(survival, dtype=float)
+        total_budget = float(max(getattr(self._coerce_physics_config(cfg_like), "precision_photons", 0), 0.0))
+        collected_budget = total_budget * survival_arr
+        f_eff = self._rescale_f_from_conditional(np.arange(len(f_cond_arr), dtype=float), f_cond_arr, collected_budget, cfg_like)
+        payload["f_value"] = f_eff
+        payload["f_value_effective"] = np.array(f_eff, copy=True)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            payload["efficiency"] = np.clip(1.0 / np.square(np.maximum(f_eff, 1e-12)), 0.0, 1.0)
+        if payload.get("f_ci_lower") is not None and payload.get("f_ci_upper") is not None:
+            f_ci_lower = np.asarray(payload["f_ci_lower"], dtype=float)
+            f_ci_upper = np.asarray(payload["f_ci_upper"], dtype=float)
+            cond_lower = np.asarray(payload.get("f_value_conditional", f_ci_lower), dtype=float)
+            valid = np.isfinite(cond_lower) & np.isfinite(f_cond_arr) & (f_cond_arr > 0)
+            scale = np.full_like(f_cond_arr, np.nan, dtype=float)
+            scale[valid] = f_eff[valid] / f_cond_arr[valid]
+            payload["f_ci_lower"] = f_ci_lower * scale
+            payload["f_ci_upper"] = f_ci_upper * scale
+            with np.errstate(divide="ignore", invalid="ignore"):
+                payload["efficiency_ci_lower"] = np.clip(1.0 / np.square(np.maximum(np.asarray(payload["f_ci_upper"], dtype=float), 1e-12)), 0.0, 1.0)
+                payload["efficiency_ci_upper"] = np.clip(1.0 / np.square(np.maximum(np.asarray(payload["f_ci_lower"], dtype=float), 1e-12)), 0.0, 1.0)
+        return payload
+
+    def _redisplay_last_precision_run(self):
+        report = self.last_precision_run
+        if not report:
+            return
+        x_range = np.asarray(report["x_range"], dtype=float)
+        ideal_f = np.asarray(report["ideal_f"], dtype=float)
+        ideal_f_conditional = np.asarray(report.get("ideal_f_conditional", report["ideal_f"]), dtype=float)
+        target_label = report.get("x_label", self._current_target_label())
+        self.fisher_widget.set_xaxis_label(target_label)
+        self.mle_accuracy_widget.set_xaxis_label(f"Ground Truth {target_label}")
+        reference_excitation_area = self.engine._excitation_area_and_peak(self._coerce_physics_config(report["config"]))[0]
+        plot_results = {}
+        accuracy_results = {}
+        frames = []
+        for item in report.get("series", []):
+            label = item["label"]
+            throughput_scale = self._precision_throughput_scale(item.get("config", report["config"]), reference_excitation_area)
+            theory_f = self._display_theory_curve(item, x_range)
+            plot_results[f"Theory | {label}"] = {
+                "y": theory_f,
+                "conditional_f": np.asarray(item.get("theory_f_conditional", item["theory_f"]), dtype=float),
+                "photon_count": float(getattr(self._coerce_physics_config(item.get("config", report["config"])), "precision_photons", 0.0)),
+                "resolvability_enabled": self._resolvability_enabled(item.get("config", report["config"])),
+                "throughput_scale": throughput_scale,
+            }
+            mc_payload = self._display_mc_payload(item.get("mc"), item.get("config", report["config"]))
+            if mc_payload is not None:
+                plot_results[f"Monte Carlo | {label}"] = {
+                    "y": np.asarray(mc_payload["f_value"], dtype=float),
+                    "conditional_f": np.asarray(mc_payload.get("f_value_conditional", mc_payload["f_value"]), dtype=float),
+                    "conditional_f_ci_lower": None if mc_payload.get("f_ci_lower_conditional") is None else np.asarray(mc_payload["f_ci_lower_conditional"], dtype=float),
+                    "conditional_f_ci_upper": None if mc_payload.get("f_ci_upper_conditional") is None else np.asarray(mc_payload["f_ci_upper_conditional"], dtype=float),
+                    "photon_count": float(getattr(self._coerce_physics_config(item.get("config", report["config"])), "precision_photons", 0.0)),
+                    "resolvability_enabled": self._resolvability_enabled(item.get("config", report["config"])),
+                    "compatible": np.asarray(mc_payload["compatible"], dtype=bool),
+                    "f_ci_lower": np.asarray(mc_payload["f_ci_lower"], dtype=float),
+                    "f_ci_upper": np.asarray(mc_payload["f_ci_upper"], dtype=float),
+                    "efficiency_ci_lower": np.asarray(mc_payload["efficiency_ci_lower"], dtype=float),
+                    "efficiency_ci_upper": np.asarray(mc_payload["efficiency_ci_upper"], dtype=float),
+                    "throughput_scale": throughput_scale,
+                }
+                accuracy_results[label] = {
+                    "mean": np.asarray(mc_payload["mean_tau"], dtype=float),
+                    "std": np.asarray(mc_payload["std_tau"], dtype=float),
+                }
+            frames.append(copy.deepcopy(item["diagnostics_frame"]))
+        self.fisher_widget.plot_batch(
+            x_range,
+            plot_results,
+            ideal_x=x_range,
+            ideal_f=ideal_f,
+            ideal_conditional_f=ideal_f_conditional,
+            ideal_throughput_scale=1.0,
+            ideal_photon_count=float(getattr(self._coerce_physics_config(report["config"]), "precision_photons", 0.0)),
+        )
+        if accuracy_results:
+            self.mle_accuracy_widget.plot_accuracy(x_range, accuracy_results)
+        self.diagnostics_widget.set_sweep_frames(frames)
+
+    def _on_f_basis_changed(self, checked=False):
+        if not checked or self.loading_config_into_ui:
+            return
+        self.engine.config.optimization_f_photon_basis = self._current_f_basis_mode()
+        if self.last_precision_run and not self.optimization_mode_active:
+            self._redisplay_last_precision_run()
+        elif self.last_optimization_run:
+            self._display_optimization_snapshots(
+                self.last_optimization_run["x_range"],
+                self.last_optimization_run["ideal_f"],
+                self.last_optimization_run["snapshots"],
+                focus_last=True,
+                resume_autoplay=False,
+                ideal_f_conditional=self.last_optimization_run.get("ideal_f_conditional", self.last_optimization_run["ideal_f"]),
+            )
+
     def _build_optimization_snapshot(self, cfg, label, objective=None, min_f=None):
         original_config = self.engine.config
         try:
@@ -716,11 +887,27 @@ class HILIGHTMainWindow(QMainWindow):
             self.engine.invalidate_grid()
             x_range = self._build_precision_x_range(self.engine.config)
             _, ideal_f = self.engine.compute_ideal_reference(x_range, int(self.engine.config.precision_photons))
+            if str(getattr(self.engine.config, "optimization_f_photon_basis", "collected")).lower() == "collected":
+                ideal_f_conditional = np.array(ideal_f, copy=True)
+            else:
+                _, ideal_f_conditional = self.engine.compute_ideal_reference(
+                    x_range,
+                    int(self.engine.config.precision_photons),
+                    photon_basis_mode="collected",
+                )
             theory_fi, theory_f = self.engine.compute_fisher_info(
                 x_range,
                 int(self.engine.config.precision_photons),
                 photon_basis_mode=getattr(self.engine.config, "optimization_f_photon_basis", "period"),
             )
+            if str(getattr(self.engine.config, "optimization_f_photon_basis", "collected")).lower() == "collected":
+                theory_f_conditional = np.array(theory_f, copy=True)
+            else:
+                _, theory_f_conditional = self.engine.compute_fisher_info(
+                    x_range,
+                    int(self.engine.config.precision_photons),
+                    photon_basis_mode="collected",
+                )
             frame = self._create_diagnostics_frame(self.engine.config, label)
             frame["background_curves"] = self._build_precision_pdf_ensemble(self.engine.config, x_range)
             gate_edges = np.asarray(self.engine.config.gate_edges, dtype=float)
@@ -731,7 +918,9 @@ class HILIGHTMainWindow(QMainWindow):
                 "gate_count": int(max(0, gate_edges.size - 1)),
                 "x_range": np.array(x_range, copy=True),
                 "ideal_f": np.array(ideal_f, copy=True),
+                "ideal_f_conditional": np.array(ideal_f_conditional, copy=True),
                 "theory_f": np.array(theory_f, copy=True),
+                "theory_f_conditional": np.array(theory_f_conditional, copy=True),
                 "theory_fisher": np.array(theory_fi, copy=True),
                 "accuracy": self._predicted_accuracy_from_theory(x_range, theory_f, int(self.engine.config.precision_photons)),
                 "diagnostics_frame": frame,
@@ -812,11 +1001,12 @@ class HILIGHTMainWindow(QMainWindow):
             self.diagnostics_widget.pause_playback()
         self.optimization_autoplay_previous = None
 
-    def _display_optimization_snapshots(self, x_range, ideal_f, snapshots, focus_last=False, resume_autoplay=False):
+    def _display_optimization_snapshots(self, x_range, ideal_f, snapshots, focus_last=False, resume_autoplay=False, ideal_f_conditional=None):
         if not snapshots:
             return
         x_arr = np.asarray(x_range, dtype=float)
         ideal_arr = np.asarray(ideal_f, dtype=float)
+        ideal_cond_arr = np.asarray(ideal_f if ideal_f_conditional is None else ideal_f_conditional, dtype=float)
         reference_excitation_area = self.engine._excitation_area_and_peak(self.engine.config)[0]
         target_label = self.control_widget.param_rows[self.engine.config.f_x_param]['label'].text().replace(":", "")
         self.fisher_widget.set_xaxis_label(target_label)
@@ -829,13 +1019,21 @@ class HILIGHTMainWindow(QMainWindow):
             label = snapshot["label"]
             throughput_scale = self._precision_throughput_scale(snapshot.get("config", self.engine.config), reference_excitation_area)
             plot_results[f"Theory | {label}"] = {
-                "y": np.asarray(snapshot["theory_f"], dtype=float),
+                "y": self._display_theory_curve(snapshot, x_arr),
+                "conditional_f": np.asarray(snapshot.get("theory_f_conditional", snapshot["theory_f"]), dtype=float),
+                "photon_count": float(getattr(self._coerce_physics_config(snapshot.get("config", self.engine.config)), "precision_photons", 0.0)),
+                "resolvability_enabled": self._resolvability_enabled(snapshot.get("config", self.engine.config)),
                 "throughput_scale": throughput_scale,
             }
-            mc_payload = snapshot.get("mc")
+            mc_payload = self._display_mc_payload(snapshot.get("mc"), snapshot.get("config", self.engine.config))
             if mc_payload is not None:
                 plot_results[f"Monte Carlo | {label}"] = {
                     "y": np.asarray(mc_payload["f_value"], dtype=float),
+                    "conditional_f": np.asarray(mc_payload.get("f_value_conditional", mc_payload["f_value"]), dtype=float),
+                    "conditional_f_ci_lower": None if mc_payload.get("f_ci_lower_conditional") is None else np.asarray(mc_payload["f_ci_lower_conditional"], dtype=float),
+                    "conditional_f_ci_upper": None if mc_payload.get("f_ci_upper_conditional") is None else np.asarray(mc_payload["f_ci_upper_conditional"], dtype=float),
+                    "photon_count": float(getattr(self._coerce_physics_config(snapshot.get("config", self.engine.config)), "precision_photons", 0.0)),
+                    "resolvability_enabled": self._resolvability_enabled(snapshot.get("config", self.engine.config)),
                     "compatible": np.asarray(mc_payload["compatible"], dtype=bool),
                     "f_ci_lower": np.asarray(mc_payload["f_ci_lower"], dtype=float),
                     "f_ci_upper": np.asarray(mc_payload["f_ci_upper"], dtype=float),
@@ -850,7 +1048,15 @@ class HILIGHTMainWindow(QMainWindow):
             frame = copy.deepcopy(snapshot["diagnostics_frame"])
             frames.append(frame)
 
-        self.fisher_widget.plot_batch(x_arr, plot_results, ideal_x=x_arr, ideal_f=ideal_arr, ideal_throughput_scale=1.0)
+        self.fisher_widget.plot_batch(
+            x_arr,
+            plot_results,
+            ideal_x=x_arr,
+            ideal_f=ideal_arr,
+            ideal_conditional_f=ideal_cond_arr,
+            ideal_throughput_scale=1.0,
+            ideal_photon_count=float(getattr(self._coerce_physics_config(self.engine.config), "precision_photons", 0.0)),
+        )
         self.mle_accuracy_widget.plot_accuracy(x_arr, accuracy_results)
         self.diagnostics_widget.set_sweep_frames(frames)
         if focus_last and frames:
@@ -944,13 +1150,21 @@ class HILIGHTMainWindow(QMainWindow):
         self.optimization_baseline_snapshot = copy.deepcopy(baseline)
         self.optimization_x_range = np.array(baseline["x_range"], copy=True)
         self.optimization_ideal_f = np.array(baseline["ideal_f"], copy=True)
+        self.optimization_ideal_f_conditional = np.array(baseline.get("ideal_f_conditional", baseline["ideal_f"]), copy=True)
         self.control_widget.clear_optimization_progress()
         self.control_widget.set_optimization_status(
             "Optimisation mode uses numerical theory only during the run. "
             "Monte Carlo validation is optionally applied to the displayed intermediate states at the end."
         )
         self.control_widget.set_optimization_current_value(self._build_optimization_current_text(baseline))
-        self._display_optimization_snapshots(baseline["x_range"], baseline["ideal_f"], [baseline], focus_last=True, resume_autoplay=False)
+        self._display_optimization_snapshots(
+            baseline["x_range"],
+            baseline["ideal_f"],
+            [baseline],
+            focus_last=True,
+            resume_autoplay=False,
+            ideal_f_conditional=baseline.get("ideal_f_conditional", baseline["ideal_f"]),
+        )
 
     def _on_optimization_scope_toggled(self, _checked):
         if self.optimization_toggle_suppressed:
@@ -983,6 +1197,7 @@ class HILIGHTMainWindow(QMainWindow):
         self.optimization_baseline_snapshot = None
         self.optimization_x_range = None
         self.optimization_ideal_f = None
+        self.optimization_ideal_f_conditional = None
         self.control_widget.clear_optimization_progress()
         self._restore_diagnostics_autoplay_after_optimization()
         self.refresh_diagnostics()
@@ -1038,6 +1253,7 @@ class HILIGHTMainWindow(QMainWindow):
         self.optimization_baseline_snapshot = copy.deepcopy(baseline)
         self.optimization_x_range = np.array(payload["x_range"], copy=True)
         self.optimization_ideal_f = np.array(payload["ideal_f"], copy=True)
+        self.optimization_ideal_f_conditional = np.array(payload.get("ideal_f_conditional", payload["ideal_f"]), copy=True)
         baseline_eff = np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(baseline["theory_f"], dtype=float)), 1e-12))
         self.control_widget.update_optimization_progress(
             [0],
@@ -1052,7 +1268,14 @@ class HILIGHTMainWindow(QMainWindow):
         )
         self.control_widget.set_optimization_current_value(self._build_optimization_current_text(baseline))
         if self.control_widget.chk_optimization_realtime.isChecked():
-            self._display_optimization_snapshots(payload["x_range"], payload["ideal_f"], [baseline], focus_last=True, resume_autoplay=False)
+            self._display_optimization_snapshots(
+                payload["x_range"],
+                payload["ideal_f"],
+                [baseline],
+                focus_last=True,
+                resume_autoplay=False,
+                ideal_f_conditional=payload.get("ideal_f_conditional", payload["ideal_f"]),
+            )
 
     def _on_optimization_progress_ready(self, payload):
         iterations = np.asarray(payload["iterations"], dtype=float)
@@ -1089,17 +1312,20 @@ class HILIGHTMainWindow(QMainWindow):
                     snapshots,
                     focus_last=True,
                     resume_autoplay=False,
+                    ideal_f_conditional=self.optimization_ideal_f_conditional if self.optimization_ideal_f_conditional is not None else (self.optimization_ideal_f if self.optimization_ideal_f is not None else current["theory_f"]),
                 )
 
     def _on_optimization_finished(self, payload):
         self.optimization_running = False
         self.optimization_x_range = np.array(payload["x_range"], copy=True)
         self.optimization_ideal_f = np.array(payload["ideal_f"], copy=True)
+        self.optimization_ideal_f_conditional = np.array(payload.get("ideal_f_conditional", payload["ideal_f"]), copy=True)
         self._set_optimization_mode_ui(True, running=False)
         self.last_optimization_run = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "x_range": np.array(payload["x_range"], copy=True),
             "ideal_f": np.array(payload["ideal_f"], copy=True),
+            "ideal_f_conditional": np.array(payload.get("ideal_f_conditional", payload["ideal_f"]), copy=True),
             "snapshots": copy.deepcopy(payload["snapshots"]),
             "final_snapshot": copy.deepcopy(payload["final_snapshot"]),
             "final_config": copy.deepcopy(payload["final_config"]),
@@ -1154,6 +1380,7 @@ class HILIGHTMainWindow(QMainWindow):
             payload["snapshots"],
             focus_last=True,
             resume_autoplay=False,
+            ideal_f_conditional=payload.get("ideal_f_conditional", payload["ideal_f"]),
         )
         self._disable_diagnostics_autoplay_for_optimization()
         self.diagnostics_widget.chk_autoplay.setEnabled(True)
@@ -1426,6 +1653,8 @@ class HILIGHTMainWindow(QMainWindow):
             cfg.instr_sweep_fixed_countrate_kcps = 100.0
         cfg.instr_sweep_fixed_deadtime_ns = float(getattr(cfg, "instr_sweep_fixed_deadtime_ns", 45.0))
         cfg.instr_sweep_vals = self._parse_sweep_values(cfg.instr_sweep_param, cw.get_selected_sweep_values_text())
+        if cfg.instr_sweep_active and cfg.instr_sweep_param == "countrate_via_dwell_hz":
+            cfg.precision_photons = 1000
 
     def _create_diagnostics_frame(self, config=None, label="Instrument snapshot"):
         original_config = self.engine.config
@@ -1747,8 +1976,15 @@ class HILIGHTMainWindow(QMainWindow):
         self.statusBar().showMessage(message)
 
     def _build_precision_x_range(self, cfg):
+        lower_bound, upper_bound = self.engine._get_cfg_param_bounds(getattr(cfg, "f_x_param", "tau1"))
         x_min = float(cfg.f_x_min)
         x_max = float(cfg.f_x_max)
+        if lower_bound is not None:
+            x_min = max(x_min, float(lower_bound))
+            x_max = max(x_max, float(lower_bound))
+        if upper_bound is not None:
+            x_min = min(x_min, float(upper_bound))
+            x_max = min(x_max, float(upper_bound))
         n_steps = max(int(cfg.f_x_steps), 2)
         scale = str(cfg.f_x_scale).lower()
 
@@ -1797,6 +2033,16 @@ class HILIGHTMainWindow(QMainWindow):
             return []
 
     def _format_sweep_label(self, param, value, cfg):
+        def _format_rate_hz(rate_hz):
+            rate = float(rate_hz)
+            if rate >= 1e9:
+                return f"{rate / 1e9:g} GHz"
+            if rate >= 1e6:
+                return f"{rate / 1e6:g} MHz"
+            if rate >= 1e3:
+                return f"{rate / 1e3:g} kHz"
+            return f"{rate:g} Hz"
+
         if param == "laser_pulse_fwhm_ns":
             return f"Laser Pulse = {value:g} ns"
         if param == "detector_jitter_ps":
@@ -1810,6 +2056,8 @@ class HILIGHTMainWindow(QMainWindow):
             return f"Number of Gates = {int(round(value))}"
         if param == "deadtime_fixed_countrate_ns":
             return f"Deadtime = {value:g} ns @ {cfg.instr_sweep_fixed_countrate_kcps:g} Kphotons/s"
+        if param == "countrate_via_dwell_hz":
+            return f"Count Rate = {_format_rate_hz(value)}"
         if param == "countrate_fixed_deadtime_kcps":
             return f"Countrate = {value:g} Kphotons/s @ {cfg.instr_sweep_fixed_deadtime_ns:g} ns"
         if param == "multihit_capabilities":
@@ -1867,6 +2115,12 @@ class HILIGHTMainWindow(QMainWindow):
             cfg.detector_deadtime = float(value)
             cfg.metadata["force_precision_deadtime_mc"] = True
             cfg.metadata["countrate_kcps"] = float(cfg.instr_sweep_fixed_countrate_kcps)
+        elif param == "countrate_via_dwell_hz":
+            target_rate_hz = max(float(value), 1.0)
+            cfg.precision_photons = 1000
+            cfg.a_photons = 1000.0
+            cfg.event_pixel_dwell_time_s = float(cfg.precision_photons) / target_rate_hz
+            cfg.metadata["target_countrate_hz"] = target_rate_hz
         elif param == "countrate_fixed_deadtime_kcps":
             cfg.detector_deadtime = float(cfg.instr_sweep_fixed_deadtime_ns)
             cfg.metadata["force_precision_deadtime_mc"] = True
@@ -1967,6 +2221,14 @@ class HILIGHTMainWindow(QMainWindow):
             self.engine.grid_templates = None
             self.engine.grid_tau_axis = None
             _, f_ideal = self.engine.compute_ideal_reference(x_range, int(cfg.precision_photons))
+            if str(getattr(cfg, "optimization_f_photon_basis", "collected")).lower() == "collected":
+                f_ideal_conditional = np.array(f_ideal, copy=True)
+            else:
+                _, f_ideal_conditional = self.engine.compute_ideal_reference(
+                    x_range,
+                    int(cfg.precision_photons),
+                    photon_basis_mode="collected",
+                )
             baseline_reference_area, _ = self.engine._excitation_area_and_peak(baseline_cfg)
 
             plot_results = {}
@@ -2014,6 +2276,9 @@ class HILIGHTMainWindow(QMainWindow):
                     theory_f[point_idx] = f_val
                     plot_results[theory_label] = {
                         "y": np.array(theory_f, copy=True),
+                        "conditional_f": np.array(theory_f, copy=True),
+                        "photon_count": float(getattr(self._coerce_physics_config(sweep_cfg), "precision_photons", 0.0)),
+                        "resolvability_enabled": self._resolvability_enabled(sweep_cfg),
                         "throughput_scale": throughput_scale,
                     }
                     completed_steps += 1
@@ -2025,7 +2290,9 @@ class HILIGHTMainWindow(QMainWindow):
                             plot_results,
                             ideal_x=x_range,
                             ideal_f=f_ideal,
+                            ideal_conditional_f=f_ideal_conditional,
                             ideal_throughput_scale=1.0,
+                            ideal_photon_count=float(getattr(self._coerce_physics_config(sweep_cfg), "precision_photons", 0.0)),
                         )
                         QApplication.processEvents()
 
@@ -2036,8 +2303,20 @@ class HILIGHTMainWindow(QMainWindow):
                     photon_basis_mode=getattr(sweep_cfg, "optimization_f_photon_basis", "period"),
                 )
                 theory_f = np.array(theory_final, copy=True)
+                if str(getattr(sweep_cfg, "optimization_f_photon_basis", "collected")).lower() == "collected":
+                    theory_f_conditional = np.array(theory_f, copy=True)
+                else:
+                    _, theory_conditional = self.engine.compute_fisher_info(
+                        x_range,
+                        int(sweep_cfg.precision_photons),
+                        photon_basis_mode="collected",
+                    )
+                    theory_f_conditional = np.array(theory_conditional, copy=True)
                 plot_results[theory_label] = {
                     "y": theory_f,
+                    "conditional_f": np.array(theory_f_conditional, copy=True),
+                    "photon_count": float(getattr(self._coerce_physics_config(sweep_cfg), "precision_photons", 0.0)),
+                    "resolvability_enabled": self._resolvability_enabled(sweep_cfg),
                     "throughput_scale": throughput_scale,
                 }
                 self.fisher_widget.plot_batch(
@@ -2045,7 +2324,9 @@ class HILIGHTMainWindow(QMainWindow):
                     plot_results,
                     ideal_x=x_range,
                     ideal_f=f_ideal,
+                    ideal_conditional_f=f_ideal_conditional,
                     ideal_throughput_scale=1.0,
+                    ideal_photon_count=float(getattr(self._coerce_physics_config(sweep_cfg), "precision_photons", 0.0)),
                 )
 
                 mc_payload = None
@@ -2071,13 +2352,19 @@ class HILIGHTMainWindow(QMainWindow):
                         mc_f_ci_upper[point_idx] = f_ci_high
                         mc_eff_ci_lower[point_idx] = eff_ci_low
                         mc_eff_ci_upper[point_idx] = eff_ci_high
+                        basis_is_collected = str(getattr(sweep_cfg, "optimization_f_photon_basis", "collected")).lower() == "collected"
                         plot_results[mc_label] = {
                             "y": np.array(mc_f, copy=True),
+                            "conditional_f": np.array(mc_f, copy=True) if basis_is_collected else None,
+                            "conditional_f_ci_lower": np.array(mc_f_ci_lower, copy=True) if basis_is_collected else None,
+                            "conditional_f_ci_upper": np.array(mc_f_ci_upper, copy=True) if basis_is_collected else None,
                             "compatible": np.array(mc_compatible, copy=True),
                             "f_ci_lower": np.array(mc_f_ci_lower, copy=True),
                             "f_ci_upper": np.array(mc_f_ci_upper, copy=True),
                             "efficiency_ci_lower": np.array(mc_eff_ci_lower, copy=True),
                             "efficiency_ci_upper": np.array(mc_eff_ci_upper, copy=True),
+                            "photon_count": float(getattr(self._coerce_physics_config(sweep_cfg), "precision_photons", 0.0)),
+                            "resolvability_enabled": self._resolvability_enabled(sweep_cfg),
                             "throughput_scale": throughput_scale,
                         }
                         accuracy_results[label] = {
@@ -2093,7 +2380,9 @@ class HILIGHTMainWindow(QMainWindow):
                                 plot_results,
                                 ideal_x=x_range,
                                 ideal_f=f_ideal,
+                                ideal_conditional_f=f_ideal_conditional,
                                 ideal_throughput_scale=1.0,
+                                ideal_photon_count=float(getattr(self._coerce_physics_config(sweep_cfg), "precision_photons", 0.0)),
                             )
                             self.mle_accuracy_widget.plot_accuracy(x_range, accuracy_results)
                             QApplication.processEvents()
@@ -2106,6 +2395,11 @@ class HILIGHTMainWindow(QMainWindow):
                     )
                     plot_results[mc_label] = {
                         "y": np.array(mc_payload["f_value"], copy=True),
+                        "conditional_f": np.array(mc_payload.get("f_value_conditional", mc_payload["f_value"]), copy=True),
+                        "conditional_f_ci_lower": np.array(mc_payload.get("f_ci_lower_conditional", np.full(len(x_range), np.nan)), copy=True),
+                        "conditional_f_ci_upper": np.array(mc_payload.get("f_ci_upper_conditional", np.full(len(x_range), np.nan)), copy=True),
+                        "photon_count": float(getattr(self._coerce_physics_config(sweep_cfg), "precision_photons", 0.0)),
+                        "resolvability_enabled": self._resolvability_enabled(sweep_cfg),
                         "compatible": np.array(mc_payload["compatible"], copy=True),
                         "f_ci_lower": np.array(mc_payload["f_ci_lower"], copy=True),
                         "f_ci_upper": np.array(mc_payload["f_ci_upper"], copy=True),
@@ -2122,7 +2416,9 @@ class HILIGHTMainWindow(QMainWindow):
                         plot_results,
                         ideal_x=x_range,
                         ideal_f=f_ideal,
+                        ideal_conditional_f=f_ideal_conditional,
                         ideal_throughput_scale=1.0,
+                        ideal_photon_count=float(getattr(self._coerce_physics_config(sweep_cfg), "precision_photons", 0.0)),
                     )
                     self.mle_accuracy_widget.plot_accuracy(x_range, accuracy_results)
 
@@ -2130,6 +2426,7 @@ class HILIGHTMainWindow(QMainWindow):
                     "label": label,
                     "theory_fisher": np.array(theory_fi, copy=True),
                     "theory_f": np.array(theory_f, copy=True),
+                    "theory_f_conditional": np.array(theory_f_conditional, copy=True),
                     "throughput_scale": throughput_scale,
                     "mc": mc_payload,
                     "diagnostics_frame": frame,
@@ -2140,6 +2437,7 @@ class HILIGHTMainWindow(QMainWindow):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
                 "x_range": np.array(x_range, copy=True),
                 "ideal_f": np.array(f_ideal, copy=True),
+                "ideal_f_conditional": np.array(f_ideal_conditional, copy=True),
                 "series": run_series,
                 "x_label": target_label,
                 "config": copy.deepcopy(baseline_cfg),
@@ -2392,8 +2690,8 @@ class HILIGHTMainWindow(QMainWindow):
                 series_payload.append(
                     self._serialise_snapshot_series(
                         snapshot["label"],
-                        snapshot["theory_f"],
-                        snapshot.get("mc"),
+                        self._display_theory_curve(snapshot, np.asarray(report["x_range"], dtype=float)),
+                        self._display_mc_payload(snapshot.get("mc"), snapshot.get("config")),
                         cfg_like=snapshot.get("config"),
                         reference_excitation_area=reference_excitation_area,
                     )
@@ -2417,8 +2715,8 @@ class HILIGHTMainWindow(QMainWindow):
                 series_payload.append(
                     self._serialise_snapshot_series(
                         item["label"],
-                        item["theory_f"],
-                        item["mc"],
+                        self._display_theory_curve(item, np.asarray(report["x_range"], dtype=float)),
+                        self._display_mc_payload(item.get("mc"), item.get("config")),
                         cfg_like=item.get("config"),
                         reference_excitation_area=reference_excitation_area,
                     )

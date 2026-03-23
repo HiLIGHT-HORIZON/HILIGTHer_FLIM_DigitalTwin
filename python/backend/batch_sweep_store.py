@@ -39,6 +39,10 @@ def _default_sweep_payload() -> Dict[str, Dict[str, Any]]:
             "values": [0, 10, 25, 45, 90],
             "extra": {"count_rate_kcps": 100.0},
         },
+        "countrate_via_dwell_hz": {
+            "title": "Count Rate via Pixel Dwell",
+            "values": [1e5, 1e6, 1e7, 1e8, 1e9],
+        },
         "multihit_capabilities": {
             "title": "Max events/period",
             "values": [1, 2, 4, 8],

@@ -31,7 +31,10 @@ class FisherWidget(QWidget):
         self.batch_data = {}
         self.ideal_tau = None
         self.ideal_f = None
+        self.ideal_conditional_f = None
         self.ideal_throughput_scale = 1.0
+        self.ideal_photon_count = 0.0
+        self.resolvability_default_photon_count = 0
 
         ctrl_layout = QHBoxLayout()
         self.chk_log_x = QCheckBox("Log X")
@@ -44,7 +47,13 @@ class FisherWidget(QWidget):
         self.chk_log_y.setToolTip("Display the precision metric axis on a logarithmic scale.")
 
         self.combo_mode = QComboBox()
-        self.combo_mode.addItems(["F-Value (F)", "Photon Efficiency (F^-2)", "Fisher Throughput"])
+        self.combo_mode.addItems([
+            "F-Value (F)",
+            "Photon Efficiency (F^-2)",
+            "Fisher Throughput",
+            "Resolvability (R)",
+            "Photons For R=3",
+        ])
         self.combo_mode.currentIndexChanged.connect(self.refresh_plot)
         self.combo_mode.setToolTip("Choose whether to display F, photon efficiency, or Fisher throughput.")
 
@@ -73,11 +82,24 @@ class FisherWidget(QWidget):
         self.btn_copy.setMaximumWidth(30)
         self.btn_copy.setStyleSheet("padding: 2px; font-size: 14px;")
 
+        self.lbl_resolvability_photons = QLabel("Photons:")
+        self.lbl_resolvability_photons.setToolTip("Photon count used for the resolvability calculation only.")
+        self.spin_resolvability_photons = QSpinBox()
+        self.spin_resolvability_photons.setRange(1, 2_000_000_000)
+        self.spin_resolvability_photons.setValue(1)
+        self.spin_resolvability_photons.setMaximumWidth(110)
+        self.spin_resolvability_photons.valueChanged.connect(self.refresh_plot)
+        self.spin_resolvability_photons.setToolTip("Override the photon count used to display resolvability R.")
+        self.lbl_resolvability_photons.hide()
+        self.spin_resolvability_photons.hide()
+
         ctrl_layout.addWidget(QLabel("Axes:"))
         ctrl_layout.addWidget(self.chk_log_x)
         ctrl_layout.addWidget(self.chk_log_y)
         ctrl_layout.addWidget(self.btn_reset)
         ctrl_layout.addWidget(self.btn_copy)
+        ctrl_layout.addWidget(self.lbl_resolvability_photons)
+        ctrl_layout.addWidget(self.spin_resolvability_photons)
         ctrl_layout.addStretch()
         ctrl_layout.addWidget(self.chk_smooth_mc)
         ctrl_layout.addWidget(QLabel("Window:"))
@@ -112,6 +134,10 @@ class FisherWidget(QWidget):
             pen=pg.mkPen(color="#10b981", width=1.5, style=Qt.PenStyle.DashLine)
         )
         self.plot_widget.addItem(self.ideal_curve)
+        self.resolvability_limit_curve = pg.PlotDataItem(
+            pen=pg.mkPen(color="#f59e0b", width=1.2, style=Qt.PenStyle.DashLine)
+        )
+        self.plot_widget.addItem(self.resolvability_limit_curve)
 
         self.chk_show_ideal = QCheckBox("Ideal Case")
         self.chk_show_ideal.setChecked(True)
@@ -217,23 +243,61 @@ class FisherWidget(QWidget):
             return "F-Value (F)", "f"
         if mode == 1:
             return "Photon Efficiency (F^-2)", "efficiency"
-        return "Fisher Throughput", "throughput"
+        if mode == 2:
+            return "Fisher Throughput", "throughput"
+        if mode == 3:
+            return "Resolvability (R)", "resolvability"
+        return "Photons Required For R=3", "required_photons"
 
-    def _display_metric_values(self, f_values, throughput_scale):
+    def _display_metric_values(self, f_values, throughput_scale, conditional_f_values=None, photon_count=None):
         _metric_label, metric_key = self._metric_meta()
         if metric_key == "f":
             return np.asarray(f_values, dtype=float)
         efficiency = self._f_to_efficiency(f_values)
         if metric_key == "efficiency":
             return efficiency
-        return efficiency * float(throughput_scale)
+        if metric_key == "throughput":
+            return efficiency * float(throughput_scale)
+        cond_f = np.asarray(conditional_f_values if conditional_f_values is not None else f_values, dtype=float)
+        photons = float(max(photon_count if photon_count is not None else 0.0, 0.0))
+        if metric_key == "resolvability":
+            return np.sqrt(photons / np.maximum(8.0 * np.square(np.maximum(cond_f, 1e-12)), 1e-12))
+        return 72.0 * np.square(cond_f)
 
-    def plot_batch(self, x, results_dict, ideal_x=None, ideal_f=None, ideal_throughput_scale=None):
+    def _set_resolvability_photon_default(self, photon_count):
+        new_default = int(max(round(float(photon_count)), 1.0))
+        current = int(self.spin_resolvability_photons.value())
+        previous_default = int(max(self.resolvability_default_photon_count, 1))
+        self.resolvability_default_photon_count = new_default
+        if current == previous_default or current <= 1:
+            self.spin_resolvability_photons.blockSignals(True)
+            self.spin_resolvability_photons.setValue(new_default)
+            self.spin_resolvability_photons.blockSignals(False)
+
+    def _resolvability_photon_count(self, fallback_count):
+        _metric_label, metric_key = self._metric_meta()
+        if metric_key != "resolvability":
+            return float(max(fallback_count if fallback_count is not None else 0.0, 0.0))
+        return float(max(self.spin_resolvability_photons.value(), 1))
+
+    def _update_metric_controls(self, metric_key):
+        show_resolvability_photons = metric_key == "resolvability"
+        self.lbl_resolvability_photons.setVisible(show_resolvability_photons)
+        self.spin_resolvability_photons.setVisible(show_resolvability_photons)
+
+    def plot_batch(self, x, results_dict, ideal_x=None, ideal_f=None, ideal_conditional_f=None, ideal_throughput_scale=None, ideal_photon_count=None):
         if ideal_x is not None:
             self.ideal_tau = np.array(ideal_x, copy=True)
             self.ideal_f = np.array(ideal_f, copy=True)
+            if ideal_conditional_f is None:
+                self.ideal_conditional_f = np.array(ideal_f, copy=True)
+            else:
+                self.ideal_conditional_f = np.array(ideal_conditional_f, copy=True)
         if ideal_throughput_scale is not None:
             self.ideal_throughput_scale = float(ideal_throughput_scale)
+        if ideal_photon_count is not None:
+            self.ideal_photon_count = float(max(ideal_photon_count, 0.0))
+            self._set_resolvability_photon_default(self.ideal_photon_count)
 
         self.batch_data = {}
         x_copy = np.array(x, copy=True)
@@ -247,6 +311,11 @@ class FisherWidget(QWidget):
                     "f_ci_upper": None if entry.get("f_ci_upper") is None else np.array(entry.get("f_ci_upper"), copy=True),
                     "efficiency_ci_lower": None if entry.get("efficiency_ci_lower") is None else np.array(entry.get("efficiency_ci_lower"), copy=True),
                     "efficiency_ci_upper": None if entry.get("efficiency_ci_upper") is None else np.array(entry.get("efficiency_ci_upper"), copy=True),
+                    "conditional_f": None if entry.get("conditional_f") is None else np.array(entry.get("conditional_f"), copy=True),
+                    "conditional_f_ci_lower": None if entry.get("conditional_f_ci_lower") is None else np.array(entry.get("conditional_f_ci_lower"), copy=True),
+                    "conditional_f_ci_upper": None if entry.get("conditional_f_ci_upper") is None else np.array(entry.get("conditional_f_ci_upper"), copy=True),
+                    "photon_count": float(entry.get("photon_count", 0.0)),
+                    "resolvability_enabled": bool(entry.get("resolvability_enabled", False)),
                     "throughput_scale": float(entry.get("throughput_scale", 1.0)),
                 }
             else:
@@ -258,12 +327,17 @@ class FisherWidget(QWidget):
                     "f_ci_upper": None,
                     "efficiency_ci_lower": None,
                     "efficiency_ci_upper": None,
+                    "conditional_f": None,
+                    "conditional_f_ci_lower": None,
+                    "conditional_f_ci_upper": None,
+                    "photon_count": 0.0,
+                    "resolvability_enabled": False,
                     "throughput_scale": 1.0,
                 }
 
         self.refresh_plot()
 
-    def update_data(self, x, f, label="Simulated", ideal_x=None, ideal_f=None, is_batch=False):
+    def update_data(self, x, f, label="Simulated", ideal_x=None, ideal_f=None, ideal_conditional_f=None, is_batch=False):
         if not is_batch:
             self.batch_data = {}
         self.batch_data[label] = {
@@ -274,11 +348,20 @@ class FisherWidget(QWidget):
             "f_ci_upper": None,
             "efficiency_ci_lower": None,
             "efficiency_ci_upper": None,
+            "conditional_f": None,
+            "conditional_f_ci_lower": None,
+            "conditional_f_ci_upper": None,
+            "photon_count": 0.0,
+            "resolvability_enabled": False,
             "throughput_scale": 1.0,
         }
         if ideal_x is not None:
             self.ideal_tau = np.array(ideal_x, copy=True)
             self.ideal_f = np.array(ideal_f, copy=True)
+            if ideal_conditional_f is None:
+                self.ideal_conditional_f = np.array(ideal_f, copy=True)
+            else:
+                self.ideal_conditional_f = np.array(ideal_conditional_f, copy=True)
         self.refresh_plot()
 
     def clear_curves(self):
@@ -287,6 +370,7 @@ class FisherWidget(QWidget):
         self.batch_data = {}
         self.series_groups = {}
         self.ideal_curve.setData([], [])
+        self.resolvability_limit_curve.setData([], [])
 
     def clear_data(self):
         self.clear_curves()
@@ -397,6 +481,7 @@ class FisherWidget(QWidget):
         x_max = float(np.max(x_valid))
         y_min = float(np.min(y_valid))
         y_max = float(np.max(y_valid))
+        _metric_label, metric_key = self._metric_meta()
 
         if self.chk_log_x.isChecked():
             if np.isclose(x_min, x_max):
@@ -425,6 +510,9 @@ class FisherWidget(QWidget):
             x_range_max = x_max
 
         if self.chk_log_y.isChecked():
+            if metric_key == "resolvability":
+                y_min = 1.0
+                y_max = max(y_max, 3.0)
             if np.isclose(y_min, y_max):
                 y_min *= 0.9
                 y_max *= 1.1
@@ -439,6 +527,9 @@ class FisherWidget(QWidget):
                 y_range_min = log_min - log_pad
                 y_range_max = log_max + log_pad
         else:
+            if metric_key == "resolvability":
+                y_min = 0.0
+                y_max = max(y_max, 3.0)
             if np.isclose(y_min, y_max):
                 span = max(abs(y_min) * 0.05, 1e-6)
                 y_min -= span
@@ -466,6 +557,8 @@ class FisherWidget(QWidget):
         metric, metric_key = self._metric_meta()
         self.plot_widget.setLabel("left", metric)
         self.plot_widget.setLogMode(x=self.chk_log_x.isChecked(), y=self.chk_log_y.isChecked())
+        self.resolvability_limit_curve.setData([], [])
+        self._update_metric_controls(metric_key)
 
         smooth_mc = self.chk_smooth_mc.isChecked()
         smooth_window = self.spin_smooth_window.value()
@@ -484,8 +577,12 @@ class FisherWidget(QWidget):
 
             x = np.array(payload["x"], copy=False)
             f = np.array(payload["y"], copy=False)
+            conditional_f = payload.get("conditional_f")
+            photon_count = self._resolvability_photon_count(payload.get("photon_count", 0.0))
             throughput_scale = float(payload.get("throughput_scale", 1.0))
-            y_data = self._display_metric_values(f, throughput_scale)
+            if metric_key in {"resolvability", "required_photons"} and not bool(payload.get("resolvability_enabled", False)):
+                continue
+            y_data = self._display_metric_values(f, throughput_scale, conditional_f_values=conditional_f, photon_count=photon_count)
             mask = self._valid_mask(x, y_data)
             if not np.any(mask):
                 continue
@@ -497,9 +594,21 @@ class FisherWidget(QWidget):
                 if metric_key == "f":
                     ci_lower = payload.get("f_ci_lower")
                     ci_upper = payload.get("f_ci_upper")
-                else:
+                elif metric_key in {"efficiency", "throughput"}:
                     ci_lower = payload.get("efficiency_ci_lower")
                     ci_upper = payload.get("efficiency_ci_upper")
+                else:
+                    cond_ci_lower = payload.get("conditional_f_ci_lower")
+                    cond_ci_upper = payload.get("conditional_f_ci_upper")
+                    if cond_ci_lower is None or cond_ci_upper is None:
+                        ci_lower = None
+                        ci_upper = None
+                    elif metric_key == "resolvability":
+                        ci_lower = np.sqrt(float(max(photon_count, 0.0)) / np.maximum(8.0 * np.square(np.maximum(np.asarray(cond_ci_upper, dtype=float), 1e-12)), 1e-12))
+                        ci_upper = np.sqrt(float(max(photon_count, 0.0)) / np.maximum(8.0 * np.square(np.maximum(np.asarray(cond_ci_lower, dtype=float), 1e-12)), 1e-12))
+                    else:
+                        ci_lower = 72.0 * np.square(np.asarray(cond_ci_lower, dtype=float))
+                        ci_upper = 72.0 * np.square(np.asarray(cond_ci_upper, dtype=float))
                 has_ci = (
                     ci_lower is not None
                     and ci_upper is not None
@@ -509,7 +618,7 @@ class FisherWidget(QWidget):
                 if has_ci:
                     ci_lower = np.array(ci_lower, copy=True)
                     ci_upper = np.array(ci_upper, copy=True)
-                    if metric_key != "f":
+                    if metric_key == "efficiency":
                         ci_lower = np.minimum(1.0, ci_lower)
                         ci_upper = np.minimum(1.0, ci_upper)
                     if metric_key == "throughput":
@@ -528,7 +637,6 @@ class FisherWidget(QWidget):
                     for segment in self._segment_indices(ci_mask):
                         for item in self._create_ci_band_items(x[segment], ci_lower[segment], ci_upper[segment], color):
                             self._register_item(base_label, "mc", item)
-                    continue
 
             compatible = payload.get("compatible")
             compatible_mask = mask.copy()
@@ -589,7 +697,12 @@ class FisherWidget(QWidget):
                 self._register_item(base_label, "theory", item)
 
         if self.ideal_tau is not None and self.ideal_f is not None:
-            ideal_y = self._display_metric_values(self.ideal_f, self.ideal_throughput_scale)
+            ideal_y = self._display_metric_values(
+                self.ideal_f,
+                self.ideal_throughput_scale,
+                conditional_f_values=self.ideal_conditional_f if self.ideal_conditional_f is not None else self.ideal_f,
+                photon_count=self._resolvability_photon_count(self.ideal_photon_count),
+            )
             ideal_mask = self._valid_mask(self.ideal_tau, ideal_y)
             if np.any(ideal_mask):
                 self.ideal_curve.setData(self.ideal_tau[ideal_mask], ideal_y[ideal_mask])
@@ -602,5 +715,14 @@ class FisherWidget(QWidget):
 
         if all_x and all_y:
             self._apply_tight_ranges(np.concatenate(all_x), np.concatenate(all_y))
+
+        if metric_key == "resolvability" and all_x:
+            x_concat = np.concatenate(all_x)
+            x_mask = np.isfinite(x_concat)
+            if self.chk_log_x.isChecked():
+                x_mask &= x_concat > 0
+            if np.any(x_mask):
+                x_line = np.array([np.min(x_concat[x_mask]), np.max(x_concat[x_mask])], dtype=float)
+                self.resolvability_limit_curve.setData(x_line, np.full(2, 3.0, dtype=float))
 
         self._apply_visibility()

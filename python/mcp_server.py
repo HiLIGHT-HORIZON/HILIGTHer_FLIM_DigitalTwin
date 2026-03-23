@@ -6,39 +6,43 @@ from typing import Any, Dict
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from backend.service_api import DigitalTwinService
-from mcp_prompts import get_prompts
+
+_SERVICE = None
+_PROMPTS = None
 
 
-SERVICE = DigitalTwinService()
-PROMPTS = get_prompts()
-SERVER_INFO = {"name": "hilighter-digital-twin-mcp", "version": "1.5.0"}
+def get_service():
+    global _SERVICE
+    if _SERVICE is None:
+        from backend.service_api import DigitalTwinService
+        _SERVICE = DigitalTwinService()
+    return _SERVICE
+
+
+def get_prompts_map():
+    global _PROMPTS
+    if _PROMPTS is None:
+        from mcp_prompts import get_prompts
+        _PROMPTS = get_prompts()
+    return _PROMPTS
+
+
+SERVER_INFO = {"name": "hilighter-digital-twin-mcp", "version": "1.6.0"}
 
 
 def _read_message():
-    headers = {}
-    while True:
-        line = sys.stdin.buffer.readline()
-        if not line:
-            return None
-        line = line.decode("utf-8").strip()
-        if not line:
-            break
-        key, value = line.split(":", 1)
-        headers[key.strip().lower()] = value.strip()
-    length = int(headers.get("content-length", "0"))
-    if length <= 0:
+    line = sys.stdin.readline()
+    if not line:
         return None
-    payload = sys.stdin.buffer.read(length)
-    return json.loads(payload.decode("utf-8"))
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError:
+        return None
 
 
 def _write_message(message: Dict[str, Any]):
-    payload = json.dumps(message).encode("utf-8")
-    header = f"Content-Length: {len(payload)}\r\n\r\n".encode("utf-8")
-    sys.stdout.buffer.write(header)
-    sys.stdout.buffer.write(payload)
-    sys.stdout.buffer.flush()
+    sys.stdout.write(json.dumps(message) + "\n")
+    sys.stdout.flush()
 
 
 def _success(msg_id, result):
@@ -204,46 +208,101 @@ def _tool_definitions():
                 "required": ["source", "profile_name"],
             },
         },
+        {
+            "name": "list_vendor_sources",
+            "description": "List the vendor documentation files available under docs/vendors_info for LLM-guided instrument profile creation.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "read_vendor_source",
+            "description": "Read one vendor document from docs/vendors_info, extract text, and suggest an instrument-profile patch.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "source_name": {"type": "string"},
+                    "max_chars": {"type": "integer"},
+                },
+                "required": ["source_name"],
+            },
+        },
+        {
+            "name": "get_instrument_profile_schema",
+            "description": "Return the expected JSON structure and focus fields for instrument-definition profiles.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "draft_instrument_profile",
+            "description": "Merge vendor sources into a draft instrument-definition JSON, identify missing specifications, and generate follow-up questions for the user.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "profile_name": {"type": "string"},
+                    "sources": {"type": "array", "items": {"type": "string"}},
+                    "component_names": {"type": "array", "items": {"type": "string"}},
+                    "description": {"type": "string"},
+                    "max_chars": {"type": "integer"},
+                },
+                "required": ["profile_name", "sources"],
+            },
+        },
+        {
+            "name": "finalize_instrument_profile",
+            "description": "Save and/or apply a finalized instrument-definition JSON or config patch after the user confirms missing specifications.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "profile_name": {"type": "string"},
+                    "profile_json": {"type": "object"},
+                    "config_patch": {"type": "object"},
+                    "description": {"type": "string"},
+                    "metadata": {"type": "object"},
+                    "apply_profile": {"type": "boolean"},
+                    "save_profile": {"type": "boolean"},
+                },
+                "required": ["profile_name"],
+            },
+        },
     ]
 
 
 def _call_tool(name: str, arguments: Dict[str, Any]):
+    service = get_service()
     if name == "get_status":
-        return SERVICE.get_status()
+        return service.get_status()
     if name == "get_config":
-        return SERVICE.get_config()
+        return service.get_config()
     if name == "update_config":
-        return SERVICE.update_config(arguments.get("config_patch", {}))
+        return service.update_config(arguments.get("config_patch", {}))
     if name == "run_precision":
-        return SERVICE.run_precision(arguments.get("config_patch", {}))
+        return service.run_precision(arguments.get("config_patch", {}))
     if name == "run_optimisation":
-        return SERVICE.run_optimization(arguments.get("config_patch", {}))
+        return service.run_optimization(arguments.get("config_patch", {}))
     if name == "simulate_basic":
-        return SERVICE.simulate_basic(arguments)
+        return service.simulate_basic(arguments)
     if name == "simulate_advanced":
-        return SERVICE.simulate_advanced(arguments)
+        return service.simulate_advanced(arguments)
     if name == "get_data_summary":
-        return SERVICE.get_data_summary()
+        return service.get_data_summary()
     if name == "get_results_snapshot":
-        return SERVICE.get_results_snapshot()
+        return service.get_results_snapshot()
     if name == "get_tau_map":
-        return SERVICE.get_tau_map()
+        return service.get_tau_map()
     if name == "get_phasor_map":
-        return SERVICE.get_phasor_map(harmonic=int(arguments.get("harmonic", 1)))
+        return service.get_phasor_map(harmonic=int(arguments.get("harmonic", 1)))
     if name == "get_theoretical_locus":
-        return SERVICE.get_theoretical_locus()
+        return service.get_theoretical_locus()
     if name == "get_pixel_analysis":
-        return SERVICE.get_pixel_analysis(int(arguments["y"]), int(arguments["x"]))
+        return service.get_pixel_analysis(int(arguments["y"]), int(arguments["x"]))
     if name == "get_diagnostics_snapshot":
-        return SERVICE.get_diagnostics_snapshot(arguments.get("tau_ref"))
+        return service.get_diagnostics_snapshot(arguments.get("tau_ref"))
     if name == "get_gui_schema":
-        return SERVICE.get_gui_schema()
+        return service.get_gui_schema()
     if name == "save_session":
-        return SERVICE.save_session(str(arguments["session_id"]))
+        return service.save_session(str(arguments["session_id"]))
     if name == "load_session":
-        return SERVICE.load_session(str(arguments["session_id"]))
+        return service.load_session(str(arguments["session_id"]))
     if name == "ingest_instrument_profile_source":
-        return SERVICE.ingest_instrument_profile_source(
+        return service.ingest_instrument_profile_source(
             source=str(arguments["source"]),
             profile_name=str(arguments["profile_name"]),
             config_patch=arguments.get("config_patch", {}),
@@ -252,11 +311,38 @@ def _call_tool(name: str, arguments: Dict[str, Any]):
             save_profile=bool(arguments.get("save_profile", True)),
             max_chars=int(arguments.get("max_chars", 24000)),
         )
+    if name == "list_vendor_sources":
+        return service.list_vendor_sources()
+    if name == "read_vendor_source":
+        return service.read_vendor_source(
+            source_name=str(arguments["source_name"]),
+            max_chars=int(arguments.get("max_chars", 24000)),
+        )
+    if name == "get_instrument_profile_schema":
+        return service.get_instrument_profile_schema()
+    if name == "draft_instrument_profile":
+        return service.draft_instrument_profile(
+            profile_name=str(arguments["profile_name"]),
+            sources=list(arguments.get("sources", [])),
+            component_names=list(arguments.get("component_names", [])),
+            description=str(arguments.get("description", "")),
+            max_chars=int(arguments.get("max_chars", 24000)),
+        )
+    if name == "finalize_instrument_profile":
+        return service.finalize_instrument_profile(
+            profile_name=str(arguments["profile_name"]),
+            profile_json=arguments.get("profile_json"),
+            config_patch=arguments.get("config_patch"),
+            description=str(arguments.get("description", "")),
+            metadata=arguments.get("metadata"),
+            apply_profile=bool(arguments.get("apply_profile", True)),
+            save_profile=bool(arguments.get("save_profile", True)),
+        )
     raise KeyError(f"Unknown tool: {name}")
 
 
 def _resource_list():
-    return [
+    resources = [
         {"uri": "hilight://status", "name": "Backend Status", "mimeType": "application/json"},
         {"uri": "hilight://config", "name": "Current Config", "mimeType": "application/json"},
         {"uri": "hilight://gui-schema", "name": "GUI Schema", "mimeType": "application/json"},
@@ -265,26 +351,48 @@ def _resource_list():
         {"uri": "hilight://tau-map", "name": "Tau Map", "mimeType": "application/json"},
         {"uri": "hilight://theory-locus", "name": "Theoretical Locus", "mimeType": "application/json"},
         {"uri": "hilight://diagnostics", "name": "Diagnostics Snapshot", "mimeType": "application/json"},
+        {"uri": "hilight://instrument-profile-schema", "name": "Instrument Profile Schema", "mimeType": "application/json"},
+        {"uri": "hilight://vendors-info/index", "name": "Vendor Info Index", "mimeType": "application/json"},
     ]
+    vendors_dir = os.path.join(os.path.dirname(__file__), "..", "docs", "vendors_info")
+    if os.path.isdir(vendors_dir):
+        for filename in sorted(os.listdir(vendors_dir)):
+            path = os.path.join(vendors_dir, filename)
+            if os.path.isfile(path):
+                resources.append(
+                    {
+                        "uri": f"hilight://vendors-info/{filename}",
+                        "name": f"Vendor Info: {filename}",
+                        "mimeType": "application/json",
+                    }
+                )
+    return resources
 
 
 def _resource_read(uri: str):
+    service = get_service()
     if uri == "hilight://status":
-        return SERVICE.get_status()
+        return service.get_status()
     if uri == "hilight://config":
-        return SERVICE.get_config()
+        return service.get_config()
     if uri == "hilight://gui-schema":
-        return SERVICE.get_gui_schema()
+        return service.get_gui_schema()
     if uri == "hilight://data-summary":
-        return SERVICE.get_data_summary()
+        return service.get_data_summary()
     if uri == "hilight://results":
-        return SERVICE.get_results_snapshot()
+        return service.get_results_snapshot()
     if uri == "hilight://tau-map":
-        return SERVICE.get_tau_map()
+        return service.get_tau_map()
     if uri == "hilight://theory-locus":
-        return SERVICE.get_theoretical_locus()
+        return service.get_theoretical_locus()
     if uri == "hilight://diagnostics":
-        return SERVICE.get_diagnostics_snapshot()
+        return service.get_diagnostics_snapshot()
+    if uri == "hilight://instrument-profile-schema":
+        return service.get_instrument_profile_schema()
+    if uri == "hilight://vendors-info/index":
+        return service.list_vendor_sources()
+    if uri.startswith("hilight://vendors-info/"):
+        return service.read_vendor_source(uri.split("hilight://vendors-info/", 1)[1])
     raise KeyError(f"Unknown resource: {uri}")
 
 
@@ -333,10 +441,12 @@ def handle_request(message: Dict[str, Any]):
                 },
             )
         if method == "prompts/list":
-            prompts = [{"name": item["name"], "description": item["description"]} for item in PROMPTS.values()]
+            prompts_map = get_prompts_map()
+            prompts = [{"name": item["name"], "description": item["description"]} for item in prompts_map.values()]
             return _success(msg_id, {"prompts": prompts})
         if method == "prompts/get":
-            prompt = PROMPTS[params["name"]]
+            prompts_map = get_prompts_map()
+            prompt = prompts_map[params["name"]]
             return _success(
                 msg_id,
                 {

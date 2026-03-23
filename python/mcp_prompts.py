@@ -45,6 +45,19 @@ PROMPTS = {
             "When proposing a workflow, map each step to concrete GUI elements such as RUN, EXPORT, TEST, or the Precision and Diagnostics widgets."
         ),
     },
+    "instrument-profile-builder": {
+        "name": "instrument-profile-builder",
+        "description": "Use vendor documentation and MCP tools to build a new instrument-definition JSON with explicit confirmation of missing specs.",
+        "template": (
+            "Use the HILIGHTer MCP to create an instrument profile from vendor documentation. "
+            "Start by reading the instrument-profile schema and the vendors-info index. "
+            "Read the relevant vendor documents, then call draft_instrument_profile with the selected source files and component names. "
+            "Treat missing_or_unconfirmed_specs as questions that must be asked to the user. "
+            "If the vendor documents do not specify a parameter, identify a common or conservative default, present it clearly as an assumption, and ask the user to confirm it. "
+            "After the user confirms the missing items, call finalize_instrument_profile with the completed profile JSON or config patch. "
+            "Do not silently invent hardware specifications. Record confirmed assumptions in metadata."
+        ),
+    },
     "optimisation-loop": {
         "name": "optimisation-loop",
         "description": "Run and review the integrated detection, excitation, or joint optimisation workflow.",
