@@ -35,111 +35,91 @@
         <a href="#tools">Tools</a>
         <a href="#resources">Resources</a>
         <a href="#prompts">Prompts</a>
-        <a href="#mcp-examples">Examples</a>
-        <a href="#mcp-instrument-ingest">Instrument profile ingestion</a>
+        <a href="#profile-workflow">Instrument-profile workflow</a>
       </div>
     </aside>
     <main class="content">
       <section class="hero" id="overview">
         <div class="kicker">MCP</div>
         <h1>Model Context Protocol server</h1>
-        <p>The MCP server exposes the Digital Twin to LLM clients in a tool- and resource-oriented form. It is built on top of the same <code>DigitalTwinService</code> layer used by the HTTP API and desktop.</p>
+        <p>The MCP server exposes the active Digital Twin to LLM clients through tools, resources, and prompts. It sits directly on top of the same <code>DigitalTwinService</code> layer used by the desktop and HTTP API.</p>
       </section>
+
       <section class="card" id="setup">
         <h2>How to run it</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>Start the MCP server as a local process and point your LLM client to it. The server speaks JSON-RPC over standard input/output.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>The server is <code>python/mcp_server.py</code>. It advertises tools, resources, and prompts and uses <code>DigitalTwinService</code> behind the scenes. The repository also includes <code>python/tools/mcp_smoke_test.py</code>.</p></div>
         <pre><code>python python/mcp_server.py
 python python/tools/mcp_smoke_test.py</code></pre>
+        <p>The server uses stdio JSON-RPC. The repository root should be the working directory so relative profile and documentation paths resolve correctly.</p>
       </section>
-      <section class="card">
-        <h2>Using it with LLM hosts</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>An MCP-capable client needs one thing from this project: a local command that launches the server. In this repository that command is <code>python python/mcp_server.py</code>.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>Most hosts ask for a server name, a command, and a working directory. The exact configuration schema varies by client version, so the examples below should be treated as patterns rather than guaranteed drop-in snippets.</p></div>
-        <table>
-          <tr><th>Host</th><th>What to configure</th><th>Practical note</th></tr>
-          <tr><td>Codex / CLI MCP hosts</td><td>Register a stdio server whose command is <code>python python/mcp_server.py</code> and whose working directory is the repo root.</td><td>Use the smoke test first to confirm that the environment can import the backend before connecting the host.</td></tr>
-          <tr><td>Claude Desktop / Claude MCP clients</td><td>Add a local stdio MCP server entry pointing at <code>python python/mcp_server.py</code>.</td><td>Keep the repo root as the working directory so relative imports and profile paths resolve correctly.</td></tr>
-          <tr><td>Gemini / Antigravity IDE style MCP clients</td><td>Define a local tool server with the same stdio command and repo-root working directory.</td><td>Use the prompts exposed by this server to steer the model into the correct workflow before it starts calling tools.</td></tr>
-        </table>
-        <pre><code>{
-  "name": "hilighter-digital-twin-mcp",
-  "command": "python",
-  "args": ["python/mcp_server.py"],
-  "cwd": "C:/path/to/DigitalTwin_Matlab"
-}</code></pre>
-      </section>
+
       <section class="card" id="tools">
         <h2>Tools</h2>
-        <p>The current server exposes status, config, precision, optimisation, simulation, diagnostics, phasor, session, schema, and profile-ingestion tools.</p>
+        <p>The current server advertises status/config tools, precision and optimisation workflows, diagnostics/data tools, session helpers, and instrument-profile drafting/finalisation tools.</p>
         <table>
           <tr><th>Tool</th><th>Purpose</th></tr>
-          <tr><td><code>get_status</code></td><td>Read backend readiness and summary.</td></tr>
-          <tr><td><code>get_config</code> / <code>update_config</code></td><td>Read or patch current configuration.</td></tr>
-          <tr><td><code>run_precision</code></td><td>Run theory and optional MC precision analysis.</td></tr>
-          <tr><td><code>run_optimisation</code></td><td>Run integrated detection/excitation optimisation.</td></tr>
-          <tr><td><code>simulate_basic</code> / <code>simulate_advanced</code></td><td>Create and fit synthetic datasets.</td></tr>
-          <tr><td><code>get_data_summary</code>, <code>get_results_snapshot</code>, <code>get_tau_map</code>, <code>get_phasor_map</code>, <code>get_pixel_analysis</code>, <code>get_diagnostics_snapshot</code>, <code>get_theoretical_locus</code></td><td>Read analysis products.</td></tr>
-          <tr><td><code>save_session</code> / <code>load_session</code></td><td>Persist and restore session state.</td></tr>
-          <tr><td><code>ingest_instrument_profile_source</code></td><td>Create, save, and apply profiles from PDFs or webpages.</td></tr>
+          <tr><td><code>get_status</code></td><td>Backend readiness, active effective mode, and data availability.</td></tr>
+          <tr><td><code>get_config</code> / <code>update_config</code></td><td>Read or patch the active configuration.</td></tr>
+          <tr><td><code>run_precision</code></td><td>Run one-dimensional theory and optional Monte Carlo precision analysis.</td></tr>
+          <tr><td><code>run_optimisation</code></td><td>Run the integrated optimisation workflow.</td></tr>
+          <tr><td><code>simulate_basic</code> / <code>simulate_advanced</code></td><td>Generate and fit synthetic datasets.</td></tr>
+          <tr><td><code>get_data_summary</code>, <code>get_results_snapshot</code>, <code>get_tau_map</code>, <code>get_phasor_map</code>, <code>get_pixel_analysis</code>, <code>get_diagnostics_snapshot</code>, <code>get_theoretical_locus</code></td><td>Inspect current backend outputs.</td></tr>
+          <tr><td><code>save_session</code> / <code>load_session</code></td><td>Persist and restore sessions.</td></tr>
+          <tr><td><code>list_vendor_sources</code>, <code>read_vendor_source</code>, <code>get_instrument_profile_schema</code>, <code>draft_instrument_profile</code>, <code>finalize_instrument_profile</code></td><td>LLM-guided instrument-profile creation workflow.</td></tr>
+          <tr><td><code>ingest_instrument_profile_source</code></td><td>Single-source profile extraction helper for PDFs, pages, or local files.</td></tr>
         </table>
-        <p>Recommended usage pattern: read status and config first, then decide whether to update config, run a workflow, or inspect outputs. This avoids an LLM issuing expensive or destructive changes before it understands the current instrument.</p>
       </section>
+
       <section class="card" id="resources">
         <h2>Resources</h2>
-        <p>Resources are read-only named views over backend state.</p>
         <table>
           <tr><th>Resource</th><th>Meaning</th></tr>
-          <tr><td><code>hilight://status</code></td><td>Backend readiness and configuration summary.</td></tr>
+          <tr><td><code>hilight://status</code></td><td>Backend status and effective-mode summary.</td></tr>
           <tr><td><code>hilight://config</code></td><td>Current full configuration.</td></tr>
-          <tr><td><code>hilight://gui-schema</code></td><td>Machine-readable desktop workspace schema.</td></tr>
-          <tr><td><code>hilight://data-summary</code></td><td>Map availability, shapes, and warnings.</td></tr>
+          <tr><td><code>hilight://gui-schema</code></td><td>Machine-readable controller/workspace schema.</td></tr>
+          <tr><td><code>hilight://data-summary</code></td><td>Map availability and warnings.</td></tr>
           <tr><td><code>hilight://results</code></td><td>Current result snapshot.</td></tr>
-          <tr><td><code>hilight://tau-map</code></td><td>Lifetime map only.</td></tr>
-          <tr><td><code>hilight://theory-locus</code></td><td>Phasor theory loci.</td></tr>
-          <tr><td><code>hilight://diagnostics</code></td><td>Time vector, gates, laser profile, and reference PDF.</td></tr>
+          <tr><td><code>hilight://tau-map</code></td><td>Current tau map.</td></tr>
+          <tr><td><code>hilight://theory-locus</code></td><td>Current theoretical phasor locus.</td></tr>
+          <tr><td><code>hilight://diagnostics</code></td><td>Time vector, gates, excitation profile, and reference PDF.</td></tr>
+          <tr><td><code>hilight://instrument-profile-schema</code></td><td>JSON structure expected by the profile tools.</td></tr>
+          <tr><td><code>hilight://vendors-info/index</code> and <code>hilight://vendors-info/&lt;file&gt;</code></td><td>Vendor-document resources from <code>docs/vendors_info/</code>.</td></tr>
         </table>
       </section>
+
       <section class="card" id="prompts">
-        <h2>Prompt pack</h2>
-        <p>The server exposes reusable prompt templates such as <code>precision-audit</code>, <code>instrument-design</code>, <code>data-inspection</code>, <code>workspace-navigation</code>, and <code>optimisation-loop</code>.</p>
-        <table>
-          <tr><th>Prompt</th><th>When to use it</th></tr>
-          <tr><td><code>precision-audit</code></td><td>When the model should review theory, Monte Carlo, and confidence intervals carefully.</td></tr>
-          <tr><td><code>instrument-design</code></td><td>When the model should propose better excitation, detection, or gate designs.</td></tr>
-          <tr><td><code>data-inspection</code></td><td>When the model should interpret current maps, diagnostics, and pixel products.</td></tr>
-          <tr><td><code>workspace-navigation</code></td><td>When the model should guide a user through the desktop workspace by concrete control names.</td></tr>
-          <tr><td><code>optimisation-loop</code></td><td>When the model should analyse an optimisation run rather than just launch one.</td></tr>
-        </table>
+        <h2>Prompts</h2>
+        <p>The server exposes prompt templates that steer an LLM toward repeatable workflows. These are intended as entry prompts, not as a substitute for the tools.</p>
       </section>
-      <section class="card" id="mcp-examples">
-        <h2>Examples of MCP use</h2>
-        <pre><code>1. get_status
-2. get_config
-3. run_precision { "config_patch": { "precision_validate_mc": true } }
-4. get_diagnostics_snapshot
-5. run_optimisation { "config_patch": { "optimize_detection_gates": true } }</code></pre>
-        <pre><code>Use case: instrument-design review
-- prompts/get instrument-design
-- resources/read hilight://config
-- resources/read hilight://diagnostics
-- tools/call run_precision
-- tools/call run_optimisation</code></pre>
-        <pre><code>Use case: validation-image inspection
-- tools/call simulate_advanced
-- tools/call get_results_snapshot
-- tools/call get_phasor_map
-- tools/call get_pixel_analysis { "y": 10, "x": 12 }</code></pre>
-      </section>
-      <section class="card" id="mcp-instrument-ingest">
-        <h2>Instrument profile ingestion from PDFs or webpages</h2>
-        <p>Call <code>ingest_instrument_profile_source</code> first on a source document to obtain extracted text and a suggested patch. Then refine the patch and call it again with <code>save_profile=true</code> and <code>apply_profile=true</code> to persist and activate the result.</p>
-        <pre><code>tools/call ingest_instrument_profile_source {
-  "source": "C:/specs/tcspc-camera.pdf",
-  "profile_name": "TCSPC (vendor spec)",
-  "save_profile": true,
-  "apply_profile": true
-}</code></pre>
+
+      <section class="card" id="profile-workflow">
+        <h2>Instrument-profile workflow for LLMs</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>The current MCP path supports a multi-step profile-building conversation. An LLM can read vendor documents, draft a profile, identify missing assumptions, ask the user for confirmation, then save/apply the final instrument definition.</p>
+        </div>
+        <div class="specialist-box">
+          <h3>For specialists</h3>
+          <p>The preferred workflow is no longer only <code>ingest_instrument_profile_source</code>. The current structured flow is:
+          <br><code>list_vendor_sources</code> -&gt; <code>read_vendor_source</code> -&gt; <code>get_instrument_profile_schema</code> -&gt; <code>draft_instrument_profile</code> -&gt; user confirmation -&gt; <code>finalize_instrument_profile</code>.</p>
+        </div>
+        <pre><code>Example LLM workflow
+1. list_vendor_sources
+2. read_vendor_source { "source_name": "HydraHarp500.pdf" }
+3. read_vendor_source { "source_name": "PMA-40.pdf" }
+4. get_instrument_profile_schema
+5. draft_instrument_profile {
+     "profile_name": "HydraHarp500 + PMA-40",
+     "sources": ["HydraHarp500.pdf", "PMA-40.pdf"],
+     "component_names": ["HydraHarp500", "PMA-40"]
+   }
+6. Ask the user to confirm any missing assumptions
+7. finalize_instrument_profile {
+     "profile_name": "HydraHarp500 + PMA-40",
+     "profile_json": { ... },
+     "save_profile": true,
+     "apply_profile": true
+   }</code></pre>
+        <p>This is the intended workflow for vendor-document-driven instrument creation and the one the manual should now point users toward.</p>
       </section>
     </main>
   </div>

@@ -14,6 +14,14 @@ The core product goals are:
 - preserve and restore complete workspaces and instrument profiles,
 - expose the same functionality through Python, HTTP, desktop automation, and MCP surfaces.
 
+The current product intent also includes:
+
+- explicit separation of collected-photon conditional precision from photon survival,
+- a fast Poisson core that can include a detector transfer function,
+- a slower event-driven detector core used as the explicit chronological reference,
+- structured MCP-assisted instrument-profile drafting and finalisation,
+- publication-oriented clipboard/report export without changing the live widget layout.
+
 ## Sanitised Workspace Layout
 The repository is organised around the active Python application:
 
@@ -77,6 +85,7 @@ The precision workflow produces:
 - configured-instrument theory curves,
 - optional Monte Carlo validation,
 - optional bootstrap confidence intervals and estimator checks,
+- conditional-F, survival, and photon-basis-aware reporting semantics,
 - diagnostics payloads aligned to the same sweep axis,
 - exportable HTML reports and CSV/SVG assets.
 
@@ -112,7 +121,7 @@ The backend configuration object is the single source of truth for:
 - laser-profile and excitation settings,
 - gate geometry and overlap semantics,
 - detector event artefacts such as deadtime, dark counts, afterpulsing, and per-period capacity,
-- Fisher-information photon-basis semantics, with collected-photon estimation and optional rescaling to acquisition-period or full-budget references,
+- Fisher-information photon-basis semantics, with collected-photon estimation as the canonical basis and optional rescaling to acquisition-period or full-budget references,
 - sweep definitions,
 - Monte Carlo and fitting settings,
 - validation-image settings,
@@ -143,6 +152,10 @@ The HTML manual should always describe the current Python workspace, including:
 - the floating support browser opened by `Ctrl+H`,
 - desktop workflow usage,
 - the compact controller layout and simulation-core badge semantics,
+- the current terminology for simulation cores: `Poisson`, `Poisson (+DTF)`, and `Event-driven`,
+- the distinction between conditional precision and photon survival,
+- the current clipboard-export workflow including export-only aspect/font/theme handling,
+- the MCP-driven instrument-profile workflow using vendor sources, draft questions, and finalisation,
 - workspace persistence,
 - service, HTTP, automation, and MCP interfaces,
 - optimisation scope and current limitations,

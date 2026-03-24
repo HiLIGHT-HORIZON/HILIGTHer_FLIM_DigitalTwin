@@ -1,8 +1,8 @@
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+from .clipboard_export import ClipboardExportManager
 
 
 class MapWidget(QWidget):
@@ -21,8 +21,13 @@ class MapWidget(QWidget):
         self.btn_copy.setToolTip("Copy screenshot to clipboard")
         self.btn_copy.setMaximumWidth(30)
         self.btn_copy.clicked.connect(self._copy_to_clipboard)
+        self.btn_export_settings = QPushButton("⚙")
+        self.btn_export_settings.setToolTip("Clipboard export settings")
+        self.btn_export_settings.setMaximumWidth(30)
+        self.btn_export_settings.clicked.connect(self._open_export_settings)
         header.addStretch()
         header.addWidget(self.btn_copy)
+        header.addWidget(self.btn_export_settings)
         layout.addLayout(header)
 
         row = QHBoxLayout()
@@ -77,7 +82,10 @@ class MapWidget(QWidget):
         return {"container": container, "label": title, "view": view}
 
     def _copy_to_clipboard(self):
-        QGuiApplication.clipboard().setPixmap(self.grab())
+        ClipboardExportManager.export_widget("image_viewer", self, parent=self, theme_target=self)
+
+    def _open_export_settings(self):
+        ClipboardExportManager.configure("image_viewer", parent=self)
 
     def set_theme(self, theme_name):
         self.current_theme = str(theme_name).lower()

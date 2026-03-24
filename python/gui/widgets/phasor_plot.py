@@ -1,7 +1,7 @@
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
-from PyQt6.QtGui import QGuiApplication
+from .clipboard_export import ClipboardExportManager
 from PyQt6.QtCore import Qt
 
 
@@ -33,6 +33,11 @@ class PhasorWidget(QWidget):
         self.btn_copy.clicked.connect(self._copy_to_clipboard)
         self.btn_copy.setMaximumWidth(30)
         header.addWidget(self.btn_copy)
+        self.btn_export_settings = QPushButton("⚙")
+        self.btn_export_settings.setToolTip("Clipboard export settings")
+        self.btn_export_settings.clicked.connect(self._open_export_settings)
+        self.btn_export_settings.setMaximumWidth(30)
+        header.addWidget(self.btn_export_settings)
         layout.addLayout(header)
 
         body = QHBoxLayout()
@@ -104,7 +109,10 @@ class PhasorWidget(QWidget):
         self.set_theme("dark")
 
     def _copy_to_clipboard(self):
-        QGuiApplication.clipboard().setPixmap(self.grab())
+        ClipboardExportManager.export_widget("phasor_plot", self, parent=self, theme_target=self)
+
+    def _open_export_settings(self):
+        ClipboardExportManager.configure("phasor_plot", parent=self)
 
     def set_theme(self, theme_name):
         self.current_theme = str(theme_name).lower()

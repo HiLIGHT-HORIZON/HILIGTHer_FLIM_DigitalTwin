@@ -3,7 +3,7 @@ import numpy as np
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
                              QScrollArea, QCheckBox, QFrame, QLabel, QPushButton)
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QGuiApplication
+from .clipboard_export import ClipboardExportManager
 
 class DiagnosticsWidget(QWidget):
     """
@@ -32,12 +32,17 @@ class DiagnosticsWidget(QWidget):
         self.btn_copy.setFixedWidth(30)
         self.btn_copy.setToolTip("Copy this widget to clipboard")
         self.btn_copy.clicked.connect(self._copy_to_clipboard)
+        self.btn_export_settings = QPushButton("⚙")
+        self.btn_export_settings.setFixedWidth(30)
+        self.btn_export_settings.setToolTip("Clipboard export settings")
+        self.btn_export_settings.clicked.connect(self._open_export_settings)
         
         nav_layout.addWidget(self.btn_prev)
         nav_layout.addWidget(self.btn_next)
         nav_layout.addWidget(self.lbl_frame, 1)
         nav_layout.addWidget(self.chk_autoplay)
         nav_layout.addWidget(self.btn_copy)
+        nav_layout.addWidget(self.btn_export_settings)
         root_layout.addLayout(nav_layout)
 
         main_layout = QHBoxLayout()
@@ -108,8 +113,17 @@ class DiagnosticsWidget(QWidget):
         self.set_theme("dark")
 
     def _copy_to_clipboard(self):
-        pixmap = self.grab()
-        QGuiApplication.clipboard().setPixmap(pixmap)
+        ClipboardExportManager.export_widget(
+            "diagnostics_plot",
+            self,
+            parent=self,
+            theme_target=self,
+            export_source=self.plot_widget,
+            export_legend_entries=self._export_legend_entries,
+        )
+
+    def _open_export_settings(self):
+        ClipboardExportManager.configure("diagnostics_plot", parent=self, export_source=self.plot_widget)
 
     def set_theme(self, theme_name):
         self.current_theme = str(theme_name).lower()
@@ -148,6 +162,18 @@ class DiagnosticsWidget(QWidget):
         visible = (state == Qt.CheckState.Checked.value)
         for c in self.gate_curves:
             c.setVisible(visible)
+
+    def _export_legend_entries(self):
+        entries = []
+        if self.chk_irf.isChecked():
+            entries.append({"label": "IRF", "color": "#22d3ee", "style": "line"})
+        if self.chk_pdf.isChecked():
+            entries.append({"label": self.chk_pdf.text(), "color": "#ffffff" if self.current_theme == "dark" else "#111827", "style": "dash"})
+        if self.chk_ensemble.isChecked() and self.bg_curves:
+            entries.append({"label": "PDF Ensemble", "color": "#71717a" if self.current_theme == "dark" else "#64748b", "style": "line"})
+        if self.chk_gates.isChecked() and self.gate_curves:
+            entries.append({"label": "Time Gates", "color": "#3b82f6", "style": "line"})
+        return entries
 
     def update_plot(self, time_vec, gate_shapes, irf=None, pdf=None, label=None, background_curves=None):
         """Updates the diagnostic view with master gate control."""

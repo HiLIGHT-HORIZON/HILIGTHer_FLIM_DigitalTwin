@@ -30,49 +30,93 @@
     <aside class="sidebar">
       <div class="sidebar-card toc">
         <h3>Topics</h3>
-        <a href="#maths">Overview</a>
+        <a href="#overview">Overview</a>
         <a href="#latent-model">Latent optical model</a>
+        <a href="#detector-transfer">Detector transfer and event distortion</a>
         <a href="#fisher">Fisher metrics</a>
-        <a href="#f-value-basis">F-value photon basis</a>
-        <a href="#throughput">Throughput metrics</a>
+        <a href="#f-basis">Photon basis and survival</a>
+        <a href="#resolvability">Resolvability</a>
         <a href="#phasors">Phasors</a>
-        <a href="#optimisation-maths">Optimisation maths</a>
       </div>
     </aside>
     <main class="content">
-      <section class="hero" id="maths">
+      <section class="hero" id="overview">
         <div class="kicker">Maths</div>
         <h1>Mathematical model and code mapping</h1>
-        <p>This page explains the model in plain English and then ties each concept back to the current Python implementation.</p>
+        <p>This page documents the current mathematical intent of the Python Digital Twin and how that intent maps to the implemented backend.</p>
       </section>
+
       <section class="card" id="latent-model">
         <h2>Latent optical model</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>The Digital Twin starts from an idealised fluorescence decay, then shapes it with the laser profile and detector timing model before gates or bins collect photons.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>The latent timing model is built around <code>dt_pdf(t, tau)</code> and <code>dt_excitation(t)</code>. The laser profile is the excitation envelope. Gate distillation converts that continuous timing model into gate-domain probabilities.</p></div>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>The model starts from a latent fluorescence decay, shapes it with the chosen laser/excitation profile, and then lets the detector/gate model decide which photons are actually used.</p>
+        </div>
+        <div class="specialist-box">
+          <h3>For specialists</h3>
+          <p>The latent timing model is built by the decay family and the excitation model in <code>twin_engine.py</code>. Built-in decay models include exponential and stretched-exponential families; custom models are loaded from the decay-model store. Burst excitation is interpreted as a sub-pulse train inside the chosen envelope, not as an independent second excitation model.</p>
+        </div>
+        <p>Conceptually:
+        <br><code>latent decay</code> -&gt; <code>excitation envelope</code> -&gt; <code>detector/gate transfer</code> -&gt; <code>collected photons</code></p>
       </section>
+
+      <section class="card" id="detector-transfer">
+        <h2>Detector transfer and event distortion</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>HILIGHTer now has two detector layers: a fast approximation used in the Poisson core, and a slower chronological event-driven detector model used when explicit detector-event behaviour matters.</p>
+        </div>
+        <div class="specialist-box">
+          <h3>For specialists</h3>
+          <p>The fast path may still use a Poisson observation model, but it can include a detector transfer function (<code>Poisson (+DTF)</code>) so that timing-dependent distortions affect the detected conditional statistics. The event-driven core simulates accepted events chronologically, including resource sharing, arbitration, multihit capacity, and dead time. The event-driven mode is the physical reference; the fast detector-transfer path is the scalable surrogate.</p>
+        </div>
+      </section>
+
       <section class="card" id="fisher">
         <h2>Fisher metrics</h2>
-        <p>The desktop reports three related quantities:
-          <math display="block"><mrow><mi>F</mi><mo>=</mo><msqrt><mfrac><mn>1</mn><mi>I</mi></mfrac></msqrt></mrow></math>
-          <math display="block"><mrow><msup><mi>F</mi><mrow><mo>-</mo><mn>2</mn></mrow></msup><mo>=</mo><mi>I</mi></mrow></math>
-          where <math><mi>I</mi></math> is the Fisher Information carried by the collected photons for the chosen decay parameter.</p>
+        <p>The precision workflow reports related quantities derived from the same underlying collected-photon model.</p>
+        <pre><code>sigma(theta_hat) / theta = F_cond / sqrt(Nc)
+
+p = F_cond^-2
+
+I_tilde = 1 / (theta^2 * F_cond^2)</code></pre>
+        <p>Here <code>Nc</code> is the number of photons actually used by the estimator. In the lifetime case this is the collected-photon budget after the instrument has already removed or distorted events.</p>
       </section>
-      <section class="card" id="f-value-basis">
-        <h2>F-value photon basis</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>The estimator is always judged from the photons that were actually collected. The three options only decide which photon budget is used when reporting <code>F</code>: collected photons, all photons inside the acquisition period, or the full available photon budget.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>The backend first forms the collected-photon conditional timing distribution and computes Fisher Information from that observed channel set. The selected photon basis then rescales the reported metric by the appropriate photon budget, so <code>All in acquisition period</code> and <code>All</code> do not introduce an explicit lost-photon category into the estimator model.</p></div>
+
+      <section class="card" id="f-basis">
+        <h2>Photon basis and survival</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>The important distinction is between precision conditional on the photons that survived and the survival of photons through the instrument.</p>
+        </div>
+        <div class="specialist-box">
+          <h3>For specialists</h3>
+          <p>The backend now treats collected-photon precision as canonical. Reporting modes such as acquisition-period or all-photon <code>F</code> are rescalings by survival, not different estimators. Monte Carlo payloads expose <code>f_value_conditional</code> and <code>survival_eta</code> explicitly.</p>
+        </div>
+        <pre><code>eta = Nc / Nref
+
+F_eff = F_cond / sqrt(eta)</code></pre>
+        <p>In the UI, <code>Compute F-value on</code> changes only the reporting basis. It does not change the collected-photon estimator or the conditional Fisher calculation.</p>
       </section>
-      <section class="card" id="throughput">
-        <h2>Throughput and AUC objectives</h2>
-        <p>The optimisation framework supports instantaneous and area-under-curve throughput-style objectives. Under fixed dose, throughput changes come from information efficiency and detection losses. Under fixed peak, throughput can also increase because the area under the excitation profile is allowed to grow.</p>
+
+      <section class="card" id="resolvability">
+        <h2>Resolvability</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>Resolvability is shown only for the supported case: a single-exponential model with <code>tau1</code> swept on the x-axis.</p>
+        </div>
+        <div class="specialist-box">
+          <h3>For specialists</h3>
+          <p>The widget uses the conditional <code>F</code> and the precision photon count. It also provides the inverse metric: the photons required to reach <code>R = 3</code>. These curves are hidden automatically whenever the run is not the supported single-exponential <code>tau1</code> case.</p>
+        </div>
+        <pre><code>R = sqrt(N / (8 * F_cond^2))
+
+N_(R=3) = 72 * F_cond^2</code></pre>
       </section>
+
       <section class="card" id="phasors">
         <h2>Phasors</h2>
-        <p>The phasor coordinates are computed internally from the gated or binned signal, calibrated with the same laser profile used by the decay model. The widget displays both the universal semicircle and the discrete single-exponential locus implied by the actual gate set.</p>
-      </section>
-      <section class="card" id="optimisation-maths">
-        <h2>Optimisation maths</h2>
-        <p>Detection optimisation can be direct, partition-based, or Fisher-compression-based. Fisher Compression also supports nuisance-aware Schur-complement scoring.</p>
+        <p>The phasor path uses the same timing model and calibration assumptions as the decay model. The widget shows both the universal semicircle and the discrete single-exponential locus implied by the actual gate scheme and harmonic.</p>
       </section>
     </main>
   </div>

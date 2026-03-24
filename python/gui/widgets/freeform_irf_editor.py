@@ -1,8 +1,8 @@
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QWidget
+from .clipboard_export import ClipboardExportManager
 
 
 class FreeFormIRFEditor(QWidget):
@@ -31,10 +31,15 @@ class FreeFormIRFEditor(QWidget):
         self.btn_copy = QPushButton("📋")
         self.btn_copy.setFixedWidth(32)
         self.btn_copy.clicked.connect(self._copy_to_clipboard)
+        self.btn_export_settings = QPushButton("⚙")
+        self.btn_export_settings.setFixedWidth(32)
+        self.btn_export_settings.setToolTip("Clipboard export settings")
+        self.btn_export_settings.clicked.connect(self._open_export_settings)
         info_row.addWidget(self.btn_add)
         info_row.addWidget(self.btn_delete)
         info_row.addWidget(self.btn_reset)
         info_row.addWidget(self.btn_copy)
+        info_row.addWidget(self.btn_export_settings)
         layout.addLayout(info_row)
 
         self.plot = pg.PlotWidget()
@@ -90,7 +95,16 @@ class FreeFormIRFEditor(QWidget):
         
 
     def _copy_to_clipboard(self):
-        QGuiApplication.clipboard().setPixmap(self.grab())
+        ClipboardExportManager.export_widget(
+            "freeform_irf_editor",
+            self,
+            parent=self,
+            theme_target=self,
+            export_source=self.plot,
+        )
+
+    def _open_export_settings(self):
+        ClipboardExportManager.configure("freeform_irf_editor", parent=self, export_source=self.plot)
 
     def _emit_reset_requested(self):
         self.points_changed.emit()

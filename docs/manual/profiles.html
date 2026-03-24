@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="assets/style.css">
   <script defer src="assets/app.js"></script>
 </head>
-<body data-page="index">
+<body data-page="profiles">
   <header class="site-header">
     <div class="header-inner">
       <div class="brand">HILIGHTer Digital Twin<small>Profiles</small></div>
@@ -31,34 +31,64 @@
       <div class="sidebar-card toc">
         <h3>Profiles</h3>
         <a href="#overview">Overview</a>
-        <a href="#json">JSON format</a>
+        <a href="#json">JSON structure</a>
         <a href="#repair">Repair and sanitise</a>
-        <a href="#apply">Apply and preview</a>
-        <a href="#mcp-profile-ingest">MCP-assisted creation</a>
+        <a href="#preview">Preview and apply</a>
+        <a href="#vendor">Vendor profiles</a>
+        <a href="#mcp-workflow">MCP-assisted creation</a>
       </div>
     </aside>
     <main class="content">
       <section class="hero" id="overview">
         <div class="kicker">Profiles</div>
         <h1>Instrument profiles</h1>
-        <p>Profiles are saved controller states representing complete instrument definitions. They are useful for reproducibility, sharing, and switching between reference systems such as TCSPC and gated cameras.</p>
+        <p>Instrument profiles are complete saved controller states representing reproducible virtual instruments. They are the main way to switch between reference systems, vendor-derived configurations, and in-house designs.</p>
       </section>
+
       <section class="card" id="json">
-        <h2>Profile JSON format</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>A profile JSON stores the same essential settings that the controller holds in memory. It is a portable instrument preset.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>Profiles are managed through <code>InstrumentProfileStore</code> and are essentially persisted <code>PhysicsConfig</code> objects plus descriptive metadata.</p></div>
+        <h2>JSON structure</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>A profile stores the active instrument configuration plus descriptive metadata. It is not just a gate preset; it can encode excitation, detector, gating, optimisation defaults, and profile metadata.</p>
+        </div>
+        <div class="specialist-box">
+          <h3>For specialists</h3>
+          <p>The profile store persists versioned JSON under <code>python/profiles/instruments/</code>. The payload is a sanitised <code>PhysicsConfig</code> plus metadata and profile-type information. The expected structure is also exposed through MCP via <code>get_instrument_profile_schema</code>.</p>
+        </div>
       </section>
+
       <section class="card" id="repair">
         <h2>Repair and sanitise</h2>
-        <p>If a saved profile is missing new keys or contains obsolete keys, the profile manager can repair it. The repaired JSON is written back to disk before application, so the same profile is clean the next time it is opened.</p>
+        <p>If an older profile is missing fields or contains obsolete ones, the manager can repair it. Repair writes the sanitised form back to disk, so the file becomes forward-compatible for the next load.</p>
       </section>
-      <section class="card" id="apply">
-        <h2>Apply and preview</h2>
-        <p>Clicking a profile shows compatibility information and a diagnostics preview in the floating manager window. Applying a profile now atomically updates the workspace config instead of relying on partial live widget mutation.</p>
+
+      <section class="card" id="preview">
+        <h2>Preview and apply</h2>
+        <p>The profile manager shows compatibility status and a diagnostics preview before application. The preview now reports gate-property diagnostics such as ideal-gate status, gate count, overlap mode, wrap-around, and gate rise/fall. Applying a profile updates the workspace config atomically.</p>
       </section>
-      <section class="card" id="mcp-profile-ingest">
+
+      <section class="card" id="vendor">
+        <h2>Vendor-derived profiles</h2>
+        <p>The repository now includes vendor-style instrument definitions created from documentation. Profiles can encode:</p>
+        <ul>
+          <li>TCSPC electronics and detector timing limits</li>
+          <li>laser repetition period and equal-bin gate layouts</li>
+          <li>multihit capacity assumptions</li>
+          <li>ideal-gate assumptions where documentation does not specify non-ideal gate shapes</li>
+          <li>laser pulse position and practical detector timing-jitter choices</li>
+        </ul>
+      </section>
+
+      <section class="card" id="mcp-workflow">
         <h2>MCP-assisted profile creation</h2>
-        <p>The MCP tool <code>ingest_instrument_profile_source</code> can extract a profile proposal from a PDF, HTML page, or local text source, then save and apply the resulting profile. See <a href="mcp.html#mcp-instrument-ingest">MCP</a> for examples.</p>
+        <p>The current preferred LLM workflow is:</p>
+        <pre><code>1. list_vendor_sources
+2. read_vendor_source
+3. get_instrument_profile_schema
+4. draft_instrument_profile
+5. ask the user to confirm missing assumptions
+6. finalize_instrument_profile</code></pre>
+        <p>The older <code>ingest_instrument_profile_source</code> tool still exists as a convenience path, but the structured draft/finalise workflow is the current intended one because it lets the model explicitly expose missing assumptions and request confirmation before saving the profile.</p>
       </section>
     </main>
   </div>

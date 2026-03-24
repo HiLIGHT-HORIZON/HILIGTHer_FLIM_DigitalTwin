@@ -17,6 +17,7 @@ from matplotlib.figure import Figure
 import numpy as np
 import pyqtgraph as pg
 from .freeform_irf_editor import FreeFormIRFEditor
+from .clipboard_export import ClipboardExportManager
 try:
     from backend.batch_sweep_store import BatchSweepStore
 except ImportError:
@@ -191,6 +192,7 @@ class ControlWidget(QWidget):
         self._add_param_row_helper = add_param_row
         self.base_param_names = {"tau1", "tau2", "alpha", "background", "beta"}
         self._last_decay_model_key = "exponential"
+        self._last_n_components = int(self.spin_n_comp.value())
 
         # Single selection logic for X-axis (Radio-style)
         self.x_group = {
@@ -219,7 +221,7 @@ class ControlWidget(QWidget):
 
         # Connect architecture changes to visibility
         self.combo_decay_model.currentIndexChanged.connect(self._handle_decay_model_selection_changed)
-        self.spin_n_comp.valueChanged.connect(self.update_param_visibility)
+        self.spin_n_comp.valueChanged.connect(self._handle_component_count_changed)
         self.refresh_decay_model_options("exponential")
         self.update_param_visibility()
 
@@ -523,16 +525,28 @@ class ControlWidget(QWidget):
         burst_l.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
         burst_l.setVerticalSpacing(4)
 
-        lbl_burst_period = QLabel("Pulse distance (ps):")
+        lbl_burst_period = QLabel("Interpulse distance (ps):")
         lbl_burst_period.setMinimumWidth(130)
+        self.lbl_burst_period = lbl_burst_period
         self.spin_burst_period = QDoubleSpinBox()
         self.spin_burst_period.setRange(1.0, 100000.0)
-        self.spin_burst_period.setValue(1000.0)
+        self.spin_burst_period.setValue(100.0)
+        self.spin_burst_period.setKeyboardTracking(False)
         self.spin_burst_period.setToolTip("Peak-to-peak distance between sub-pulses in the burst (ps).")
-        burst_l.addRow(lbl_burst_period, self.spin_burst_period)
+        burst_period_row = QWidget()
+        burst_period_row_layout = QHBoxLayout(burst_period_row)
+        burst_period_row_layout.setContentsMargins(0, 0, 0, 0)
+        burst_period_row_layout.setSpacing(6)
+        burst_period_row_layout.addWidget(self.spin_burst_period)
+        self.lbl_burst_rate = QLabel("~ 10.000 GHz")
+        self.lbl_burst_rate.setMinimumWidth(90)
+        burst_period_row_layout.addWidget(self.lbl_burst_rate)
+        burst_period_row_layout.addStretch()
+        burst_l.addRow(lbl_burst_period, burst_period_row)
 
-        lbl_burst_fwhm = QLabel("Burst FWHM (ps):")
+        lbl_burst_fwhm = QLabel("Pulse FWHM (ps):")
         lbl_burst_fwhm.setMinimumWidth(130)
+        self.lbl_burst_fwhm = lbl_burst_fwhm
         self.spin_burst_fwhm = QDoubleSpinBox()
         self.spin_burst_fwhm.setRange(1.0, 100000.0)
         self.spin_burst_fwhm.setValue(100.0)
@@ -546,8 +560,8 @@ class ControlWidget(QWidget):
         self.spin_irf_pos.setFixedWidth(input_width)
         self.spin_rise.setFixedWidth(input_width)
         self.spin_fall.setFixedWidth(input_width)
-        self.spin_burst_period.setFixedWidth(input_width)
-        self.spin_burst_fwhm.setFixedWidth(input_width)
+        self.spin_burst_period.setFixedWidth(input_width // 2)
+        self.spin_burst_fwhm.setFixedWidth(input_width // 2)
 
         burst_container = QHBoxLayout()
         burst_container.setContentsMargins(0, 0, 0, 0)
@@ -566,6 +580,7 @@ class ControlWidget(QWidget):
         self.spin_period.valueChanged.connect(self._on_excitation_geometry_changed)
         self.spin_fwhm.valueChanged.connect(self._on_excitation_geometry_changed)
         self.spin_irf_pos.valueChanged.connect(self._on_excitation_geometry_changed)
+        self.spin_burst_period.valueChanged.connect(self._update_burst_ui_state)
         self._update_irf_ui()
 
         # Detection
@@ -1024,6 +1039,18 @@ class ControlWidget(QWidget):
             lambda: self._copy_widget_to_clipboard(self.optimization_best_f_plot)
         )
         objective_header_layout.addWidget(self.btn_copy_optimization_objective)
+        self.btn_export_settings_optimization_objective = QPushButton("⚙")
+        self.btn_export_settings_optimization_objective.setToolTip("Clipboard export settings")
+        self.btn_export_settings_optimization_objective.setMaximumWidth(30)
+        self.btn_export_settings_optimization_objective.setStyleSheet("padding: 2px; font-size: 14px;")
+        self.btn_export_settings_optimization_objective.clicked.connect(
+            lambda: ClipboardExportManager.configure(
+                "optimization_objective_plot",
+                parent=self,
+                export_source=self.optimization_objective_plot,
+            )
+        )
+        objective_header_layout.addWidget(self.btn_export_settings_optimization_objective)
         optimization_layout.addWidget(objective_header)
 
         self.optimization_objective_plot = pg.PlotWidget()
@@ -1054,6 +1081,18 @@ class ControlWidget(QWidget):
             lambda: self._copy_widget_to_clipboard(self.optimization_best_f_plot)
         )
         best_f_header_layout.addWidget(self.btn_copy_optimization_best_f)
+        self.btn_export_settings_optimization_best_f = QPushButton("⚙")
+        self.btn_export_settings_optimization_best_f.setToolTip("Clipboard export settings")
+        self.btn_export_settings_optimization_best_f.setMaximumWidth(30)
+        self.btn_export_settings_optimization_best_f.setStyleSheet("padding: 2px; font-size: 14px;")
+        self.btn_export_settings_optimization_best_f.clicked.connect(
+            lambda: ClipboardExportManager.configure(
+                "optimization_best_f_plot",
+                parent=self,
+                export_source=self.optimization_best_f_plot,
+            )
+        )
+        best_f_header_layout.addWidget(self.btn_export_settings_optimization_best_f)
         best_f_header_layout.addStretch()
         optimization_layout.addWidget(best_f_header)
 
@@ -1796,6 +1835,23 @@ class ControlWidget(QWidget):
         self._last_decay_model_key = self.get_selected_decay_model_key()
         self.update_param_visibility()
 
+    def _handle_component_count_changed(self, value):
+        new_count = int(value)
+        old_count = int(getattr(self, "_last_n_components", 1))
+        self._last_n_components = new_count
+        if (
+            old_count <= 1
+            and new_count > 1
+            and self.get_selected_decay_model_key() == "exponential"
+            and "alpha" in self.param_rows
+        ):
+            alpha_spin = self.param_rows["alpha"]["val"]
+            if abs(float(alpha_spin.value()) - 1.0) <= 1e-9:
+                alpha_spin.blockSignals(True)
+                alpha_spin.setValue(0.5)
+                alpha_spin.blockSignals(False)
+        self.update_param_visibility()
+
     def _apply_default_x_range(self, param_name):
         meta = self._runtime_param_meta(param_name)
         min_val = meta.get("sweep_min")
@@ -1858,8 +1914,8 @@ class ControlWidget(QWidget):
             self.spin_fall: "Falling edge time for rectangular excitation profiles.",
             self.btn_freeform_mode: "Switch between Editing and Using the free-form excitation profile.",
             self.freeform_editor: "Visual editor for free-form excitation. Double-click a point to select it, drag to move it, or double-click empty space and then Add Point to insert a new breakpoint.",
-            self.group_burst: "Enable and configure burst excitation sub-pulses.",
-            self.spin_burst_period: "Peak-to-peak distance between sub-pulses in the burst (ps).",
+            self.group_burst: "Enable and configure burst excitation sub-pulses. The selected laser profile acts as the burst envelope.",
+            self.spin_burst_period: "Interpulse distance between neighbouring sub-pulses in the burst (ps).",
             self.spin_burst_fwhm: "Pulse-width (FWHM) of each sub-pulse in the burst (ps).",
             self.spin_jitter: "Detector timing jitter in picoseconds.",
             self.spin_deadtime: "Detector deadtime in nanoseconds. Non-zero deadtime uses a nonparalyzable detector model.",
@@ -2805,6 +2861,7 @@ class ControlWidget(QWidget):
             times, amps = self.freeform_editor.get_points()
             if len(times) < 2:
                 self.freeform_editor.set_points(*self._default_freeform_points())
+        self._update_burst_ui_state()
 
     def _on_freeform_mode_toggled(self, checked):
         edit_mode = bool(checked)
@@ -2814,6 +2871,7 @@ class ControlWidget(QWidget):
     def _update_irf_ui(self, index=0):
         """Toggles visibility based on profile (Gaussian vs Rectangular)."""
         mode = self.combo_profile.currentText().lower()
+        is_gaussian = "gaussian" in mode
         is_rect = "rectangular" in mode
         is_free_form = "free form" in mode
         is_dirac = "ideal (dirac)" in mode
@@ -2840,6 +2898,30 @@ class ControlWidget(QWidget):
             times, amps = self.freeform_editor.get_points()
             if len(times) < 2 or np.allclose(amps, 0.0):
                 self._reset_freeform_from_current_inputs()
+        if is_gaussian and self.group_burst.isChecked():
+            self.group_burst.setChecked(False)
+        self.group_burst.setEnabled(not is_gaussian)
+        self.group_burst.setToolTip(
+            "Burst excitation is disabled for Gaussian laser envelopes."
+            if is_gaussian else
+            "Enable and configure a sub-pulse train modulated by the selected laser envelope."
+        )
+        self._update_burst_ui_state()
+
+    def _format_burst_rate_label(self, period_ps):
+        period_ps = max(float(period_ps), 1e-12)
+        rate_hz = 1.0e12 / period_ps
+        if rate_hz >= 1.0e9:
+            return f"~ {rate_hz / 1.0e9:.3f} GHz"
+        if rate_hz >= 1.0e6:
+            return f"~ {rate_hz / 1.0e6:.3f} MHz"
+        if rate_hz >= 1.0e3:
+            return f"~ {rate_hz / 1.0e3:.3f} kHz"
+        return f"~ {rate_hz:.0f} Hz"
+
+    def _update_burst_ui_state(self, *_args):
+        if hasattr(self, "lbl_burst_rate") and hasattr(self, "spin_burst_period"):
+            self.lbl_burst_rate.setText(self._format_burst_rate_label(self.spin_burst_period.value()))
 
     def update_gridded_mle_summary(self):
         param_name = self.get_selected_x_param()
@@ -3546,8 +3628,8 @@ class ControlWidget(QWidget):
             self.optimization_right_axis.setPen(pg.mkPen(right_color))
 
     def _copy_widget_to_clipboard(self, widget):
-        pixmap = widget.grab()
-        QGuiApplication.clipboard().setPixmap(pixmap)
+        key = "optimization_best_f_plot" if widget is self.optimization_best_f_plot else "optimization_objective_plot"
+        ClipboardExportManager.export_widget(key, widget, parent=self, theme_target=self)
 
     def clear_optimization_progress(self):
         self.optimization_history_cache = {

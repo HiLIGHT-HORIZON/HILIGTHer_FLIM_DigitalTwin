@@ -33,117 +33,141 @@
     <aside class="sidebar">
       <div class="sidebar-card toc">
         <h3>Manual map</h3>
-        <a href="#intro">Introduction</a>
-        <a href="#start">Getting started</a>
-        <a href="#help">Support widget</a>
-        <a href="#workflow-map">Workflow map</a>
-        <a href="#screenshots">Examples and screenshots</a>
+        <a href="#overview">What HILIGHTer is</a>
+        <a href="#current-architecture">Current architecture</a>
+        <a href="#physics-semantics">Current precision semantics</a>
+        <a href="#desktop-workflow">Desktop workflow</a>
+        <a href="#entry-points">Key entry points</a>
+        <a href="#recent-changes">Recent important changes</a>
       </div>
       <div class="sidebar-card">
         <h3>Key entry pages</h3>
         <ul>
+          <li><a href="controller.html">Controller</a></li>
           <li><a href="run-analysis.html">Run Analysis</a></li>
-          <li><a href="run-optimisation.html">Run Optimisation</a></li>
-          <li><a href="mc-image-validation.html">2D MC tests</a></li>
+          <li><a href="widgets.html">Widgets</a></li>
           <li><a href="profiles.html">Profiles</a></li>
+          <li><a href="mcp.html">MCP</a></li>
         </ul>
       </div>
     </aside>
 
     <main class="content">
-      <section class="hero" id="intro">
+      <section class="hero" id="overview">
         <div class="kicker">Overview</div>
         <h1>HILIGHTer Digital Twin documentation set</h1>
-        <p>This manual is the main operator and engineering reference for the Python Digital Twin. It is deliberately split into multiple pages so that users can read the system in layers: plain-English workflow guidance first, specialist details next, and implementation notes directly tied to the actual codebase.</p>
+        <p>This is the canonical manual for the active Python Digital Twin. It documents the desktop workspace, backend architecture, mathematical intent, profile system, and the MCP/API surfaces that now share the same computational engine.</p>
         <div class="hero-grid">
-          <div class="hero-stat"><strong>Desktop-first</strong><br>Qt workspace for simulation, validation, optimisation, reports, and profiles.</div>
-          <div class="hero-stat"><strong>API-complete</strong><br>Python service API, HTTP API, desktop automation, and MCP share one backend engine.</div>
-          <div class="hero-stat"><strong>Engineering-focused</strong><br>Physics, Fisher analysis, Monte Carlo validation, and design optimisation are all documented with maths and code references.</div>
+          <div class="hero-stat"><strong>Desktop-first</strong><br>Qt workspace for simulation, validation, optimisation, diagnostics, and reports.</div>
+          <div class="hero-stat"><strong>API-complete</strong><br>Service API, HTTP API, desktop automation, and MCP all drive the same backend state.</div>
+          <div class="hero-stat"><strong>Physics-aware</strong><br>Precision, Fisher metrics, conditional efficiency, photon survival, and event-level detector artefacts are documented explicitly.</div>
         </div>
       </section>
 
-      <section class="card" id="start">
-        <h2>Getting started</h2>
+      <section class="card" id="current-architecture">
+        <h2>Current architecture</h2>
         <div class="plain-box">
           <h3>Plain English</h3>
-          <p>If you are new, start the desktop with <code>python\run_desktop.bat</code>. The left column is the Digital Twin Controller. The right side shows the main outputs: precision, estimator accuracy, diagnostics, image validation, and pixel-level analysis. Use this manual to understand what each control means before changing instrument settings aggressively.</p>
+          <p>HILIGHTer is no longer a thin plotting app around one fitting routine. It is a full engineering workspace for virtual FLIM instrument design. The same backend powers the desktop, automated workflows, HTTP API, report export, and MCP-assisted LLM workflows.</p>
         </div>
         <div class="specialist-box">
           <h3>For specialists</h3>
-          <p>The active product is the Python workspace rooted in <code>python/</code>. The core engine is <code>python/backend/twin_engine.py</code>. Controller state is represented by <code>PhysicsConfig</code> in <code>python/backend/models.py</code>. All documented workflows should be reproducible through the service layer in <code>python/backend/service_api.py</code>.</p>
+          <p>The source of truth is <code>python/backend/twin_engine.py</code> plus the orchestration layer in <code>python/backend/service_api.py</code>. The desktop controller maps onto <code>PhysicsConfig</code> in <code>python/backend/models.py</code>. The event-driven detector engine lives in <code>python/backend/event_driven.py</code>. Instrument definitions are versioned JSON profiles under <code>python/profiles/instruments/</code>. The multi-page manual rooted here is the canonical documentation tree.</p>
         </div>
+        <table>
+          <tr><th>Layer</th><th>Main file(s)</th><th>Role</th></tr>
+          <tr><td>Physics engine</td><td><code>python/backend/twin_engine.py</code></td><td>Excitation, latent decay PDFs, detector transfer approximation, Fisher analysis, Monte Carlo, optimisation, diagnostics, phasors, image synthesis, and fitting.</td></tr>
+          <tr><td>Chronological detector core</td><td><code>python/backend/event_driven.py</code></td><td>Explicit event-level detector simulation for dead time, routing, multihit capacity, and shared-resource behaviour.</td></tr>
+          <tr><td>Shared config</td><td><code>python/backend/models.py</code></td><td>Defines <code>PhysicsConfig</code> and persistent workflow settings.</td></tr>
+          <tr><td>Desktop workspace</td><td><code>python/gui/main_window.py</code> and widgets</td><td>Main operator interface.</td></tr>
+          <tr><td>MCP bridge</td><td><code>python/mcp_server.py</code></td><td>Tool, resource, and prompt surface for LLM hosts.</td></tr>
+          <tr><td>Manual</td><td><code>docs/manual/</code></td><td>Operator, engineering, and automation reference.</td></tr>
+        </table>
+      </section>
+
+      <section class="card" id="physics-semantics">
+        <h2>Current precision semantics</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>The important distinction is now explicit: HILIGHTer separates the statistical efficiency of the detected photons from the survival of photons through the instrument.</p>
+        </div>
+        <div class="specialist-box">
+          <h3>For specialists</h3>
+          <p>The backend now treats the detected-photon quantity as canonical. The collected-photon metric is the conditional precision factor, while upstream-budget reporting is a rescaling layer. Monte Carlo payloads carry both <code>f_value_conditional</code> and <code>survival_eta</code>. The default optimisation/reporting photon basis is <code>collected</code>.</p>
+        </div>
+        <table>
+          <tr><th>Quantity</th><th>Meaning</th><th>Where it appears</th></tr>
+          <tr><td><code>F_cond</code></td><td>Precision factor referenced to collected photons only.</td><td>Internal theory path, Monte Carlo payloads, and the basis used for resolvability.</td></tr>
+          <tr><td><code>eta</code></td><td>Photon survival fraction between the chosen reference budget and the actually used photons.</td><td>Reported as <code>survival_eta</code> in Monte Carlo payloads.</td></tr>
+          <tr><td><code>F_eff</code></td><td>Upstream-effective precision after photon survival is included.</td><td>Derived when the user chooses acquisition-period or all-photon reporting bases.</td></tr>
+          <tr><td><code>F^-2</code></td><td>Photon efficiency / information efficiency.</td><td>Precision widget and optimisation objectives.</td></tr>
+          <tr><td>Resolvability</td><td>Single-exponential-only metric derived from conditional <code>F</code> and the precision photon count.</td><td>Precision widget only when the run is an exponential <code>N=1</code> sweep over <code>tau1</code>.</td></tr>
+        </table>
+        <p>See <a href="maths.html">Maths</a> for the current equations and code mapping.</p>
+      </section>
+
+      <section class="card" id="desktop-workflow">
+        <h2>Desktop workflow</h2>
+        <div class="grid">
+          <div class="section-card">
+            <h3><a href="controller.html">Configure</a></h3>
+            <p>Define decay model, laser/excitation, detection and gate geometry, validation settings, optimisation settings, and batch sweeps.</p>
+          </div>
+          <div class="section-card">
+            <h3><a href="run-analysis.html">Run analysis</a></h3>
+            <p>Generate ideal/theory/Monte Carlo precision curves, accuracy tracking, diagnostics, and optional bootstrap confidence intervals.</p>
+          </div>
+          <div class="section-card">
+            <h3><a href="run-optimisation.html">Optimise</a></h3>
+            <p>Optimise detection gates, excitation profiles, or both, then inspect trajectories in the same widgets used for analysis.</p>
+          </div>
+          <div class="section-card">
+            <h3><a href="profiles.html">Manage profiles</a></h3>
+            <p>Save, repair, import, export, preview, and apply complete instrument definitions.</p>
+          </div>
+          <div class="section-card">
+            <h3><a href="widgets.html">Inspect outputs</a></h3>
+            <p>Use the precision, MLE accuracy, diagnostics, phasor, image, and pixel widgets as the main readout layer.</p>
+          </div>
+          <div class="section-card">
+            <h3><a href="mcp.html">Automate with MCP</a></h3>
+            <p>Let an LLM inspect the current workspace, run workflows, and draft instrument profiles from vendor documents.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" id="entry-points">
+        <h2>Key entry points</h2>
         <pre class="shell"># Desktop
 python\run_desktop.bat
 
 # HTTP API
 python -m uvicorn python.backend.main:app --reload
 
+# MCP server
+python python/mcp_server.py
+
 # MCP smoke test
 python python/tools/mcp_smoke_test.py</pre>
+        <p>The support/manual browser is available inside the desktop with <code>Ctrl+H</code>. The legacy single-file manual entry point under <code>docs/digital_twin_manual.html</code> now redirects to this manual root.</p>
       </section>
 
-      <section class="card" id="help">
-        <h2>Support widget and Ctrl+H</h2>
-        <div class="plain-box">
-          <h3>Plain English</h3>
-          <p>Press <code>Ctrl+H</code> in the desktop app to open the support widget. It is a floating manual browser with home, back, forward, reload, and manual-search controls. The controller tabs also emit context jumps so the help window can open the relevant manual area while you work.</p>
-        </div>
-        <div class="specialist-box">
-          <h3>For specialists</h3>
-          <p>The support widget is <code>python/gui/widgets/manual_viewer.py</code>. It now targets <code>docs/manual/index.html</code> and routes context identifiers such as <code>controller</code>, <code>simulation</code>, <code>math</code>, and <code>fisher</code> to specific manual pages and anchors.</p>
-        </div>
-      </section>
-
-      <section class="card" id="workflow-map">
-        <h2>Workflow map</h2>
-        <div class="grid">
-          <div class="section-card">
-            <h3><a href="run-analysis.html">Run Analysis</a></h3>
-            <p>Computes Fisher-information curves, optional Monte Carlo validation, confidence intervals, diagnostics, and batch sweeps.</p>
-          </div>
-          <div class="section-card">
-            <h3><a href="run-optimisation.html">Run Optimisation</a></h3>
-            <p>Uses the integrated optimisation mode for detection gates, excitation profile, or both.</p>
-          </div>
-          <div class="section-card">
-            <h3><a href="mc-image-validation.html">2D MC tests</a></h3>
-            <p>Generates synthetic validation images and lets you inspect fitted lifetimes, per-pixel decays, and phasor behaviour.</p>
-          </div>
-          <div class="section-card">
-            <h3><a href="profiles.html">Profiles</a></h3>
-            <p>Apply, save, repair, import, and create instrument profiles, including the MCP-assisted profile-ingest workflow.</p>
-          </div>
-        </div>
-      </section>
-
-      <section class="card">
-        <h2>Focused workflow guides</h2>
-        <div class="feature-grid">
-          <article class="card">
-            <h3>Run Analysis</h3>
-            <p>One-dimensional Fisher analysis, Monte Carlo validation, and accuracy interpretation.</p>
-            <a href="run-analysis.html">Open analysis guide</a>
-          </article>
-          <article class="card">
-            <h3>Run Optimisation</h3>
-            <p>Detection, excitation, and joint optimisation workflows with retained histories.</p>
-            <a href="run-optimisation.html">Open optimisation guide</a>
-          </article>
-          <article class="card">
-            <h3>2D MC tests</h3>
-            <p>Validation image generation, pixel fits, and phasor-space interpretation.</p>
-            <a href="mc-image-validation.html">Open validation guide</a>
-          </article>
-        </div>
-      </section>
-
-      <section class="card" id="screenshots">
-        <h2>Examples and screenshots</h2>
-        <p class="screenshot-note">This documentation set supports screenshots and local examples, but this revision was generated in a headless environment. The manual therefore focuses on accurate UI descriptions, workflow breakdowns, maths, and code-level implementation references. Curated screenshots can be dropped into <code>docs/manual/assets/</code> later without changing the navigation structure.</p>
+      <section class="card" id="recent-changes">
+        <h2>Recent important changes reflected in this manual</h2>
+        <ul>
+          <li>The simulation-core badges and labels were updated to <code>Sim. core</code> and <code>Val. core</code>, with <code>Poisson</code>, <code>Poisson (+DTF)</code>, and <code>Event-driven</code> wording.</li>
+          <li>Decay-model maths and detector-transfer maths are again visible from the controller through compact icon buttons.</li>
+          <li>Background fitting now uses additive count semantics in the analysis path rather than only a fragile normalised-mixture interpretation.</li>
+          <li><code>tau2</code> precision/validation issues in the gridded-MLE path were fixed; resolvability metrics are now gated to the supported single-exponential <code>tau1</code> case.</li>
+          <li>The precision widget includes <code>Resolvability (R)</code> and <code>Photons For R=3</code> for the supported case, with the photon count taken from the precision pane unless overridden in the widget.</li>
+          <li>Batch Sweep includes <code>Count Rate via Pixel Dwell</code>, which fixes the photon budget and varies dwell time to reach the target count-rate sweep.</li>
+          <li>Instrument-profile creation through MCP now supports vendor-document listing, reading, drafting, follow-up questions, and finalisation.</li>
+          <li>Clipboard export settings now include custom size, aspect, font size, theme override, PNG/SVG, default/live export mode, and optional static legend export.</li>
+        </ul>
       </section>
     </main>
   </div>
 
-  <div class="footer">Manual root: <code>docs/manual/</code>. The legacy single-page manual paths redirect here for compatibility.</div>
+  <div class="footer">Manual root: <code>docs/manual/</code>. Legacy manual paths redirect here for compatibility.</div>
 </body>
 </html>

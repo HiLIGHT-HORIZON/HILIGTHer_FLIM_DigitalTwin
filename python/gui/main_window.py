@@ -1415,6 +1415,8 @@ class HILIGHTMainWindow(QMainWindow):
             cfg.taus[1] = cw.param_rows["tau2"]['val'].value()
         if "alpha" in cw.param_rows:
             cfg.amplitudes[0] = cw.param_rows["alpha"]['val'].value()
+            if len(cfg.amplitudes) > 1:
+                cfg.amplitudes[1] = max(0.0, 1.0 - cfg.amplitudes[0])
         dark_count_rate = float(getattr(cw, "spin_dark_count_rate", None).value()) if hasattr(cw, "spin_dark_count_rate") else 0.0
         cfg.background_level = 0.0 if dark_count_rate > 0.0 else cw.param_rows["background"]['val'].value() / 100.0
         if "beta" in cw.param_rows:

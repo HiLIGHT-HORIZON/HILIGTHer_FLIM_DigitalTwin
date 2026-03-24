@@ -36,42 +36,50 @@
         <a href="#service">Service API</a>
         <a href="#event-driven">Event-driven core</a>
         <a href="#profiles">Profiles and import</a>
-        <a href="#storage">Storage and sessions</a>
       </div>
     </aside>
     <main class="content">
       <section class="hero">
         <div class="kicker">Backend</div>
         <h1>Backend module guide</h1>
-        <p>The backend is organised around a single engine, a stable service layer, and support modules for storage, import, profiles, and the event-driven detection core.</p>
+        <p>The backend is organised around one physics engine, one shared configuration model, and thin orchestration layers for the desktop, HTTP API, automation, and MCP.</p>
       </section>
+
       <section class="card" id="twin-engine">
         <h2><code>twin_engine.py</code></h2>
-        <p>This is the computational heart of the Digital Twin. It owns the latent decay model, laser profile generation, gate distillation, Fisher Information calculations, Monte Carlo validation, validation-image synthesis, phasors, optimisation, and the approximation bridge to detector event effects.</p>
+        <p>This is the computational heart of the Digital Twin. It owns excitation modelling, latent decay PDFs, detector-transfer approximation, gate distillation, Fisher analysis, Monte Carlo validation, image synthesis, fitting, phasors, diagnostics, and optimisation.</p>
+        <p>Important current intent:</p>
+        <ul>
+          <li>collected-photon conditional precision is canonical</li>
+          <li>photon-basis modes are reporting rescalings, not different estimators</li>
+          <li>the fast Poisson core can include a detector transfer function</li>
+          <li>the event-driven core is the explicit chronological detector model</li>
+        </ul>
       </section>
+
       <section class="card" id="models">
         <h2><code>models.py</code></h2>
-        <p>Defines configuration and state models. <code>PhysicsConfig</code> is the most important one; it is the contract shared between desktop controls, service API, profiles, decay-model metadata, and MCP.</p>
+        <p>Defines <code>PhysicsConfig</code> and related lightweight state containers. This is the shared contract between controller widgets, profiles, the service API, the HTTP API, and MCP tooling.</p>
       </section>
+
       <section class="card" id="decay-model-store">
         <h2><code>decay_model_store.py</code></h2>
-        <p>This registry merges the hardcoded decay families with user-defined custom models. It also carries parameter metadata such as units, sweep defaults, and descriptions so the controller, gridded-MLE summaries, and editor can all stay in sync.</p>
+        <p>Holds built-in and custom decay-model metadata, including parameter labels, units, sweep defaults, descriptions, and editable custom expressions.</p>
       </section>
+
       <section class="card" id="service">
         <h2><code>service_api.py</code></h2>
-        <p>Provides the orchestration layer used by the desktop, HTTP API, and MCP server.</p>
+        <p>Provides the stable orchestration layer used by the desktop, HTTP API, and MCP server. New manual pages should assume this service layer, not the GUI, is the programmatic source of truth.</p>
       </section>
+
       <section class="card" id="event-driven">
         <h2><code>event_driven.py</code></h2>
-        <p>Hosts the additional <code>event_driven</code> simulation modality. It reuses the same latent optical model but replaces the detection model with an explicit chronological event loop.</p>
+        <p>Hosts the chronological detector backend. It simulates event acceptance in time order and supports dead-time mode, routing/arbitration, shared-resource groups, finite multihit capacity, and chunked parallel execution.</p>
       </section>
+
       <section class="card" id="profiles">
         <h2>Profiles and import modules</h2>
-        <p><code>profile_store.py</code> persists instrument profiles. <code>instrument_spec_ingest.py</code> extracts profile candidates from external specifications. <code>importers.py</code> handles external data formats such as SDT.</p>
-      </section>
-      <section class="card" id="storage">
-        <h2><code>storage.py</code> and sessions</h2>
-        <p>Session save/load functions persist available data products so analysis states can be restored programmatically.</p>
+        <p><code>profile_store.py</code> persists instrument profiles, repairs older JSON definitions, and resolves profile names robustly. The service layer and MCP tools now expose structured instrument-profile drafting/finalisation workflows tied to vendor documentation.</p>
       </section>
     </main>
   </div>

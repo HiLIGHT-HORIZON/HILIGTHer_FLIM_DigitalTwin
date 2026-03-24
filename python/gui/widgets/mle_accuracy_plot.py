@@ -3,7 +3,7 @@ import pyqtgraph as pg
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QCheckBox, QFrame, QScrollArea, QPushButton)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QGuiApplication
+from .clipboard_export import ClipboardExportManager
 
 
 class MLEAccuracyWidget(QWidget):
@@ -32,6 +32,12 @@ class MLEAccuracyWidget(QWidget):
         self.btn_copy.setMaximumWidth(30)
         self.btn_copy.setStyleSheet("padding: 2px; font-size: 14px;")
         ctrl_layout.addWidget(self.btn_copy)
+        self.btn_export_settings = QPushButton("⚙")
+        self.btn_export_settings.setToolTip("Clipboard export settings")
+        self.btn_export_settings.clicked.connect(self._open_export_settings)
+        self.btn_export_settings.setMaximumWidth(30)
+        self.btn_export_settings.setStyleSheet("padding: 2px; font-size: 14px;")
+        ctrl_layout.addWidget(self.btn_export_settings)
 
         ctrl_layout.addStretch()
         layout.addLayout(ctrl_layout)
@@ -70,8 +76,17 @@ class MLEAccuracyWidget(QWidget):
         )
 
     def _copy_to_clipboard(self):
-        pixmap = self.grab()
-        QGuiApplication.clipboard().setPixmap(pixmap)
+        ClipboardExportManager.export_widget(
+            "mle_accuracy_plot",
+            self,
+            parent=self,
+            theme_target=self,
+            export_source=self.plot_widget,
+            export_legend_entries=self._export_legend_entries,
+        )
+
+    def _open_export_settings(self):
+        ClipboardExportManager.configure("mle_accuracy_plot", parent=self, export_source=self.plot_widget)
 
     def set_theme(self, theme_name):
         self.current_theme = str(theme_name).lower()
@@ -113,6 +128,21 @@ class MLEAccuracyWidget(QWidget):
         )
         self.legend_layout.addWidget(chk)
         return chk
+
+    def _export_legend_entries(self):
+        entries = []
+        for items, widget in self.series_items:
+            if widget.isChecked():
+                style = "line+marker"
+                color = "#8b5cf6"
+                style_sheet = widget.styleSheet() or ""
+                if "color:" in style_sheet:
+                    try:
+                        color = style_sheet.split("color:", 1)[1].split(";", 1)[0].strip()
+                    except Exception:
+                        pass
+                entries.append({"label": widget.text(), "color": color, "style": style})
+        return entries
 
     def plot_accuracy(self, x, series_dict):
         self.series_data = {}

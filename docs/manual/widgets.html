@@ -33,107 +33,80 @@
         <a href="#precision">Precision widget</a>
         <a href="#accuracy">MLE Accuracy widget</a>
         <a href="#diagnostics">Instrument Diagnostics</a>
-        <a href="#optimisation-history">Optimisation History</a>
         <a href="#image-viewer">Image validation viewer</a>
         <a href="#pixel-inspector">Pixel Inspector</a>
         <a href="#phasor-space">Phasor Space</a>
-        <a href="#save-as">Save As</a>
+        <a href="#export">Clipboard and report export</a>
         <a href="#profiles-tool">Profiles manager</a>
-        <a href="#desktop-menus">Desktop menus</a>
-        <a href="#manual-widget">Support widget</a>
       </div>
     </aside>
     <main class="content">
       <section class="hero">
         <div class="kicker">Workspace</div>
         <h1>Analysis widgets and operator tools</h1>
-        <p>The right-hand side of the desktop is a live analysis workspace. It is not just plotting output; each widget is tied to specific backend payloads, export routines, and workflow states.</p>
+        <p>The right-hand side of the desktop is a live analysis workspace. Each widget is tied to backend payloads, export routines, and workflow state. The widgets are not generic plots; they are part of the instrument-design loop.</p>
       </section>
 
       <section class="card" id="precision">
         <h2>Precision (Fisher Info)</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>This is the main precision plot. It compares the ideal ceiling, the theory for the current instrument, and optional Monte Carlo validation. It tells you how easy or hard the current instrument makes lifetime estimation.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>The widget is implemented by <code>python/gui/widgets/fisher_plot.py</code> and consumes the output of <code>DigitalTwinService.run_precision()</code>. It supports multiple metrics: <code>F</code>, <code>F^-2</code>, and Fisher throughput, and it exports publication-ready SVG figures.</p></div>
+        <p>The precision widget compares the ideal reference, instrument theory, and optional Monte Carlo validation. It supports <code>F</code>, <code>F^-2</code>, Fisher throughput, and, only in the supported case, <code>Resolvability (R)</code> and <code>Photons For R=3</code>.</p>
         <table>
           <tr><th>Control</th><th>Purpose</th></tr>
-          <tr><td><code>Log X</code> / <code>Log Y</code></td><td>Switch axis scaling without changing the underlying sweep data.</td></tr>
-          <tr><td><code>Reset</code></td><td>Restore the data-driven plot range.</td></tr>
-          <tr><td><code>Metric</code></td><td>Select <code>F</code>, <code>F^-2</code>, or throughput views over the same sweep.</td></tr>
-          <tr><td><code>Smooth MC</code></td><td>Applies a local smoothing pass to Monte Carlo points for easier reading.</td></tr>
-          <tr><td>Series checkboxes</td><td>Enable or hide ideal, theory, MC, and individual sweep overlays.</td></tr>
-          <tr><td>Clipboard icon</td><td>Copies the current figure to the clipboard.</td></tr>
+          <tr><td><code>Log X</code> / <code>Log Y</code></td><td>Axis scaling only; does not change the data.</td></tr>
+          <tr><td><code>Metric</code></td><td>Selects the displayed metric.</td></tr>
+          <tr><td><code>Smooth MC</code></td><td>Visual smoothing of Monte Carlo points only.</td></tr>
+          <tr><td>Series checkboxes</td><td>Show/hide ideal, theory, MC, and batch-sweep overlays.</td></tr>
+          <tr><td>Resolvability photon spinner</td><td>Shown only in <code>Resolvability (R)</code> mode and only when resolvability is supported.</td></tr>
         </table>
-        <figure class="card">
-          <img src="../smoke_precision_report_assets/accuracy_dark.svg" alt="Example exported SVG from the precision-report asset bundle.">
-          <figcaption>An example vector export already shipped in the repository.</figcaption>
-        </figure>
       </section>
 
       <section class="card" id="accuracy">
         <h2>Gridded MLE Accuracy</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>This plot checks whether the estimator returns the right answer across the sweep. Precision tells you how noisy the estimate is. Accuracy tells you whether the estimate is centred correctly.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>The widget lives in <code>python/gui/widgets/mle_accuracy_plot.py</code>. It plots estimated-vs-truth relationships, optional stacked views, and MC compatibility cues derived from the configured p-value threshold.</p></div>
+        <p>This widget shows estimator mean and spread versus ground truth. It is the main answer to “does the estimator track the swept parameter correctly?” after the one-dimensional theory path has been computed.</p>
       </section>
 
       <section class="card" id="diagnostics">
         <h2>Instrument Diagnostics</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>This widget lets you inspect the timing geometry of the instrument: laser profile, reference PDF, PDF ensemble, and gate shapes.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>Implemented in <code>python/gui/widgets/diagnostics_plot.py</code>. It renders the active <code>dt_excitation()</code>, a reference <code>dt_pdf()</code> curve, the family of PDFs used during a sweep, and the distilled gate geometry after all anchoring, overlap, and wrap rules are applied.</p></div>
-      </section>
-
-      <section class="card" id="optimisation-history">
-        <h2>Optimisation History</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>This plot shows whether optimisation is moving in the right direction. It stores the whole run so you can review it after the optimiser finishes.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>The widget caches the full history payload in memory until the next run or until optimisation mode is exited. The left and right axes are reassigned by radio-button groups, which avoids losing curves after the optimiser finishes.</p></div>
+        <p>This widget displays excitation/IRF, reference PDF, optional PDF ensemble, and distilled gate geometry. It is the main visual explanation of why the current instrument behaves the way the precision widgets report.</p>
       </section>
 
       <section class="card" id="image-viewer">
         <h2>MC Image validation viewer</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>This widget shows the simulated image products used to validate fitting behaviour across a field of view.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p><code>python/gui/widgets/image_viewer.py</code> presents the intensity image and fitted lifetime map generated by the backend validation-image path. Clicking a pixel drives the pixel inspector and phasor highlight.</p></div>
+        <p>Shows intensity and fitted-lifetime image products from the synthetic validation-image workflow. Clicking a pixel drives the pixel inspector and phasor highlight.</p>
       </section>
 
       <section class="card" id="pixel-inspector">
         <h2>Pixel Inspector</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>This widget answers the question “what happened in this one pixel?” It compares measured counts, the fitted decay curve, the laser profile used for reconvolution, and residuals.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p><code>python/gui/widgets/decay_plot.py</code> renders the dense reconvolved fit from <code>get_pixel_fit_payload()</code>, not just discrete fitted bin counts. Tail fitting is shown only on the fitted span. Legends sit outside the plot body to avoid hiding the decay.</p></div>
+        <p>Displays the pixel decay, dense reconvolved fit, optional IRF overlay, and residuals. This is the detailed local explanation for one selected pixel in validation-image mode.</p>
       </section>
 
       <section class="card" id="phasor-space">
-        <h2>Phasor Space (G vs S)</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>This widget turns every validation pixel into a phasor point. It helps users judge clustering, trajectory, and lifetime calibration at a glance.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>The phasor widget uses the internal HILIGHTer backend, applies calibration using the same laser profile as the decay model, and plots both the universal semicircle and the discrete single-exponential locus appropriate to the current gate scheme.</p></div>
+        <h2>Phasor Space</h2>
+        <p>Shows pixel phasors, the universal semicircle, and the discrete single-exponential locus implied by the active gate scheme. It also includes precision and accuracy subplots tied to the selected truth value.</p>
       </section>
 
-      <section class="card" id="save-as">
-        <h2>Save As</h2>
-        <div class="plain-box"><h3>Plain English</h3><p><code>SAVE AS</code> writes a browsable HTML package, vector figures, and CSV data so the run can be reviewed, shared, or placed into papers and presentations.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>The exporter is <code>python/gui/report_export.py</code>. It writes an HTML page plus an asset folder containing SVG figures and CSV tables, including optimisation history when present. CSV tables use three header rows to preserve meaning outside the app.</p></div>
+      <section class="card" id="export">
+        <h2>Clipboard and report export</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>The graph clipboard export is now configurable. Export settings affect the copied image only; they do not change the live widget layout.</p>
+        </div>
+        <table>
+          <tr><th>Feature</th><th>Current behavior</th></tr>
+          <tr><td>Settings gear</td><td>Opens per-graph export settings next to the clipboard button.</td></tr>
+          <tr><td><code>Use default settings</code></td><td>When enabled, exports the graph with its live/current appearance and makes the remaining controls informational.</td></tr>
+          <tr><td>Custom size and aspect</td><td>Applied to the main graph area, not to the on-screen widget layout.</td></tr>
+          <tr><td>Font size</td><td>Applied to the export path only.</td></tr>
+          <tr><td>Theme override</td><td>Can force light or dark export independently of the GUI theme.</td></tr>
+          <tr><td>PNG / SVG</td><td>Both are supported for clipboard export.</td></tr>
+          <tr><td>Include legend</td><td>Adds a separate static export legend, not the interactive checkbox panel.</td></tr>
+        </table>
+        <p><code>SAVE AS</code> remains the report exporter and writes a browsable HTML report, figure assets, and CSV data from the active run.</p>
       </section>
 
       <section class="card" id="profiles-tool">
         <h2>Profiles manager</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>The profile manager is the instrument library. It lets users save the current controller state, load existing instruments, preview their diagnostics, repair old JSON files, and apply them to the live workspace.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>Implemented by <code>python/gui/widgets/instrument_manager.py</code> over <code>python/backend/profile_store.py</code>. Repair actions persist the sanitised JSON back to disk before application.</p></div>
-      </section>
-
-      <section class="card" id="desktop-menus">
-        <h2>Desktop menus</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>The menu bar is the top-level operator toolbox. It contains file persistence, workspace views, security and service tools, and the floating manual entry point.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>The menu bar is assembled in <code>python/gui/main_window.py</code>. It wires menu actions directly to workspace methods such as session save/load, export, view presets, API locks, MCP control, and manual navigation.</p></div>
-        <table>
-          <tr><th>Menu</th><th>Items</th><th>What they do</th></tr>
-          <tr><td><code>File</code></td><td><code>Load Workspace</code>, <code>Save Workspace</code>, <code>Clear Workspace</code>, <code>Save Report As</code>, <code>Exit</code></td><td>Persistence and export for the active workspace.</td></tr>
-          <tr><td><code>View</code></td><td><code>Theme</code>, <code>Simulation Workspace</code>, <code>Image Validation Workspace</code></td><td>Switch between dark/light themes and between common dock presets.</td></tr>
-          <tr><td><code>Tools</code></td><td><code>Profiles</code>, <code>Custom model...</code>, GUI/backend lock actions, <code>API docs...</code>, MCP controls, <code>MCP docs...</code>, lockdown action</td><td>Operational tooling, automation locks, model-definition tools, and direct links into the manual. <code>API docs...</code> opens <a href="apis.html">APIs</a>. <code>MCP docs...</code> opens <a href="mcp.html">MCP</a>.</td></tr>
-          <tr><td><code>Help</code></td><td><code>See Manual</code>, <code>About</code></td><td>Open the floating support browser and the project/about panel.</td></tr>
-        </table>
-      </section>
-
-      <section class="card" id="manual-widget">
-        <h2>Support widget (<kbd>Ctrl</kbd>+<kbd>H</kbd>)</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>The manual is not just a file. The desktop has a floating support browser that opens this documentation site, provides search, and can jump to context-specific pages.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p><code>python/gui/widgets/manual_viewer.py</code> hosts a <code>QWebEngineView</code> plus navigation and search controls. It understands context identifiers and routes them to specific manual pages and anchors.</p></div>
+        <p>The profile manager previews, repairs, imports, exports, and applies full instrument profiles. It now surfaces gate-property diagnostics more explicitly so ideal-gate assumptions and related profile settings are easier to verify.</p>
       </section>
     </main>
   </div>

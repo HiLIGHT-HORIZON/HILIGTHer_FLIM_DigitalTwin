@@ -1,7 +1,7 @@
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QGuiApplication
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from .clipboard_export import ClipboardExportManager
 
 
 class FisherWidget(QWidget):
@@ -35,6 +36,7 @@ class FisherWidget(QWidget):
         self.ideal_throughput_scale = 1.0
         self.ideal_photon_count = 0.0
         self.resolvability_default_photon_count = 0
+        self._resolvability_allowed = False
 
         ctrl_layout = QHBoxLayout()
         self.chk_log_x = QCheckBox("Log X")
@@ -81,6 +83,11 @@ class FisherWidget(QWidget):
         self.btn_copy.clicked.connect(self._copy_to_clipboard)
         self.btn_copy.setMaximumWidth(30)
         self.btn_copy.setStyleSheet("padding: 2px; font-size: 14px;")
+        self.btn_export_settings = QPushButton("⚙")
+        self.btn_export_settings.setToolTip("Clipboard export settings")
+        self.btn_export_settings.clicked.connect(self._open_export_settings)
+        self.btn_export_settings.setMaximumWidth(30)
+        self.btn_export_settings.setStyleSheet("padding: 2px; font-size: 14px;")
 
         self.lbl_resolvability_photons = QLabel("Photons:")
         self.lbl_resolvability_photons.setToolTip("Photon count used for the resolvability calculation only.")
@@ -98,6 +105,7 @@ class FisherWidget(QWidget):
         ctrl_layout.addWidget(self.chk_log_y)
         ctrl_layout.addWidget(self.btn_reset)
         ctrl_layout.addWidget(self.btn_copy)
+        ctrl_layout.addWidget(self.btn_export_settings)
         ctrl_layout.addWidget(self.lbl_resolvability_photons)
         ctrl_layout.addWidget(self.spin_resolvability_photons)
         ctrl_layout.addStretch()
@@ -178,8 +186,17 @@ class FisherWidget(QWidget):
         return [segment for segment in np.split(idx, splits) if segment.size > 0]
 
     def _copy_to_clipboard(self):
-        pixmap = self.grab()
-        QGuiApplication.clipboard().setPixmap(pixmap)
+        ClipboardExportManager.export_widget(
+            "fisher_plot",
+            self,
+            parent=self,
+            theme_target=self,
+            export_source=self.plot_widget,
+            export_legend_entries=self._export_legend_entries,
+        )
+
+    def _open_export_settings(self):
+        ClipboardExportManager.configure("fisher_plot", parent=self, export_source=self.plot_widget)
 
     def set_theme(self, theme_name):
         self.current_theme = str(theme_name).lower()
@@ -285,6 +302,19 @@ class FisherWidget(QWidget):
         self.lbl_resolvability_photons.setVisible(show_resolvability_photons)
         self.spin_resolvability_photons.setVisible(show_resolvability_photons)
 
+    def _update_metric_availability(self):
+        allowed = any(bool(payload.get("resolvability_enabled", False)) for payload in self.batch_data.values())
+        self._resolvability_allowed = allowed
+        model = self.combo_mode.model()
+        for index in (3, 4):
+            item = model.item(index)
+            if item is not None:
+                item.setEnabled(allowed)
+        if not allowed and self.combo_mode.currentIndex() in (3, 4):
+            self.combo_mode.blockSignals(True)
+            self.combo_mode.setCurrentIndex(0)
+            self.combo_mode.blockSignals(False)
+
     def plot_batch(self, x, results_dict, ideal_x=None, ideal_f=None, ideal_conditional_f=None, ideal_throughput_scale=None, ideal_photon_count=None):
         if ideal_x is not None:
             self.ideal_tau = np.array(ideal_x, copy=True)
@@ -335,6 +365,7 @@ class FisherWidget(QWidget):
                     "throughput_scale": 1.0,
                 }
 
+        self._update_metric_availability()
         self.refresh_plot()
 
     def update_data(self, x, f, label="Simulated", ideal_x=None, ideal_f=None, ideal_conditional_f=None, is_batch=False):
@@ -362,6 +393,7 @@ class FisherWidget(QWidget):
                 self.ideal_conditional_f = np.array(ideal_f, copy=True)
             else:
                 self.ideal_conditional_f = np.array(ideal_conditional_f, copy=True)
+        self._update_metric_availability()
         self.refresh_plot()
 
     def clear_curves(self):
@@ -371,6 +403,7 @@ class FisherWidget(QWidget):
         self.series_groups = {}
         self.ideal_curve.setData([], [])
         self.resolvability_limit_curve.setData([], [])
+        self._update_metric_availability()
 
     def clear_data(self):
         self.clear_curves()
@@ -444,6 +477,22 @@ class FisherWidget(QWidget):
             series_enabled = self.series_checkboxes.get(base_label).isChecked()
             self._set_items_visible(group["theory"], series_enabled and show_theory)
             self._set_items_visible(group["mc"], series_enabled and show_mc)
+
+    def _export_legend_entries(self):
+        entries = []
+        if self.chk_show_ideal.isChecked() and self.ideal_curve.xData is not None and len(self.ideal_curve.xData) > 0:
+            entries.append({"label": "Ideal Case", "color": "#10b981", "style": "dash"})
+        show_theory = self.chk_show_theory.isChecked()
+        show_mc = self.chk_show_mc.isChecked()
+        for base_label, group in self.series_groups.items():
+            checkbox = self.series_checkboxes.get(base_label)
+            if checkbox is None or not checkbox.isChecked():
+                continue
+            if show_theory and group["theory"]:
+                entries.append({"label": f"{base_label} (Theory)", "color": group["color"], "style": "line"})
+            if show_mc and group["mc"]:
+                entries.append({"label": f"{base_label} (MC)", "color": group["color"], "style": "marker"})
+        return entries
 
     def _create_ci_band_items(self, x, lower, upper, color):
         invisible_pen = pg.mkPen(QColor(0, 0, 0, 0), width=1)
@@ -555,6 +604,11 @@ class FisherWidget(QWidget):
         self.series_groups = {}
 
         metric, metric_key = self._metric_meta()
+        if metric_key in {"resolvability", "required_photons"} and not self._resolvability_allowed:
+            self.combo_mode.blockSignals(True)
+            self.combo_mode.setCurrentIndex(0)
+            self.combo_mode.blockSignals(False)
+            metric, metric_key = self._metric_meta()
         self.plot_widget.setLabel("left", metric)
         self.plot_widget.setLogMode(x=self.chk_log_x.isChecked(), y=self.chk_log_y.isChecked())
         self.resolvability_limit_curve.setData([], [])

@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="assets/style.css">
   <script defer src="assets/app.js"></script>
 </head>
-<body data-page="index">
+<body data-page="run-analysis">
   <header class="site-header">
     <div class="header-inner">
       <div class="brand">HILIGHTer Digital Twin<small>Run Analysis</small></div>
@@ -31,9 +31,9 @@
       <div class="sidebar-card toc">
         <h3>Workflow</h3>
         <a href="#overview">What Run Analysis does</a>
-        <a href="#fisher-information">Fisher Information path</a>
-        <a href="#monte-carlo">Monte Carlo validation</a>
-        <a href="#photon-basis">Photon basis</a>
+        <a href="#theory">Theory path</a>
+        <a href="#mc">Monte Carlo validation</a>
+        <a href="#basis">Photon basis and rescaling</a>
         <a href="#outputs">Outputs</a>
       </div>
     </aside>
@@ -41,32 +41,42 @@
       <section class="hero" id="overview">
         <div class="kicker">Workflow</div>
         <h1>Run Analysis</h1>
-        <p><code>Run Analysis</code> is the main one-dimensional instrument-analysis workflow. It reads the current controller state, builds the decay model, distils the gates, computes Fisher Information across the chosen X-axis sweep, and optionally validates the result with Monte Carlo.</p>
+        <p><code>Run Analysis</code> is the main one-dimensional precision workflow. It reads the controller state, builds the active timing model, computes ideal and instrument-specific theory curves, optionally validates them with Monte Carlo, and refreshes the diagnostics and estimator-tracking widgets with the same sweep context.</p>
       </section>
-      <section class="card" id="fisher-information">
-        <h2>Fisher Information path</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>This path asks: for a given instrument and a given photon budget, how well can the chosen decay parameter be estimated across the sweep?</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>The desktop calls <code>DigitalTwinService.run_precision()</code>, which patches a temporary <code>PhysicsConfig</code>, builds <code>x_range</code>, then asks <code>TwinEngine.compute_ideal_reference()</code> and <code>TwinEngine.compute_fisher_info()</code> for the ideal and instrument-specific curves.</p></div>
+
+      <section class="card" id="theory">
+        <h2>Theory path</h2>
+        <div class="specialist-box">
+          <h3>For specialists</h3>
+          <p>The desktop calls <code>DigitalTwinService.run_precision()</code>. The service patches a temporary <code>PhysicsConfig</code>, builds the x-grid, computes the ideal reference, computes the instrument theory path, and packages the payloads needed by the precision, accuracy, and diagnostics widgets.</p>
+        </div>
+        <p>The current theory path separates:</p>
+        <ul>
+          <li>conditional precision on collected photons</li>
+          <li>photon survival / reporting basis</li>
+          <li>detector-transfer approximation versus explicit event-driven simulation</li>
+        </ul>
       </section>
-      <section class="card" id="monte-carlo">
+
+      <section class="card" id="mc">
         <h2>Monte Carlo validation</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>Monte Carlo validation checks whether the estimator really behaves as predicted by theory.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>When enabled, the service uses <code>TwinEngine.monte_carlo_precision_curve()</code> and optionally attaches bootstrap confidence intervals. The accuracy p-value threshold is then used to flag estimator compatibility in the UI and exported reports.</p></div>
+        <p>When enabled, Monte Carlo validation runs the estimator repeatedly across the same x-grid and compares the empirical estimator behaviour to the theory path. The payload now includes conditional <code>F</code>, survival <code>eta</code>, compatible/incompatible flags, and optional bootstrap confidence intervals.</p>
       </section>
-      <section class="card" id="photon-basis">
-        <h2>F-value photon basis</h2>
-        <div class="plain-box"><h3>Plain English</h3><p>The timing estimate is always based on the photons that were actually collected. This option only decides whether the reported <code>F</code> is referenced to those collected photons, to all photons in the acquisition period, or to the full available photon budget.</p></div>
-        <div class="specialist-box"><h3>For specialists</h3><p>The three supported interpretations are documented in <a href="maths.html#f-value-basis">Maths</a>. The option is propagated to the Fisher and Monte Carlo precision paths as a post-estimation normalization choice rather than a different lost-photon likelihood model.</p></div>
+
+      <section class="card" id="basis">
+        <h2>Photon basis and rescaling</h2>
+        <p>The collected-photon result is canonical. Toggling <code>Compute F-value on</code> changes the reporting basis, not the collected-photon estimator. In many cases this means cached results can be rescaled without recomputing the underlying sweep.</p>
       </section>
+
       <section class="card" id="outputs">
         <h2>Outputs</h2>
         <table>
           <tr><th>Output</th><th>Where it appears</th><th>Meaning</th></tr>
-          <tr><td>Ideal reference</td><td>Precision widget</td><td>The histogram-bin theoretical ceiling.</td></tr>
-          <tr><td>Theory curve</td><td>Precision widget</td><td>The expected performance of the configured instrument.</td></tr>
+          <tr><td>Ideal reference</td><td>Precision widget</td><td>Reference ceiling for the active sweep/grid interpretation.</td></tr>
+          <tr><td>Theory curve</td><td>Precision widget</td><td>Expected performance of the configured instrument.</td></tr>
           <tr><td>Monte Carlo points and CIs</td><td>Precision widget</td><td>Empirical validation of the theory path.</td></tr>
-          <tr><td>Estimator tracking</td><td>MLE Accuracy widget</td><td>Estimated-vs-truth view of estimator behaviour.</td></tr>
-          <tr><td>Reference PDF and gates</td><td>Instrument Diagnostics</td><td>Timing-domain explanation of the result.</td></tr>
+          <tr><td>Estimator tracking</td><td>MLE Accuracy widget</td><td>Estimated-vs-truth view of estimator bias and spread.</td></tr>
+          <tr><td>Reference PDF and gates</td><td>Instrument Diagnostics</td><td>Timing-domain explanation of the current result.</td></tr>
         </table>
       </section>
     </main>

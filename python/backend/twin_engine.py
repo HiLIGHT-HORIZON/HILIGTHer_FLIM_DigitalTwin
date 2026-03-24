@@ -413,6 +413,12 @@ class TwinEngine:
         detected_pdf, detector_survival = self._detector_transfer_pdf_and_survival(pdf, n_photons, cfg)
         gate_probs = np.asarray(gate_profiles @ detected_pdf, dtype=float)
         gate_probs = gate_probs * self._collection_efficiency_scale(n_gates) * detector_survival
+        bg_fraction = min(max(float(getattr(cfg, "background_level", 0.0)), 0.0), 1.0)
+        if bg_fraction > 0.0:
+            uniform_pdf = np.full(detected_pdf.shape[0], 1.0 / max(detected_pdf.shape[0], 1), dtype=float)
+            bg_gate_probs = np.asarray(gate_profiles @ uniform_pdf, dtype=float)
+            bg_gate_probs = bg_gate_probs * self._collection_efficiency_scale(n_gates)
+            gate_probs = gate_probs + (bg_fraction * bg_gate_probs)
         collected_fraction = max(float(np.sum(gate_probs)), 0.0)
         if collected_fraction > 0.0:
             conditional_gate_probs = gate_probs / collected_fraction
@@ -955,6 +961,9 @@ class TwinEngine:
         cfg = self.config
         edges = self.resolve_gate_edges()
         dt = cfg.dt_override if (cfg.dt_override and cfg.dt_override > 0) else cfg.dt_input
+        if bool(getattr(cfg, "burst_enabled", False)):
+            burst_period = max(float(getattr(cfg, "burst_sub_period", 0.0)), 1e-6)
+            dt = min(float(dt), max(burst_period / 20.0, 0.001))
         
         # Strict boundary: 0 to Period
         t_start = 0.0
@@ -1175,8 +1184,10 @@ class TwinEngine:
         target = str(getattr(self.config, "f_x_param", "tau1"))
         fast_gridded = (
             str(getattr(self.config, "decay_model", "exponential")).lower() == "exponential"
-            and int(getattr(self.config, "n_components", 1)) == 1
-            and target == "tau1"
+            and (
+                (int(getattr(self.config, "n_components", 1)) == 1 and target == "tau1")
+                or (int(getattr(self.config, "n_components", 1)) == 2 and target == "tau2")
+            )
         )
         if not fast_gridded:
             estimates = np.full(counts_batch.shape[0], np.nan)
@@ -1688,6 +1699,21 @@ class TwinEngine:
             for r, p in zip(rep_idx.tolist(), photon_idx.tolist()):
                 gate_hist_all[r, chosen_gate[r, p]] += 1.0
 
+        bg_fraction = min(max(float(getattr(self.config, "background_level", 0.0)), 0.0), 1.0)
+        if bg_fraction > 0.0:
+            gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
+            uniform_pdf = np.full(t.shape[0], 1.0 / max(t.shape[0], 1), dtype=float)
+            bg_gate_prob = np.asarray(gate_profiles @ uniform_pdf, dtype=float)
+            bg_gate_prob = bg_gate_prob * self._collection_efficiency_scale(n_gates)
+            bg_sum = float(np.sum(bg_gate_prob))
+            if bg_sum > 0.0:
+                bg_gate_prob = bg_gate_prob / bg_sum
+                bg_total = np.random.poisson(float(n_photons) * bg_fraction, size=n_repeats)
+                for rep_idx in range(n_repeats):
+                    extra = int(bg_total[rep_idx])
+                    if extra > 0:
+                        gate_hist_all[rep_idx, :] += np.random.multinomial(extra, bg_gate_prob)
+
         if self._has_detector_event_effects(self.config):
             rng = np.random.default_rng()
             for rep_idx in range(n_repeats):
@@ -1885,6 +1911,7 @@ class TwinEngine:
         cfg = self.config
         profile = cfg.irf_profile.lower()
         dt = float(t[1] - t[0]) if len(t) > 1 else max(float(cfg.dt_input), 1e-3)
+        half_dt = 0.5 * dt
         
         # 1. Base IRF Shape (The Envelope)
         mu = cfg.irf_position
@@ -1942,14 +1969,23 @@ class TwinEngine:
             burst_rise = getattr(cfg, "burst_sub_rise_time", None)
             burst_fall = getattr(cfg, "burst_sub_fall_time", None)
             burst = np.zeros_like(t)
-            centers = np.arange(0, np.max(t) + trep_b, trep_b)
+            t_min = float(np.min(t))
+            t_max = float(np.max(t))
+            first_center = np.floor((t_min - max(float(cfg.burst_sub_fwhm), dt)) / trep_b) * trep_b
+            centers = np.arange(first_center, t_max + trep_b + max(float(cfg.burst_sub_fwhm), dt), trep_b)
             if burst_rise is None and burst_fall is None:
-                # Legacy Gaussian burst train.
+                # Use bin-integrated Gaussian pulses to avoid aliasing when the
+                # sub-pulse width is narrower than the simulation timestep.
                 sigma_b_orig = cfg.burst_sub_fwhm / 2.35482
                 sigma_b = np.sqrt(sigma_b_orig**2 + jitter_ns**2)
                 sigma_b = max(sigma_b, 1e-6)
+                left_edges = t - half_dt
+                right_edges = t + half_dt
+                norm = np.sqrt(2.0) * sigma_b
                 for center in centers:
-                    burst += np.exp(-((t - center)**2) / (2.0 * sigma_b**2))
+                    cdf_hi = 0.5 * (1.0 + erf((right_edges - center) / norm))
+                    cdf_lo = 0.5 * (1.0 + erf((left_edges - center) / norm))
+                    burst += np.maximum(cdf_hi - cdf_lo, 0.0)
             else:
                 width = max(cfg.burst_sub_fwhm, t[1] - t[0] if len(t) > 1 else 1e-3)
                 rise = max(float(burst_rise or 0.0), 0.0)
@@ -1959,9 +1995,9 @@ class TwinEngine:
                     return 1.0 / (1.0 + np.exp(-np.clip(x, -50, 50)))
 
                 for center in centers:
-                    start_edge = sigmoid((t - center) / rise) if rise > 0 else (t >= center).astype(float)
+                    start_edge = sigmoid((right_edges - center) / rise) if rise > 0 else (right_edges >= center).astype(float)
                     end_time = center + width
-                    end_edge = (1.0 - sigmoid((t - end_time) / fall)) if fall > 0 else (t < end_time).astype(float)
+                    end_edge = (1.0 - sigmoid((left_edges - end_time) / fall)) if fall > 0 else (left_edges < end_time).astype(float)
                     burst += start_edge * end_edge
             excitation *= burst
             
@@ -2002,11 +2038,6 @@ class TwinEngine:
         pdf = np.nan_to_num(pdf, nan=0.0, posinf=0.0, neginf=0.0)
         pdf = np.maximum(pdf, 1e-20)
         
-        # Add background mass as a fraction of the total decay mass.
-        bg_fraction = min(max(float(getattr(cfg, "background_level", 0.0)), 0.0), 0.999999)
-        if bg_fraction > 0.0:
-            pdf = (1.0 - bg_fraction) * pdf + bg_fraction * np.ones_like(pdf) / max(len(t), 1)
-        
         s = np.sum(pdf)
         if s > 0:
             pdf /= s
@@ -2035,6 +2066,9 @@ class TwinEngine:
             edge_scale = max(rise, fall, 1e-4)
             dt = min(dt_user, edge_scale / 5.0)  # Resolve the sharpest smoothed gate edge when smoothing is used.
             dt = max(dt, 0.005)  # Never finer than 5ps (prevents 100k+ bin arrays)
+        if bool(getattr(cfg, "burst_enabled", False)):
+            burst_period = max(float(getattr(cfg, "burst_sub_period", 0.0)), 1e-6)
+            dt = min(dt, max(burst_period / 20.0, 0.001))
         
         # Adaptive time window
         t_win = cfg.period if cfg.b_decay_wrapping else cfg.gate_edges[-1] + 5.0
@@ -3007,6 +3041,9 @@ class TwinEngine:
             edge_scale = max(rise, fall, 1e-4)
             dt = min(dt_user, edge_scale / 5.0)
             dt = max(dt, 0.005)
+        if bool(getattr(cfg, "burst_enabled", False)):
+            burst_period = max(float(getattr(cfg, "burst_sub_period", 0.0)), 1e-6)
+            dt = min(dt, max(burst_period / 20.0, 0.001))
 
         n_gates = len(cfg.gate_edges) - 1
         photon_basis_mode_norm = self._resolve_f_photon_basis_mode(photon_basis_mode)
