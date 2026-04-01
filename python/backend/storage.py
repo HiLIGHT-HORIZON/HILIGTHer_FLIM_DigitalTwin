@@ -14,7 +14,19 @@ class HDF5StorageManager:
     
     def __init__(self, base_dir: str = "data/sessions"):
         self.base_dir = base_dir
-        os.makedirs(self.base_dir, exist_ok=True)
+        try:
+            os.makedirs(self.base_dir, exist_ok=True)
+        except (FileNotFoundError, PermissionError, OSError) as e:
+            # Fallback to user home if repository directory is not writable (e.g. OneDrive issues)
+            fallback_dir = os.path.join(os.path.expanduser("~"), ".hilight", "sessions")
+            print(f"Warning: Could not create session directory at {self.base_dir} ({e}).")
+            print(f"Falling back to user-local storage: {fallback_dir}")
+            try:
+                os.makedirs(fallback_dir, exist_ok=True)
+                self.base_dir = fallback_dir
+            except Exception as e2:
+                print(f"Critical: Could not create fallback storage at {fallback_dir} ({e2}).")
+                # At this point, we just continue and let it fail later if they try to save
 
     def _require_h5py(self):
         if h5py is None:
