@@ -1,8 +1,6 @@
 # HILIGHTer Digital Twin
 
-HILIGHTer is a Python-first FLIM engineering workspace. The main product is a Qt desktop application backed by a shared numerical engine, with additional HTTP, Python, desktop-automation, and MCP surfaces.
-
-This repository no longer depends on a MATLAB app runtime for normal use.
+HILIGHTer is a Python-first FLIM engineering workspace. The main product is a Qt desktop application backed by a shared numerical engine, with additional HTTP, Python, desktop-automation, and MCP (Model Context Protocol) surfaces.
 
 ## What You Get
 
@@ -27,6 +25,9 @@ For the smoothest desktop install:
 - `pip`
 
 The desktop app also needs Qt/WebEngine dependencies, which are installed from `python/desktop_requirements.txt`.
+
+NOTE: This app has been deployed in very few environments at the moment. We do expect some teething issues particuarly during installation. Let us know.
+
 
 ## Quick Start For New Users
 
@@ -199,3 +200,18 @@ Architecture notes:
 Optimisation notes:
 
 - [docs/optimization_strategy.md](docs/optimization_strategy.md)
+
+## Use of agentic coding
+
+This package is a port of a MATLAB repository. We have used CODEX extensively for porting, improving the GUI, and adding many features. The users are expected to verify the results also with known cases and eventually measurements. However, here are the steps we implement for quality assurance:
+
+- The Fisher Information analysis is based on two independent techniques.
+  
+  1) Numerical estimation of derivatives. The instrument samples the probability density function, and the derivatives of the resulting histograms are evaluated numerically. These numerical estimations are fast and used to evaluate Fisher Information.
+  2) To ensure the numerical estimations are accurate, and also to introduce a secondary way to verify that agents did not introduce artefacts into the numerical estimations of FI, HILIGTHer tries to verify results with independent Monte Carlo simulations.
+ 
+- Agent-based verification. When we introduce new features, agents are asked to run independent diagnostic tests
+  
+- Human-in-the-loop. All modules are periodically audited to ensure the Digital Twin remains grounded in the correct physics and maths.
+  
+Current status of auditing. We are proceeding with a new auditing cycle. At its completion, we will release the first beta version. However, the alpha version is currently already stable and publicly shared. It behaves correctly but we want to implement a final manual audit.
