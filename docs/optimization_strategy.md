@@ -4,17 +4,17 @@
 
 This strategy is based on three sources already present in the project:
 
-- The current Python backend gate optimizer in `python/backend/twin_engine.py`.
-- The published PLOS ONE paper "Maximizing the Biochemical Resolving Power of Fluorescence Microscopy" (2013), especially the photon-partitioning and iterative gate-optimization sections.
-- The new local document `resources/FisherCompression.docx`.
+- The current Python backend gate optimiser in `python/backend/twin_engine.py`.
+- The published PLOS ONE paper "Maximising the Biochemical Resolving Power of Fluorescence Microscopy" (2013), especially the photon-partitioning and iterative gate-optimisation sections.
+- New local documentation about Fisher Information analysis that will be released as a pre-print soon.
 
 ## What The Existing Backend Already Does
 
-The current backend already contains one valid detection-gate optimizer:
+The current backend already contains one valid detection-gate optimiser:
 
 - `TwinEngine.optimize_gates(...)`
-- Continuous gate-edge optimization with SLSQP.
-- Objective: minimize the mean F-value over a lifetime design grid.
+- Continuous gate-edge optimisation with SLSQP.
+- Objective: minimise the mean F-value over a lifetime design grid.
 - Constraints: monotonic internal edges, first gate at `0`, last gate at `t_max`.
 
 This should be preserved and exposed as one selectable optimization algorithm, not removed.
@@ -23,15 +23,15 @@ This should be preserved and exposed as one selectable optimization algorithm, n
 
 The published paper adds two algorithmic ideas that are not yet represented properly in the current backend:
 
-1. Partition-theorem iterative optimization
+1. Partition-theorem iterative optimisation
 - A bottom-up strategy that increases channel count by splitting a gate only when the Fisher-information gain is non-trivial.
-- A top-down strategy that decreases channel count by merging channels while minimizing information loss.
+- A top-down strategy that decreases channel count by merging channels while minimising information loss.
 
-2. Full optimization after partition-theorem initialization
-- The paper distinguishes between a fast iterative partitioning strategy and a later direct optimization/refinement step.
-- In practical terms, the current SLSQP optimizer is a good match for the refinement stage, but not for the partition-theorem stage.
+2. Full optimisation after partition-theorem initialisation
+- The paper distinguishes between a fast iterative partitioning strategy and a later direct optimisation/refinement step.
+- In practical terms, the current SLSQP optimiser is a good match for the refinement stage, but not for the partition-theorem stage.
 
-So for detection gates the backend should eventually expose:
+So, for detection gates, the backend should eventually expose:
 
 - `direct_slsqp`
 - `partition_bottom_up`
@@ -53,7 +53,7 @@ It proposes:
 - optionally averaging segment costs over multiple design points,
 - optionally accounting for nuisance parameters using the Schur complement of the Fisher matrix.
 
-This is not just another SLSQP parameterization. It is a separate algorithm family:
+This is not just another SLSQP parameterisation. It is a separate algorithm family:
 
 - fine-grid, loss-aware, dynamic-programming compression,
 - explicitly suited to "lossless Fisher compression" and digital re-binning,
@@ -65,9 +65,9 @@ So this should be implemented as a distinct detection optimizer:
 
 ## Recommended Backend Architecture
 
-Do not keep growing all optimization logic inside `TwinEngine`.
+Do not keep growing all optimisation logic inside `TwinEngine`.
 
-Create a small optimization layer under the backend, for example:
+Create a small optimisation layer under the backend, for example:
 
 - `python/backend/optimization/objectives.py`
 - `python/backend/optimization/detection.py`
