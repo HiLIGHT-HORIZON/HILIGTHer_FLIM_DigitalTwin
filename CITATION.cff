@@ -9,7 +9,9 @@ title: "HILIGHTer Digital Twin"
 version: 1.0.0
 date-released: 2026-03-21
 url: "https://quantitative-biology.org"
-repository-code: "https://github.com/HiLIGHT-HORIZON/DigitalTwin_Matlab"
+repository-code: "https://github.com/HiLIGHT-HORIZON/HILIGTHer_FLIM_DigitalTwin"
+doi: "10.5281/zenodo.19160166"
 abstract: >-
-  A quantitative biological modeling toolkit developed in MATLAB. 
-  For further research and associated publications, visit cengem.org.
+  HILIGHTer Digital Twin is a Python-first virtual FLIM engineering workspace
+  for instrument design, Fisher-information analysis, Monte Carlo validation,
+  optimisation, and automation across desktop, API, and MCP workflows.
