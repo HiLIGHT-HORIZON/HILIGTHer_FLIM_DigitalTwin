@@ -86,3 +86,7 @@ AppProperties/settings.mat
 # --- Project Specific ---
 .agent/
 AppProperties/
+
+# --- Sensitive Local Resources ---
+/resources/*
+!/resources/.gitkeep
