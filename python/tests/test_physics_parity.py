@@ -12,12 +12,12 @@ def test_gate_shapes_parity():
     """
     mat_path = 'python/data/ground_truth/reference_sim.mat'
     if not os.path.exists(mat_path):
-        pytest.skip("Reference MAT file not found. Run MATLAB export script first.")
+        pytest.skip("Reference MAT file not found. Run the legacy export script first.")
         
     mat = sio.loadmat(mat_path)
     
-    # MATLAB properties are direct keys in results struct
-    # Note: MATLAB properties are sometimes converted to double arrays
+    # Legacy reference properties are direct keys in the results struct.
+    # Note: these values are sometimes converted to double arrays.
     ref_gates = mat['GateShapes'] # [nGates x nTime]
     ref_time = mat['TimeVector'].flatten() # [1 x nTime]
     ref_edges = mat['GateEdges'].flatten()
@@ -34,7 +34,7 @@ def test_gate_shapes_parity():
     engine.distill_gates()
     
     # Check Time Vector
-    # Allow for floating point differences in np.arange vs MATLAB colon
+    # Allow for floating point differences in np.arange vs the legacy colon step.
     assert np.allclose(engine.time_vector, ref_time, atol=1e-8)
     
     # Check Gate Shapes
@@ -63,7 +63,7 @@ def test_fit_parity():
     engine = TwinEngine(cfg)
     engine.distill_gates()
     
-    # Run fit on the SAME raw data from MATLAB
+    # Run the fit on the same raw data exported from the legacy reference workflow.
     engine.run_fit(ref_raw)
     
     # Validate Parity

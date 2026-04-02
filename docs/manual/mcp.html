@@ -89,6 +89,15 @@ python python/tools/mcp_smoke_test.py</code></pre>
       <section class="card" id="prompts">
         <h2>Prompts</h2>
         <p>The server exposes prompt templates that steer an LLM toward repeatable workflows. These are intended as entry prompts, not as a substitute for the tools.</p>
+        <table>
+          <tr><th>Prompt</th><th>Purpose</th></tr>
+          <tr><td><code>precision-audit</code></td><td>Review theory, Monte Carlo, and confidence-interval consistency for the active precision sweep.</td></tr>
+          <tr><td><code>instrument-design</code></td><td>Design or refine excitation, detection, and gating settings for a target regime.</td></tr>
+          <tr><td><code>data-inspection</code></td><td>Inspect summaries, maps, diagnostics, phasors, and representative pixels.</td></tr>
+          <tr><td><code>workspace-navigation</code></td><td>Guide a user or agent through the desktop using GUI-schema identifiers.</td></tr>
+          <tr><td><code>instrument-profile-builder</code></td><td>Use vendor documentation and MCP tools to build an instrument-definition JSON.</td></tr>
+          <tr><td><code>optimisation-loop</code></td><td>Run and interpret the integrated optimisation workflow.</td></tr>
+        </table>
       </section>
 
       <section class="card" id="profile-workflow">

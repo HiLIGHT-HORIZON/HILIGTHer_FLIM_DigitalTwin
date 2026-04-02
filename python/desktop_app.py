@@ -1,3 +1,10 @@
+"""Desktop launcher for the HILIGHTer Qt workspace.
+
+This module is intentionally thin: it bootstraps Qt/WebEngine prerequisites,
+checks desktop-only dependencies, shows the splash screen, and then hands
+control to `gui.main_window.HILIGHTMainWindow`.
+"""
+
 import sys
 import os
 import subprocess
@@ -27,6 +34,7 @@ REQUIRED_DESKTOP_MODULES = [
 
 
 def _missing_desktop_modules():
+    """Return `(module_name, error)` tuples for desktop dependencies that failed to import."""
     missing = []
     for module_name in REQUIRED_DESKTOP_MODULES:
         try:
@@ -37,6 +45,7 @@ def _missing_desktop_modules():
 
 
 def _stream_dependency_update(repo_root, splash):
+    """Install missing desktop dependencies and stream progress to the splash screen."""
     req_path = os.path.join(repo_root, "python", "desktop_requirements.txt")
     if not os.path.exists(req_path):
         message = "Dependency file not found: desktop_requirements.txt"
@@ -102,11 +111,10 @@ def _stream_dependency_update(repo_root, splash):
 
 # --- NEW: Splash Screen Integration ---
 def main():
-    # Performance boost for PyQt
+    # Keep startup deterministic across mixed-DPI Windows desktop environments.
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
     
-    # Initialize Core Application with necessary attributes for WebEngine
-    # These MUST be set before QApplication is instantiated
+    # WebEngine requires this attribute before QApplication exists.
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     
     app = QApplication(sys.argv)

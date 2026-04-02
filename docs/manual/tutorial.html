@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interactive Tutorial</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <style>
+    .tutorial-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .tutorial-tab {
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .tutorial-tab.active {
+      background: rgba(56, 189, 248, 0.16);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .tutorial-panel {
+      display: none;
+    }
+
+    .tutorial-panel.active {
+      display: block;
+    }
+
+    .tutorial-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .tutorial-stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .tutorial-note,
+    .tutorial-math {
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+    }
+
+    .tutorial-note p,
+    .tutorial-math p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .tutorial-math .equation {
+      margin: 10px 0;
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid #203245;
+      background: rgba(8, 17, 27, 0.45);
+      color: var(--text);
+      font-family: "Cambria Math", "STIX Two Math", "Times New Roman", serif;
+      font-size: 1.04rem;
+      line-height: 1.45;
+    }
+
+    .tutorial-control {
+      display: block;
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .tutorial-control-label {
+      display: block;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .tutorial-control-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .tutorial-control input[type="range"] {
+      width: 100%;
+    }
+
+    .tutorial-control-value {
+      min-width: 88px;
+      text-align: right;
+      font-family: Consolas, "Courier New", monospace;
+      color: var(--accent);
+    }
+
+    .tutorial-visuals {
+      display: grid;
+      gap: 14px;
+    }
+
+    .chart-card {
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .chart-card h3 {
+      margin-top: 0;
+      margin-bottom: 10px;
+    }
+
+    .chart-card svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 12px;
+      background: #09121d;
+      border: 1px solid #203245;
+    }
+
+    .chart-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .chart-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .chart-legend-swatch {
+      width: 18px;
+      height: 0;
+      border-top: 3px solid var(--accent);
+    }
+
+    .chart-legend-swatch.dashed {
+      border-top-style: dashed;
+    }
+
+    .chart-legend-swatch.dot {
+      width: 12px;
+      height: 12px;
+      border-top: none;
+      border-radius: 50%;
+      background: var(--accent);
+      border: 2px solid white;
+    }
+
+    .tutorial-bars {
+      display: grid;
+      gap: 10px;
+    }
+
+    .tutorial-bar-row {
+      display: grid;
+      grid-template-columns: 150px minmax(0, 1fr) 56px;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .tutorial-bar {
+      height: 12px;
+      border-radius: 999px;
+      background: #132233;
+      overflow: hidden;
+      border: 1px solid #22384c;
+    }
+
+    .tutorial-bar-fill {
+      height: 100%;
+      width: 0;
+      background: linear-gradient(90deg, #10b981, #38bdf8);
+    }
+
+    .tutorial-bar-value {
+      text-align: right;
+      color: var(--muted);
+      font-family: Consolas, "Courier New", monospace;
+    }
+
+    .tutorial-meta {
+      color: var(--muted);
+    }
+
+    .tutorial-control-help {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .tutorial-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      margin-top: 12px;
+      background: rgba(15, 23, 42, 0.85);
+      color: var(--text);
+    }
+
+    .tutorial-badge.resolved {
+      background: rgba(16, 185, 129, 0.18);
+      border-color: rgba(34, 197, 94, 0.5);
+      color: #86efac;
+    }
+
+    .tutorial-badge.unresolved {
+      background: rgba(225, 29, 72, 0.18);
+      border-color: rgba(217, 70, 239, 0.5);
+      color: #f9a8d4;
+    }
+
+    @media (max-width: 980px) {
+      .tutorial-grid {
+        grid-template-columns: 1fr;
+      }
+
+    }
+  </style>
+  <script defer src="assets/app.js"></script>
+  <script defer src="assets/tutorial.js"></script>
+</head>
+<body data-page="tutorial">
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">HILIGHTer Digital Twin
+        <small>Interactive tutorial for Fisher information and precision metrics</small>
+      </div>
+      <nav class="nav">
+        <a data-nav="index" href="index.html">Overview</a>
+        <a data-nav="controller" href="controller.html">Controller</a>
+        <a data-nav="widgets" href="widgets.html">Widgets</a>
+        <a data-nav="tutorial" href="tutorial.html">Tutorial</a>
+        <a data-nav="apis" href="apis.html">APIs</a>
+        <a data-nav="mcp" href="mcp.html">MCP</a>
+        <a data-nav="backend" href="backend.html">Backend</a>
+        <a data-nav="maths" href="maths.html">Maths</a>
+      </nav>
+      <form class="search-form" data-search-target="search.html">
+        <input type="search" name="q" placeholder="Search the manual...">
+        <button type="submit">Search</button>
+      </form>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-card">
+        <h3>How To Use This</h3>
+        <p>Pick a tab, move one slider at a time, and watch how the plots and explanations change. The page is written for students who know the experiment but not yet the theory language.</p>
+      </div>
+      <div class="sidebar-card">
+        <h3>Key Ideas</h3>
+        <ul>
+          <li>Smaller <code>F</code> means better precision.</li>
+          <li><code>F^-2</code> is information efficiency per collected photon.</li>
+          <li>Throughput matters because a great estimator is not enough if the instrument discards too many photons.</li>
+          <li>Gate position changes both photon count and information content.</li>
+        </ul>
+      </div>
+    </aside>
+
+    <main class="content">
+      <section class="hero">
+        <div class="kicker">Tutorial</div>
+        <h1>Interactive Tutorial</h1>
+        <p>This page explains what Fisher information is, how the HILIGHTer precision figures of merit relate to it, and why gate design changes the trade-off between photon budget and useful information.</p>
+      </section>
+
+      <div class="tutorial-tabs">
+        <button class="tutorial-tab active" data-tab-target="panel-fisher">Fisher Information (basics)</button>
+        <button class="tutorial-tab" data-tab-target="panel-gates">Gate Explorer</button>
+        <button class="tutorial-tab" data-tab-target="panel-metrics">F-value, Photon Efficiency and Lifetime Resolution</button>
+        <button class="tutorial-tab" data-tab-target="panel-resolving">FLIM Resolving Power</button>
+      </div>
+
+      <section class="card tutorial-panel active" id="panel-fisher">
+        <div class="tutorial-grid">
+          <div class="tutorial-stack">
+            <div class="tutorial-note">
+              <h3>What This Teaches</h3>
+              <p>Fisher information measures how strongly the measured timing distribution reacts when the lifetime changes. In this panel, the comparison shift is only a visual probe: it lets you compare the current lifetime against a nearby alternative so you can see how distinguishable the two hypotheses are.</p>
+            </div>
+            <label class="tutorial-control" data-control-id="fiTau" data-min="0.1" data-max="10.0" data-decimals="2" data-suffix=" ns">
+              <span class="tutorial-control-label">Lifetime tau</span>
+              <div class="tutorial-control-row">
+                <input id="fiTau" type="range" min="0" max="500" value="146">
+                <span class="tutorial-control-value" id="fiTauValue"></span>
+              </div>
+            </label>
+            <label class="tutorial-control" data-control-id="fiDelta" data-min="0.1" data-max="5.0" data-decimals="2" data-suffix=" ns">
+              <span class="tutorial-control-label">Comparison shift (visual only)</span>
+              <div class="tutorial-control-row">
+                <input id="fiDelta" type="range" min="0" max="500" value="92">
+                <span class="tutorial-control-value" id="fiDeltaValue"></span>
+              </div>
+            </label>
+            <label class="tutorial-control" data-control-id="fiPeriod" data-min="10.0" data-max="100.0" data-decimals="1" data-suffix=" ns">
+              <span class="tutorial-control-label">Repetition period</span>
+              <div class="tutorial-control-row">
+                <input id="fiPeriod" type="range" min="0" max="500" value="83">
+                <span class="tutorial-control-value" id="fiPeriodValue"></span>
+              </div>
+            </label>
+            <label class="tutorial-control" data-control-id="fiBlur" data-min="0" data-max="1000" data-decimals="0" data-suffix=" ps">
+              <span class="tutorial-control-label">Timing blur</span>
+              <div class="tutorial-control-row">
+                <input id="fiBlur" type="range" min="0" max="500" value="0">
+                <span class="tutorial-control-value" id="fiBlurValue"></span>
+              </div>
+            </label>
+            <label class="tutorial-control">
+              <span class="tutorial-control-label">Absolute density y scale</span>
+              <div class="tutorial-control-row">
+                <select id="fiYScale">
+                  <option value="linear">Linear</option>
+                  <option value="log">Log</option>
+                </select>
+                <span class="tutorial-meta">Right axis</span>
+              </div>
+            </label>
+            <div class="tutorial-note"><p id="fiSummary"></p></div>
+            <div class="tutorial-math"><div id="fiMath"></div></div>
+          </div>
+          <div class="tutorial-visuals">
+            <div class="chart-card">
+              <h3>IRF plus two nearby lifetime hypotheses</h3>
+              <svg id="fiDecayPlot" viewBox="0 0 820 320" aria-label="Decay curve comparison"></svg>
+              <div class="chart-legend" id="fiDecayLegend"></div>
+            </div>
+            <div class="chart-card">
+              <h3>Where the information sits and how different the two curves are</h3>
+              <svg id="fiInfoPlot" viewBox="0 0 820 320" aria-label="Information density plot"></svg>
+              <div class="chart-legend" id="fiInfoLegend"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card tutorial-panel" id="panel-metrics">
+        <div class="tutorial-grid">
+          <div class="tutorial-stack">
+            <div class="tutorial-note">
+              <h3>What This Teaches</h3>
+              <p>This section explains what the F-value means, why photon efficiency is <code>F^-2</code>, and how resolvability improves when you collect more photons.</p>
+            </div>
+            <label class="tutorial-control" data-control-id="mtF" data-min="1.0" data-max="10.0" data-decimals="2">
+              <span class="tutorial-control-label">F-value</span>
+              <div class="tutorial-control-row">
+                <input id="mtF" type="range" min="0" max="500" value="56">
+                <span class="tutorial-control-value" id="mtFValue"></span>
+              </div>
+            </label>
+            <label class="tutorial-control" data-control-id="mtPhotons" data-min="1" data-max="100000" data-decimals="0" data-scale="log">
+              <span class="tutorial-control-label">Collected photons</span>
+              <div class="tutorial-control-row">
+                <input id="mtPhotons" type="range" min="0" max="500" value="400">
+                <span class="tutorial-control-value" id="mtPhotonsValue"></span>
+              </div>
+            </label>
+            <div class="tutorial-note"><p id="metricSummary"></p></div>
+            <div class="tutorial-math"><div id="metricMath"></div></div>
+          </div>
+          <div class="tutorial-visuals">
+            <div class="tutorial-note">
+              <h3>Interactive Bars</h3>
+              <div class="tutorial-bars">
+                <div class="tutorial-bar-row">
+                  <span>F-value</span>
+                  <div class="tutorial-bar"><div class="tutorial-bar-fill" id="fBar"></div></div>
+                  <span class="tutorial-bar-value" id="fLabel"></span>
+                </div>
+                <div class="tutorial-bar-row">
+                  <span>Photon efficiency F^-2</span>
+                  <div class="tutorial-bar"><div class="tutorial-bar-fill" id="efficiencyBar"></div></div>
+                  <span class="tutorial-bar-value" id="efficiencyLabel"></span>
+                </div>
+                <div class="tutorial-bar-row">
+                  <span>Resolvability R</span>
+                  <div class="tutorial-bar"><div class="tutorial-bar-fill" id="resolvabilityBar"></div></div>
+                  <span class="tutorial-bar-value" id="resolvabilityLabel"></span>
+                </div>
+              </div>
+            </div>
+            <div class="tutorial-note">
+              <h3>One-line Intuition</h3>
+              <p><code>F</code> tells you how much worse the precision is than the ideal case. <code>F^-2</code> tells you what fraction of your photons are effectively useful. <code>R</code> tells you how easily the lifetime can be separated from noise at the current photon count.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card tutorial-panel" id="panel-resolving">
+        <div class="tutorial-grid">
+          <div class="tutorial-stack">
+            <div class="tutorial-note">
+              <h3>What This Teaches</h3>
+              <p>This section applies a Rayleigh-style criterion to lifetime measurements. The underlying decay model is a single exponential, but the measured lifetime estimates are shown as two Gaussian distributions whose width is controlled by <code>F</code> and the photon count.</p>
+            </div>
+            <label class="tutorial-control" data-control-id="rpF" data-min="1.0" data-max="10.0" data-decimals="2">
+              <span class="tutorial-control-label">F-value</span>
+              <span class="tutorial-control-help">Choose the F-value of your system</span>
+              <div class="tutorial-control-row">
+                <input id="rpF" type="range" min="0" max="500" value="56">
+                <span class="tutorial-control-value" id="rpFValue"></span>
+              </div>
+            </label>
+            <label class="tutorial-control" data-control-id="rpTau" data-min="0.1" data-max="10.0" data-decimals="2" data-suffix=" ns">
+              <span class="tutorial-control-label">Fluorescence lifetime</span>
+              <span class="tutorial-control-help">Choose the lifetime value you measure</span>
+              <div class="tutorial-control-row">
+                <input id="rpTau" type="range" min="0" max="500" value="197">
+                <span class="tutorial-control-value" id="rpTauValue"></span>
+              </div>
+            </label>
+            <label class="tutorial-control" data-control-id="rpDelta" data-min="0.01" data-max="8.0" data-decimals="3" data-suffix=" ns">
+              <span class="tutorial-control-label">Delta tau</span>
+              <span class="tutorial-control-help">Which is the smallest change in lifetime you want to measure</span>
+              <div class="tutorial-control-row">
+                <input id="rpDelta" type="range" min="0" max="500" value="37">
+                <span class="tutorial-control-value" id="rpDeltaValue"></span>
+              </div>
+            </label>
+            <label class="tutorial-control" data-control-id="rpPhotons" data-min="1" data-max="100000" data-decimals="0" data-scale="log">
+              <span class="tutorial-control-label">Measured photons</span>
+              <div class="tutorial-control-row">
+                <input id="rpPhotons" type="range" min="0" max="500" value="400">
+                <span class="tutorial-control-value" id="rpPhotonsValue"></span>
+              </div>
+            </label>
+            <label class="tutorial-control" data-control-id="rpSigma" data-min="0.01" data-max="2.0" data-decimals="3" data-suffix=" ns">
+              <span class="tutorial-control-label">Lifetime standard deviation</span>
+              <div class="tutorial-control-row">
+                <input id="rpSigma" type="range" min="0" max="500" value="16">
+                <span class="tutorial-control-value" id="rpSigmaValue"></span>
+              </div>
+            </label>
+            <label class="tutorial-control" data-control-id="rpR" data-min="0.1" data-max="6.0" data-decimals="2">
+              <span class="tutorial-control-label">Resolving power R</span>
+              <div class="tutorial-control-row">
+                <input id="rpR" type="range" min="0" max="500" value="246">
+                <span class="tutorial-control-value" id="rpRValue"></span>
+              </div>
+            </label>
+            <label class="tutorial-control">
+              <span class="tutorial-control-label">Lock R = 3 Rayleigh criterion</span>
+              <div class="tutorial-control-row">
+                <input id="rpLockR" type="checkbox">
+                <span class="tutorial-meta">Default OFF</span>
+              </div>
+            </label>
+            <div class="tutorial-note"><p id="rpSummary"></p></div>
+            <div class="tutorial-math"><div id="rpMath"></div></div>
+          </div>
+          <div class="tutorial-visuals">
+            <div class="chart-card">
+              <h3>Two Gaussian lifetime-estimate distributions</h3>
+              <svg id="rpPlot" viewBox="0 0 820 320" aria-label="FLIM resolving power plot"></svg>
+              <div class="chart-legend" id="rpLegend"></div>
+              <div class="tutorial-badge" id="rpBadge">Fluorescence lifetime not resolved</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card tutorial-panel" id="panel-gates">
+        <div class="tutorial-grid">
+          <div class="tutorial-stack">
+            <div class="tutorial-note">
+              <h3>What This Teaches</h3>
+              <p>This panel compares two acquisition gates directly. It shows how much Fisher information each gate collects, how the two gates combine, and how sequential acquisition penalises the final F-value because the photons are split across two measurements.</p>
+            </div>
+            <label class="tutorial-control" data-control-id="gtTau" data-min="0.1" data-max="10.0" data-decimals="2" data-suffix=" ns">
+              <span class="tutorial-control-label">Lifetime tau</span>
+              <div class="tutorial-control-row">
+                <input id="gtTau" type="range" min="0" max="500" value="146">
+                <span class="tutorial-control-value" id="gtTauValue"></span>
+              </div>
+            </label>
+            <label class="tutorial-control" data-control-id="gtStart1" data-min="1.0" data-max="24.0" data-decimals="2" data-suffix=" ns">
+              <span class="tutorial-control-label">Gate 1 start</span>
+              <div class="tutorial-control-row">
+                <input id="gtStart1" type="range" min="0" max="500" value="21">
+                <span class="tutorial-control-value" id="gtStart1Value"></span>
+              </div>
+            </label>
+            <label class="tutorial-control" data-control-id="gtWidth1" data-min="0.1" data-max="20.0" data-decimals="2" data-suffix=" ns">
+              <span class="tutorial-control-label">Gate 1 width</span>
+              <div class="tutorial-control-row">
+                <input id="gtWidth1" type="range" min="0" max="500" value="98">
+                <span class="tutorial-control-value" id="gtWidth1Value"></span>
+              </div>
+            </label>
+            <label class="tutorial-control" data-control-id="gtStart2" data-min="1.0" data-max="24.0" data-decimals="2" data-suffix=" ns">
+              <span class="tutorial-control-label">Gate 2 start</span>
+              <div class="tutorial-control-row">
+                <input id="gtStart2" type="range" min="0" max="500" value="128">
+                <span class="tutorial-control-value" id="gtStart2Value"></span>
+              </div>
+            </label>
+            <label class="tutorial-control" data-control-id="gtWidth2" data-min="0.1" data-max="20.0" data-decimals="2" data-suffix=" ns">
+              <span class="tutorial-control-label">Gate 2 width</span>
+              <div class="tutorial-control-row">
+                <input id="gtWidth2" type="range" min="0" max="500" value="98">
+                <span class="tutorial-control-value" id="gtWidth2Value"></span>
+              </div>
+            </label>
+            <label class="tutorial-control">
+              <span class="tutorial-control-label">Lock gate 2 start to gate 1 start</span>
+              <div class="tutorial-control-row">
+                <input id="gtLockStart" type="checkbox" checked>
+                <span class="tutorial-meta">Default ON</span>
+              </div>
+            </label>
+            <label class="tutorial-control">
+              <span class="tutorial-control-label">Parallel acquisition</span>
+              <div class="tutorial-control-row">
+                <input id="gtParallel" type="checkbox" checked>
+                <span class="tutorial-meta">Default ON</span>
+              </div>
+            </label>
+            <label class="tutorial-control">
+              <span class="tutorial-control-label">Compute F from acquired photons only</span>
+              <div class="tutorial-control-row">
+                <input id="gtUseAcquired" type="checkbox" checked>
+                <span class="tutorial-meta">Default ON</span>
+              </div>
+            </label>
+            <div class="tutorial-note"><p id="gateSummary"></p></div>
+            <div class="tutorial-math"><div id="gateMath"></div></div>
+          </div>
+          <div class="tutorial-visuals">
+            <div class="chart-card">
+              <h3>Dirac IRF, decay curve, and the two gate windows</h3>
+              <svg id="gatePlot" viewBox="0 0 820 320" aria-label="Gate overlay plot"></svg>
+              <div class="chart-legend" id="gateLegend"></div>
+            </div>
+            <div class="chart-card">
+              <h3>Fisher information captured by the two gates, with resulting F-value</h3>
+              <svg id="tradeoffPlot" viewBox="0 0 820 320" aria-label="Gate Fisher information and F-value chart"></svg>
+              <div class="chart-legend" id="tradeoffLegend"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

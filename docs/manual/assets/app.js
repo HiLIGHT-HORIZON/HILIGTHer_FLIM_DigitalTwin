@@ -3,6 +3,21 @@
     return String(text || "").toLowerCase();
   }
 
+  function ensureTutorialNav() {
+    const nav = document.querySelector(".nav");
+    if (!nav || nav.querySelector("[data-nav='tutorial']")) return;
+    const link = document.createElement("a");
+    link.setAttribute("data-nav", "tutorial");
+    link.setAttribute("href", "tutorial.html");
+    link.textContent = "Tutorial";
+    const apisLink = nav.querySelector("[data-nav='apis']");
+    if (apisLink) {
+      nav.insertBefore(link, apisLink);
+    } else {
+      nav.appendChild(link);
+    }
+  }
+
   function setActiveNav() {
     const page = document.body.getAttribute("data-page");
     document.querySelectorAll("[data-nav]").forEach((link) => {
@@ -53,6 +68,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", function () {
+    ensureTutorialNav();
     setActiveNav();
     wireSearchForms();
     renderSearchResults();

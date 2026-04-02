@@ -74,7 +74,6 @@ python/data/sessions/*
 # --- Legacy / MATLAB Specifics ---
 legacy/SPC-handbook-11ed-07.pdf
 legacy/bfmatlab/bioformats_package.jar
-AppProperties/settings.mat
 *.mlapp
 *.slx
 *.mdl
@@ -85,7 +84,6 @@ AppProperties/settings.mat
 
 # --- Project Specific ---
 .agent/
-AppProperties/
 
 # --- Sensitive Local Resources ---
 /resources/*

@@ -1,16 +1,45 @@
-# React + Vite
+# HILIGHTer Browser Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This directory contains the React/Vite browser client for HILIGHTer.
 
-Currently, two official plugins are available:
+Current status:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- It is a secondary interface, not the primary supported operator workflow.
+- It consumes a subset of the FastAPI backend exposed by `python/backend/main.py`.
+- Several requests still use older compatibility routes such as `/simulate` and `/results/fisher/{n_photons}`.
+- If the HTTP API changes, this frontend must be updated in lockstep.
 
-## React Compiler
+## Requirements
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- Node.js and `npm`
+- a Python environment with `python/requirements.txt` installed
+- the FastAPI backend running from the repository root
 
-## Expanding the ESLint configuration
+## Install and Run
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+From the repository root:
+
+```powershell
+python -m pip install -r python\requirements.txt
+python -m uvicorn python.backend.main:app --reload
+```
+
+In a second terminal:
+
+```powershell
+cd python/frontend
+npm install
+npm run dev
+```
+
+Expected backend:
+
+```powershell
+python -m uvicorn python.backend.main:app --reload
+```
+
+## Notes
+
+- The frontend currently targets `http://localhost:8000` directly from `src/App.jsx`.
+- It is intentionally thinner than the desktop app and does not expose every workspace capability.
+- The maintained API surface is moving toward `/api/v1/...`, but the frontend still depends on a few compatibility routes.

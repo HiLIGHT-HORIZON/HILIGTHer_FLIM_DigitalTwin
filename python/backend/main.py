@@ -1,15 +1,22 @@
+"""FastAPI transport for the shared HILIGHTer backend service.
+
+The canonical workflow logic lives in `DigitalTwinService`; this module only
+maps HTTP routes onto that service and preserves a few compatibility aliases.
+"""
+
 from typing import Any, Dict
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .service_api import DigitalTwinService
+from metadata import get_version
 
 
 app = FastAPI(
     title="HILIGHTer Digital Twin API",
-    version="1.1.0",
+    version=get_version(),
     description="Programmatic backend, data, workflow, optimisation, and GUI-schema APIs for the HILIGHTer Digital Twin.",
 )
 
@@ -129,15 +136,6 @@ async def get_theory_locus():
     return service.get_theoretical_locus()
 
 
-@app.post("/api/v1/data/import/sdt")
-async def import_sdt_upload(file: UploadFile = File(...)):
-    payload = await file.read()
-    try:
-        return service.import_sdt_bytes(file.filename, payload)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"SDT import failed: {exc}") from exc
-
-
 @app.post("/api/v1/session/save/{session_id}")
 async def save_session(session_id: str):
     result = service.save_session(session_id)
@@ -154,7 +152,7 @@ async def load_session(session_id: str):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-# Legacy compatibility aliases
+# Legacy compatibility aliases retained for older scripts and the current browser client.
 @app.post("/simulate")
 async def legacy_simulate(req: SimulationRequest):
     return service.simulate_basic(req.model_dump())

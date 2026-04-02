@@ -1,7 +1,7 @@
 import os
 import json
 
-profiles_dir = r"c:\Users\ae275\OneDrive - Brunel University London\Documents\HILIGHT_DigitalTwin\DigitalTwin_Matlab\python\profiles\instruments"
+profiles_dir = os.path.dirname(__file__)
 precision_photons = 200
 precision_mc_repeats = 100
 

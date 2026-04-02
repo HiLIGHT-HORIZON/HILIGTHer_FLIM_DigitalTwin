@@ -32,6 +32,7 @@
         <h3>API layers</h3>
         <a href="#service-api">Python service API</a>
         <a href="#http-api">HTTP API</a>
+        <a href="#automation-api">Desktop automation API</a>
         <a href="#gui-schema">GUI schema</a>
       </div>
     </aside>
@@ -39,12 +40,13 @@
       <section class="hero" id="service-api">
         <div class="kicker">API</div>
         <h1>Programmatic APIs</h1>
-        <p>The Digital Twin exposes one orchestration layer and multiple transports. The Python service API is the source of truth. The HTTP API and MCP server sit on top of it.</p>
+        <p>The Digital Twin exposes one orchestration layer and multiple transports. The Python service API is the source of truth. The HTTP API, desktop automation API, and MCP server sit on top of it.</p>
       </section>
 
       <section class="card">
         <h2>Python service API</h2>
         <p><code>python/backend/service_api.py</code> exposes the main programmatic workflows: status/config, precision, optimisation, simulations, diagnostics, phasors, sessions, and instrument-profile creation helpers.</p>
+        <p>The service layer is the source of truth for all other transports. The desktop, HTTP API, and MCP server should all be documented in terms of <code>DigitalTwinService</code>.</p>
       </section>
 
       <section class="card" id="http-api">
@@ -69,6 +71,13 @@
           <tr><td><code>/api/v1/session/save/{session_id}</code></td><td>POST</td><td>Persist current data state.</td></tr>
           <tr><td><code>/api/v1/session/load/{session_id}</code></td><td>POST</td><td>Restore a saved session.</td></tr>
         </table>
+        <p>The API also keeps legacy compatibility routes at <code>/simulate</code>, <code>/simulate/advanced</code>, and <code>/results/fisher/{n_photons}</code>. The current React frontend still depends on those older routes.</p>
+      </section>
+
+      <section class="card" id="automation-api">
+        <h2>Desktop automation API</h2>
+        <p><code>python/gui/automation_api.py</code> is an in-process API for a live Qt window. It exposes layout, controller state, run/export triggers, plot payloads, diagnostics frames, and optimisation state without going through HTTP.</p>
+        <p>This is separate from the GUI schema: the schema describes the workspace declaratively, while the automation API performs actions against a running desktop session.</p>
       </section>
 
       <section class="card" id="gui-schema">

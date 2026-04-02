@@ -5,7 +5,7 @@ from backend.models import PhysicsConfig
 
 def test_benchmark_4gate_baseline():
     """
-    Verifies parity with MATLAB baseline: 
+    Verifies parity with the legacy baseline:
     4 gates, edges [0, 8, 16, 24, 32], tau=2.0ns.
     Target: ~40% efficiency.
     """
@@ -35,7 +35,7 @@ def test_benchmark_4gate_baseline():
 
 def test_benchmark_4gate_optimized():
     """
-    Verifies parity with MATLAB Optimized config:
+    Verifies parity with the legacy optimized config:
     Edges [0.0, 2.8, 7.5, 12.5, 32.0], tau=2.0ns.
     Target: ~50% efficiency.
     """

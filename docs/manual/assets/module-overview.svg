@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="860" viewBox="0 0 1400 860" role="img" aria-labelledby="title desc">
+  <title id="title">HILIGHTer module overview</title>
+  <desc id="desc">Diagram showing the desktop, browser frontend, HTTP API, desktop automation, and MCP server around the shared DigitalTwinService and TwinEngine modules.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f7fbff"/>
+      <stop offset="100%" stop-color="#eef4fb"/>
+    </linearGradient>
+    <linearGradient id="core" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f4c81"/>
+      <stop offset="100%" stop-color="#1c7ed6"/>
+    </linearGradient>
+    <style>
+      .panel { fill: #ffffff; stroke: #cfd9e6; stroke-width: 2; rx: 22; ry: 22; }
+      .title { font: 700 28px 'Segoe UI', Arial, sans-serif; fill: #0f172a; }
+      .subtitle { font: 600 18px 'Segoe UI', Arial, sans-serif; fill: #1e3a5f; }
+      .body { font: 15px 'Segoe UI', Arial, sans-serif; fill: #334155; }
+      .coreTitle { font: 700 30px 'Segoe UI', Arial, sans-serif; fill: #ffffff; }
+      .coreBody { font: 16px 'Segoe UI', Arial, sans-serif; fill: #e8f3ff; }
+      .pill { fill: #e8f1fb; stroke: #c3d5ea; stroke-width: 1.5; rx: 14; ry: 14; }
+      .pillText { font: 600 14px 'Segoe UI', Arial, sans-serif; fill: #18406a; }
+      .arrow { stroke: #5b7da3; stroke-width: 3; fill: none; marker-end: url(#arrowhead); }
+      .smallArrow { stroke: #8aa4c2; stroke-width: 2.5; fill: none; marker-end: url(#arrowheadSmall); }
+    </style>
+    <marker id="arrowhead" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 z" fill="#5b7da3"/>
+    </marker>
+    <marker id="arrowheadSmall" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8aa4c2"/>
+    </marker>
+  </defs>
+
+  <rect width="1400" height="860" fill="url(#bg)"/>
+
+  <text x="700" y="58" text-anchor="middle" class="title">HILIGHTer Frontend and Backend Module Overview</text>
+  <text x="700" y="88" text-anchor="middle" class="body">All supported surfaces converge on one service layer and one shared numerical engine.</text>
+
+  <rect x="70" y="150" width="270" height="150" class="panel"/>
+  <text x="105" y="190" class="subtitle">Qt Desktop</text>
+  <text x="105" y="220" class="body">`python/desktop_app.py`</text>
+  <text x="105" y="246" class="body">`python/gui/main_window.py`</text>
+  <text x="105" y="272" class="body">Widgets, reports, manual browser,</text>
+  <text x="105" y="296" class="body">and profile-driven operator workflow.</text>
+
+  <rect x="70" y="360" width="270" height="140" class="panel"/>
+  <text x="105" y="400" class="subtitle">Desktop Automation</text>
+  <text x="105" y="430" class="body">`python/gui/automation_api.py`</text>
+  <text x="105" y="456" class="body">In-process control of a live Qt</text>
+  <text x="105" y="480" class="body">workspace and its plot payloads.</text>
+
+  <rect x="70" y="560" width="270" height="150" class="panel"/>
+  <text x="105" y="600" class="subtitle">Browser Frontend</text>
+  <text x="105" y="630" class="body">`python/frontend/`</text>
+  <text x="105" y="656" class="body">React/Vite client consuming a</text>
+  <text x="105" y="680" class="body">subset of the FastAPI surface.</text>
+
+  <rect x="530" y="180" width="340" height="180" rx="26" ry="26" fill="url(#core)"/>
+  <text x="700" y="228" text-anchor="middle" class="coreTitle">DigitalTwinService</text>
+  <text x="700" y="260" text-anchor="middle" class="coreBody">`python/backend/service_api.py`</text>
+  <text x="700" y="292" text-anchor="middle" class="coreBody">Canonical orchestration layer for config, workflows,</text>
+  <text x="700" y="318" text-anchor="middle" class="coreBody">diagnostics, sessions, profile drafting, and exports.</text>
+
+  <rect x="500" y="420" width="400" height="220" class="panel"/>
+  <text x="700" y="462" text-anchor="middle" class="subtitle">Shared Backend Core</text>
+  <rect x="540" y="490" width="320" height="48" class="pill"/>
+  <text x="700" y="520" text-anchor="middle" class="pillText">TwinEngine | `python/backend/twin_engine.py`</text>
+  <rect x="540" y="550" width="150" height="44" class="pill"/>
+  <text x="615" y="578" text-anchor="middle" class="pillText">Models</text>
+  <rect x="710" y="550" width="150" height="44" class="pill"/>
+  <text x="785" y="578" text-anchor="middle" class="pillText">GUI Schema</text>
+  <rect x="540" y="606" width="150" height="44" class="pill"/>
+  <text x="615" y="634" text-anchor="middle" class="pillText">Storage</text>
+  <rect x="710" y="606" width="150" height="44" class="pill"/>
+  <text x="785" y="634" text-anchor="middle" class="pillText">Profile Store</text>
+  <text x="700" y="678" text-anchor="middle" class="body">Event-driven detector logic, importers, fitting, phasors,</text>
+  <text x="700" y="702" text-anchor="middle" class="body">optimisation, diagnostics, and persistence helpers live here.</text>
+
+  <rect x="1060" y="150" width="270" height="150" class="panel"/>
+  <text x="1095" y="190" class="subtitle">HTTP API</text>
+  <text x="1095" y="220" class="body">`python/backend/main.py`</text>
+  <text x="1095" y="246" class="body">FastAPI transport for backend</text>
+  <text x="1095" y="270" class="body">and workflow endpoints.</text>
+
+  <rect x="1060" y="360" width="270" height="150" class="panel"/>
+  <text x="1095" y="400" class="subtitle">MCP Server</text>
+  <text x="1095" y="430" class="body">`python/mcp_server.py`</text>
+  <text x="1095" y="456" class="body">Tools, resources, and prompts</text>
+  <text x="1095" y="480" class="body">for LLM hosts via stdio JSON-RPC.</text>
+
+  <rect x="1060" y="570" width="270" height="140" class="panel"/>
+  <text x="1095" y="610" class="subtitle">Docs and Validation</text>
+  <text x="1095" y="640" class="body">`docs/manual/`</text>
+  <text x="1095" y="666" class="body">`python/tests/`</text>
+  <text x="1095" y="690" class="body">Manual, smoke tests, and parity evidence.</text>
+
+  <path d="M340 225 C430 225, 450 235, 530 250" class="arrow"/>
+  <path d="M340 430 C420 430, 450 345, 530 290" class="arrow"/>
+  <path d="M340 635 C430 635, 450 360, 530 300" class="arrow"/>
+
+  <path d="M870 250 C960 250, 980 225, 1060 225" class="arrow"/>
+  <path d="M870 280 C960 280, 980 435, 1060 435" class="arrow"/>
+
+  <path d="M700 360 L700 420" class="smallArrow"/>
+  <path d="M1195 300 L1195 570" class="smallArrow"/>
+</svg>

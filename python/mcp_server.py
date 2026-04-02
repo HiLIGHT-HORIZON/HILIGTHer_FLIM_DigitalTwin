@@ -1,3 +1,10 @@
+"""Minimal stdio MCP server for HILIGHTer.
+
+The server is intentionally small and delegates real work to
+`backend.service_api.DigitalTwinService`. Tool, resource, and prompt metadata
+should stay aligned with the service layer and `mcp_prompts.py`.
+"""
+
 import contextlib
 import json
 import os
@@ -6,12 +13,15 @@ from typing import Any, Dict
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+from metadata import get_version
+
 
 _SERVICE = None
 _PROMPTS = None
 
 
 def get_service():
+    """Lazily construct one shared service instance for the MCP process."""
     global _SERVICE
     if _SERVICE is None:
         from backend.service_api import DigitalTwinService
@@ -20,6 +30,7 @@ def get_service():
 
 
 def get_prompts_map():
+    """Lazily load MCP prompt definitions."""
     global _PROMPTS
     if _PROMPTS is None:
         from mcp_prompts import get_prompts
@@ -27,7 +38,7 @@ def get_prompts_map():
     return _PROMPTS
 
 
-SERVER_INFO = {"name": "hilighter-digital-twin-mcp", "version": "1.6.0"}
+SERVER_INFO = {"name": "hilighter-digital-twin-mcp", "version": get_version()}
 
 
 def _read_message():
@@ -54,6 +65,7 @@ def _error(msg_id, code, message):
 
 
 def _tool_definitions():
+    """Return MCP tool metadata mirrored from the current service capabilities."""
     return [
         {
             "name": "get_status",
@@ -342,6 +354,7 @@ def _call_tool(name: str, arguments: Dict[str, Any]):
 
 
 def _resource_list():
+    """Return static resources plus one resource entry per vendor document."""
     resources = [
         {"uri": "hilight://status", "name": "Backend Status", "mimeType": "application/json"},
         {"uri": "hilight://config", "name": "Current Config", "mimeType": "application/json"},
@@ -397,6 +410,7 @@ def _resource_read(uri: str):
 
 
 def handle_request(message: Dict[str, Any]):
+    """Dispatch one JSON-RPC request against the MCP surface."""
     method = message.get("method")
     msg_id = message.get("id")
     params = message.get("params", {})

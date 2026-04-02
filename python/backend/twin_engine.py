@@ -888,7 +888,7 @@ class TwinEngine:
         """
         Effective gate-timing uncertainty.
         `timing_jitter` is the primary detector timing term; `skewness` is kept
-        for MATLAB/reference compatibility and contributes as an additional RMS term.
+        for legacy-reference compatibility and contributes as an additional RMS term.
         """
         cfg = self.config
         timing_sigma = max(float(getattr(cfg, "timing_jitter", 0.0)), 0.0) / 1000.0

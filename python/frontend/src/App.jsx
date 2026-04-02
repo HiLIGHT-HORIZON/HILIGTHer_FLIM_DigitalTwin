@@ -6,9 +6,11 @@ import PhasorPlot from './components/PhasorPlot';
 import ImageView from './components/ImageView';
 import DecayPlot from './components/DecayPlot';
 import FisherPlot from './components/FisherPlot';
-import DatasetManager from './components/DatasetManager';
+import SessionManager from './components/SessionManager';
 import FitConsole from './components/FitConsole';
 
+// This browser client still talks to the backend through a mix of current and
+// compatibility endpoints. Keep it aligned with `python/backend/main.py`.
 const API_BASE = 'http://localhost:8000';
 
 function App() {
@@ -129,9 +131,9 @@ function App() {
                     onClick={() => setActiveTab('simulate')}
                 >Simulator</button>
                 <button 
-                    className={`tab-btn ${activeTab === 'dataset' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('dataset')}
-                >Datasets</button>
+                    className={`tab-btn ${activeTab === 'sessions' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('sessions')}
+                >Sessions</button>
                 <a 
                     href="/manual.html" 
                     target="_blank" 
@@ -210,10 +212,10 @@ function App() {
               </div>
             </>
           ) : (
-            <Widget title="Dataset Explorer">
-                <DatasetManager 
+            <Widget title="Session Manager">
+                <SessionManager 
                     API_BASE={API_BASE} 
-                    onImportComplete={onDataUpdate} 
+                    onRefresh={onDataUpdate} 
                 />
             </Widget>
           )}

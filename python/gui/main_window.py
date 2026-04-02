@@ -29,6 +29,7 @@ from backend.models import PhysicsConfig
 from backend.decay_model_store import DecayModelStore
 from backend.profile_store import InstrumentProfileStore
 from backend.storage import storage
+from metadata import get_build_label, get_full_version_label
 
 
 LIGHT_APP_STYLESHEET = """
@@ -74,7 +75,7 @@ class HILIGHTMainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("HILIGHTer Digital Twin | Desktop Workspace")
+        self.setWindowTitle(f"HILIGHTer Digital Twin v{get_full_version_label()} | Desktop Workspace")
         self._apply_startup_geometry()
         
         # Initialize Core Engine
@@ -361,6 +362,11 @@ class HILIGHTMainWindow(QMainWindow):
 
         help_menu = menubar.addMenu("&Help")
         
+        self.tutorial_act = QAction("Interactive Tutorial", self)
+        self.tutorial_act.setShortcut("Ctrl+T")
+        self.tutorial_act.triggered.connect(lambda: self.show_manual("tutorial"))
+        help_menu.addAction(self.tutorial_act)
+
         self.manual_act = QAction("See Manual", self)
         self.manual_act.setShortcut("Ctrl+H")
         self.manual_act.triggered.connect(self.show_manual)
@@ -3124,6 +3130,10 @@ class HILIGHTMainWindow(QMainWindow):
         <h2 style='color: #22d3ee;'>HILIGHTer Digital Twin | Desktop Workspace</h2>
         <p>A full-spectrum modeling environment for high-speed time-gated imaging.</p>
         <hr>
+        <p><b>Version:</b> v{get_full_version_label()}<br>
+        <b>Build:</b> {get_build_label()}</p>
+        
+        <hr>
         <p><b>Project funded by EU HORIZON and UKRI</b><br>
         <a href='https://hilighthorizon.eu/'>https://hilighthorizon.eu/</a></p>
         
@@ -3153,7 +3163,10 @@ class HILIGHTMainWindow(QMainWindow):
         self.manual_widget.activateWindow()
         if section_id:
             self.manual_widget.scroll_to_section(section_id)
-        self.statusBar().showMessage("Displaying Interactive Manual (Ctrl+H).")
+        if section_id == "tutorial":
+            self.statusBar().showMessage("Displaying Interactive Tutorial (Ctrl+T).")
+        else:
+            self.statusBar().showMessage("Displaying Interactive Manual (Ctrl+H).")
 
 
 if __name__ == "__main__":

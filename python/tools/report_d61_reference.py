@@ -24,7 +24,7 @@ from backend.twin_engine import TwinEngine
 
 
 DEFAULT_DOCX = REPO_ROOT / "resources" / "D6.1_HILIGHT_M18_SEN_v2.docx"
-DEFAULT_HTML = REPO_ROOT / "docs" / "d61_python_replication.html"
+DEFAULT_HTML = REPO_ROOT / "docs" / "d61_reference_replication.html"
 NS = {
     "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
     "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
@@ -289,7 +289,7 @@ def build_html(docx_path: Path, figure_map: dict, fig2: dict, fig3: dict, fig4: 
         rationale = (
             "The Python backend reproduces the main 4-gate and 8-gate baseline results from Figure 4, the broad excitation-width trend from Figure 2, "
             "and now reproduces the Figure 3 jitter/skewness trend qualitatively. It is still not a full match because the excitation-width optimum "
-            "and one optimised gate configuration remain shifted relative to the MATLAB report."
+            "and one optimised gate configuration remain shifted relative to the legacy reference report."
         )
     elif fig3["status"] == "partial":
         rationale = (
@@ -348,9 +348,9 @@ def build_html(docx_path: Path, figure_map: dict, fig2: dict, fig3: dict, fig4: 
         "<!DOCTYPE html><html><head><meta charset='utf-8'><title>D6.1 Python Replication Report</title>",
         style,
         "</head><body><main>",
-        "<h1>D6.1 MATLAB-to-Python Replication Report</h1>",
+        "<h1>D6.1 Reference Replication Report</h1>",
         "<div class='card'>",
-        f"<p><strong>Source report:</strong> <code>{docx_path}</code></p>",
+        f"<p><strong>Source report:</strong> <code>{docx_path.relative_to(REPO_ROOT) if docx_path.is_relative_to(REPO_ROOT) else docx_path.name}</code></p>",
         f"<p><strong>Verdict:</strong> {overall}</p>",
         f"<p>{rationale}</p>",
         "</div>",
@@ -358,7 +358,7 @@ def build_html(docx_path: Path, figure_map: dict, fig2: dict, fig3: dict, fig4: 
 
     if figure_map:
         sections.extend([
-            "<div class='card'><h2>Reference Figures Extracted from the MATLAB Report</h2>",
+            "<div class='card'><h2>Reference Figures Extracted from the Legacy Report</h2>",
             "<div class='grid'>",
         ])
         for fig_key in ["Figure 2", "Figure 3", "Figure 4"]:
@@ -430,15 +430,15 @@ def build_html(docx_path: Path, figure_map: dict, fig2: dict, fig3: dict, fig4: 
         "<li><span class='good'>Replicated well</span>: the 8-gate reference and 4-gate baseline curves align closely with the report targets.</li>",
         "<li><span class='warn'>Partially replicated</span>: the burst-width trend is broadly correct, but the Python sweet spot is closer to 5 ns than 7.5 ns.</li>",
         (
-            "<li><span class='good'>Replicated qualitatively</span>: the jitter/skewness figure now keeps efficiency high through ~500 ps and shows deterioration by 1000 ps, matching the MATLAB report directionally.</li>"
+            "<li><span class='good'>Replicated qualitatively</span>: the jitter/skewness figure now keeps efficiency high through ~500 ps and shows deterioration by 1000 ps, matching the legacy reference report directionally.</li>"
             if fig3["status"] == "pass"
             else "<li><span class='warn'>Partially replicated</span>: the jitter/skewness figure now responds in the correct direction, but not yet with full quantitative parity.</li>"
             if fig3["status"] == "partial"
-            else "<li><span class='bad'>Not replicated</span>: the jitter/skewness figure is effectively flat in the current Python backend for rectangular excitation, unlike the MATLAB report.</li>"
+            else "<li><span class='bad'>Not replicated</span>: the jitter/skewness figure is effectively flat in the current Python backend for rectangular excitation, unlike the legacy reference report.</li>"
         ),
         "<li><span class='warn'>Needs investigation</span>: one optimised 4-gate configuration reproduces the target efficiency at 2 ns but shifts the peak lifetime substantially.</li>",
         "</ul>",
-        "<p>The current Python backend is therefore <strong>not yet a full parity match</strong> to the MATLAB/report results.</p>",
+        "<p>The current Python backend is therefore <strong>not yet a full parity match</strong> to the legacy reference results.</p>",
         "</div>",
         "</main></body></html>",
     ])
@@ -446,7 +446,7 @@ def build_html(docx_path: Path, figure_map: dict, fig2: dict, fig3: dict, fig4: 
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Replicate D6.1 MATLAB report figures with the Python backend.")
+    parser = argparse.ArgumentParser(description="Replicate D6.1 legacy reference figures with the Python backend.")
     parser.add_argument("--docx", type=Path, default=DEFAULT_DOCX, help="Path to the D6.1 DOCX report.")
     parser.add_argument("--html", type=Path, default=DEFAULT_HTML, help="Output HTML report path.")
     args = parser.parse_args()

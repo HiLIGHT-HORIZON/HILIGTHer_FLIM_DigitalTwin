@@ -35,9 +35,11 @@
         <h3>Manual map</h3>
         <a href="#overview">What HILIGHTer is</a>
         <a href="#current-architecture">Current architecture</a>
+        <a href="#module-overview">Module overview</a>
         <a href="#physics-semantics">Current precision semantics</a>
         <a href="#desktop-workflow">Desktop workflow</a>
         <a href="#entry-points">Key entry points</a>
+        <a href="#installation">Installation and startup</a>
         <a href="#recent-changes">Recent important changes</a>
       </div>
       <div class="sidebar-card">
@@ -45,6 +47,7 @@
         <ul>
           <li><a href="controller.html">Controller</a></li>
           <li><a href="run-analysis.html">Run Analysis</a></li>
+          <li><a href="tutorial.html">Interactive Tutorial</a></li>
           <li><a href="widgets.html">Widgets</a></li>
           <li><a href="profiles.html">Profiles</a></li>
           <li><a href="mcp.html">MCP</a></li>
@@ -59,7 +62,7 @@
         <p>This is the canonical manual for the active Python Digital Twin. It documents the desktop workspace, backend architecture, mathematical intent, profile system, and the MCP/API surfaces that now share the same computational engine.</p>
         <div class="hero-grid">
           <div class="hero-stat"><strong>Desktop-first</strong><br>Qt workspace for simulation, validation, optimisation, diagnostics, and reports.</div>
-          <div class="hero-stat"><strong>API-complete</strong><br>Service API, HTTP API, desktop automation, and MCP all drive the same backend state.</div>
+          <div class="hero-stat"><strong>API-complete</strong><br>Service API, HTTP API, desktop automation, MCP, and the browser client all derive from the same backend state.</div>
           <div class="hero-stat"><strong>Physics-aware</strong><br>Precision, Fisher metrics, conditional efficiency, photon survival, and event-level detector artefacts are documented explicitly.</div>
         </div>
       </section>
@@ -80,9 +83,17 @@
           <tr><td>Chronological detector core</td><td><code>python/backend/event_driven.py</code></td><td>Explicit event-level detector simulation for dead time, routing, multihit capacity, and shared-resource behaviour.</td></tr>
           <tr><td>Shared config</td><td><code>python/backend/models.py</code></td><td>Defines <code>PhysicsConfig</code> and persistent workflow settings.</td></tr>
           <tr><td>Desktop workspace</td><td><code>python/gui/main_window.py</code> and widgets</td><td>Main operator interface.</td></tr>
+          <tr><td>Browser frontend</td><td><code>python/frontend/</code></td><td>Secondary React/Vite client backed by the HTTP API.</td></tr>
+          <tr><td>Desktop automation</td><td><code>python/gui/automation_api.py</code></td><td>In-process automation surface for the live Qt workspace.</td></tr>
           <tr><td>MCP bridge</td><td><code>python/mcp_server.py</code></td><td>Tool, resource, and prompt surface for LLM hosts.</td></tr>
           <tr><td>Manual</td><td><code>docs/manual/</code></td><td>Operator, engineering, and automation reference.</td></tr>
         </table>
+      </section>
+
+      <section class="card" id="module-overview">
+        <h2>Graphical module overview</h2>
+        <p>The desktop, browser frontend, HTTP API, and MCP server all converge on the same service layer and numerical engine.</p>
+        <img src="assets/module-overview.svg" alt="Diagram of desktop, browser frontend, HTTP API, automation API, and MCP server around the shared backend service and twin engine." style="width:100%; height:auto; border:1px solid var(--line); border-radius:16px; background:#fff;">
       </section>
 
       <section class="card" id="physics-semantics">
@@ -130,6 +141,10 @@
             <p>Use the precision, MLE accuracy, diagnostics, phasor, image, and pixel widgets as the main readout layer.</p>
           </div>
           <div class="section-card">
+            <h3><a href="tutorial.html">Learn the metrics</a></h3>
+            <p>Open the interactive tutorial to explore Fisher information, precision figures of merit, and gate-design trade-offs visually.</p>
+          </div>
+          <div class="section-card">
             <h3><a href="mcp.html">Automate with MCP</a></h3>
             <p>Let an LLM inspect the current workspace, run workflows, and draft instrument profiles from vendor documents.</p>
           </div>
@@ -139,7 +154,7 @@
       <section class="card" id="entry-points">
         <h2>Key entry points</h2>
         <pre class="shell"># Desktop
-python\run_desktop.bat
+run_desktop.bat
 
 # HTTP API
 python -m uvicorn python.backend.main:app --reload
@@ -149,7 +164,32 @@ python python/mcp_server.py
 
 # MCP smoke test
 python python/tools/mcp_smoke_test.py</pre>
-        <p>The support/manual browser is available inside the desktop with <code>Ctrl+H</code>. The legacy single-file manual entry point under <code>docs/digital_twin_manual.html</code> now redirects to this manual root.</p>
+        <p>The support/manual browser is available inside the desktop with <code>Ctrl+H</code>. The interactive tutorial widget is available with <code>Ctrl+T</code>. The legacy single-file manual entry point under <code>docs/digital_twin_manual.html</code> now redirects to this manual root.</p>
+      </section>
+
+      <section class="card" id="installation">
+        <h2>Installation and startup</h2>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>The simplest supported path is to create a Python virtual environment in the repository root and launch the desktop with <code>run_desktop.bat</code>. The launcher starts the Python desktop bootstrap and installs missing desktop dependencies into the active environment if needed.</p>
+        </div>
+        <pre class="shell"># Recommended desktop install
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install --upgrade pip
+run_desktop.bat
+
+# Optional explicit desktop dependency install
+python -m pip install -r python\desktop_requirements.txt
+
+# Backend/API install
+python -m pip install -r python\requirements.txt
+
+# Browser frontend
+cd python\frontend
+npm install
+npm run dev</pre>
+        <p>The browser frontend is a secondary client and expects the FastAPI backend at <code>http://localhost:8000</code>. For current details, see the repository root <code>README.md</code> and <code>python/frontend/README.md</code>.</p>
       </section>
 
       <section class="card" id="recent-changes">

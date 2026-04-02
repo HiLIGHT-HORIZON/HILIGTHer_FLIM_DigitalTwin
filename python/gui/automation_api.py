@@ -1,3 +1,10 @@
+"""Automation surface for a live HILIGHTer desktop window.
+
+This API is intentionally in-process and should not be confused with the HTTP
+API or the declarative GUI schema. It is for trusted local automation that
+already has a live Qt window instance.
+"""
+
 import os
 import sys
 import json
@@ -31,6 +38,7 @@ class DesktopAutomationAPI:
             raise PermissionError("Access Denied: HiLIGHTer GUI API is LOCKED.")
 
     def get_layout(self) -> Dict[str, Any]:
+        """Return the current dock identifiers exposed by the desktop workspace."""
         self._check_access()
         return {
             "docks": [
@@ -52,6 +60,8 @@ class DesktopAutomationAPI:
 
     def set_controller_state(self, config_patch: Dict[str, Any]) -> Dict[str, Any]:
         self._check_access()
+        # Apply the same config object shape the desktop uses internally so the
+        # controller and backend stay synchronized after automation changes.
         current = self.get_controller_state()
         current.update(config_patch)
         self.window.engine.config = self.window.engine.config.__class__(**current)

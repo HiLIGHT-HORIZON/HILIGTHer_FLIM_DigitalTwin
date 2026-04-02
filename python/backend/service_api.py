@@ -1,6 +1,5 @@
 import copy
 import os
-import tempfile
 import json
 import sys
 from typing import Dict, Any, Optional, List
@@ -8,7 +7,6 @@ from typing import Dict, Any, Optional, List
 import numpy as np
 
 from .gui_schema import get_gui_schema
-from .importers import import_sdt
 from .instrument_spec_ingest import load_instrument_source, infer_instrument_profile_patch
 from .models import PhysicsConfig, UnifiedState
 from .profile_store import InstrumentProfileStore
@@ -687,25 +685,6 @@ class DigitalTwinService:
         self._check_access()
         self.engine.clear_workspace_data()
         return {"status": "workspace_cleared", "data_summary": self.get_data_summary()}
-
-    def import_sdt_path(self, file_path: str) -> Dict[str, Any]:
-        self._check_access()
-        data, meta = import_sdt(file_path)
-        self.engine.raw_data = data
-        self.engine.config.gate_edges = np.linspace(0, meta["tac_range"], meta["n_gates"] + 1).tolist()
-        self.engine.distill_gates()
-        return {"status": "imported", "meta": meta, "data_summary": self.get_data_summary()}
-
-    def import_sdt_bytes(self, filename: str, payload: bytes) -> Dict[str, Any]:
-        self._check_access()
-        with tempfile.NamedTemporaryFile(prefix="hilight_", suffix=f"_{os.path.basename(filename)}", delete=False) as tmp:
-            tmp.write(payload)
-            tmp_path = tmp.name
-        try:
-            return self.import_sdt_path(tmp_path)
-        finally:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
 
     def save_session(self, session_id: str) -> Dict[str, Any]:
         self._check_access()

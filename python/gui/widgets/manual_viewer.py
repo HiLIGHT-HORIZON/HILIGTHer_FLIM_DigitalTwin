@@ -70,6 +70,7 @@ class ManualWidget(QWidget):
             "simulation": ("mc-image-validation.html", "mc-image-validation"),
             "math": ("maths.html", "maths"),
             "fisher": ("run-analysis.html", "fisher-information"),
+            "tutorial": ("tutorial.html", None),
             "api": ("apis.html", None),
             "mcp": ("mcp.html", None),
         }

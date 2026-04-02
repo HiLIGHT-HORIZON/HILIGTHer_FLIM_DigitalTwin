@@ -293,7 +293,7 @@ body {
     border-radius: 8px;
 }
 
-.dataset-manager {
+.session-manager {
     display: flex;
     flex-direction: column;
     gap: 2rem;

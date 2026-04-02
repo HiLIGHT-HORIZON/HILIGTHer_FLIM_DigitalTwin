@@ -42,6 +42,13 @@ window.MANUAL_SEARCH_INDEX = [
     body: "Purpose, operator meaning, and code responsibilities for each major desktop widget, including the new clipboard export workflow."
   },
   {
+    title: "Interactive tutorial",
+    section: "Tutorial",
+    url: "tutorial.html",
+    keywords: "tutorial fisher information photon efficiency throughput resolvability gates students visual interactive ctrl t github pages",
+    body: "Visual tutorial page for Fisher information, F-value, photon efficiency, throughput, resolvability, and gate trade-offs. Designed for non-coders and students."
+  },
+  {
     title: "Search",
     section: "Manual",
     url: "search.html",

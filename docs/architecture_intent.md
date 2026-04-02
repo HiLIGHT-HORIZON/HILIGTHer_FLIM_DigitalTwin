@@ -35,16 +35,18 @@ The repository is organised around the active Python application:
   Versioned JSON instrument definitions and generators.
 - `python/tools/`
   Developer and reporting utilities such as MCP smoke tests and benchmark-report replication helpers.
+- `python/tools/dev/`
+  Local one-off developer helpers retained for manual UI work and troubleshooting without cluttering the repo root.
 - `python/tests/`
   Automated Python validation for physics, controls, optimisation, and image-validation flows.
+- `python/frontend/`
+  React/Vite browser client that consumes the HTTP API. This is a secondary surface rather than the primary operator workflow, but it is a real maintained module and should be documented as such.
 - `docs/`
   Architecture, manual, and engineering documentation.
 - `resources/`
   Static supporting assets retained for reporting and project context.
-- `tests/`
-  Reserved top-level test area. After cleanup it should only contain non-MATLAB content.
 
-There should be no active MATLAB source trees, `.m` launchers, or MATLAB project metadata in the main workspace.
+There are no active MATLAB source trees, `.m` launchers, or MATLAB project metadata in the main workspace any longer.
 
 ## Architectural Principles
 
@@ -72,6 +74,7 @@ Users should be able to save and load full workspaces, not only export plots. In
 | Profile Store | `python/backend/profile_store.py` | Instrument profile load/save/import/export/migration helpers. |
 | HTTP API | `python/backend/main.py` | Remote REST access to backend workflows and data products. |
 | Desktop Workspace | `python/gui/main_window.py` and widgets | Controller-driven Qt application for simulation, validation, optimisation, and export. |
+| Browser Frontend | `python/frontend/` | React/Vite client that consumes a subset of the HTTP API and mirrors backend outputs in the browser. |
 | Desktop Automation | `python/gui/automation_api.py` | Programmatic control of the live Qt workspace. |
 | MCP Server | `python/mcp_server.py` | Tool/resource/prompt bridge for LLM hosts. |
 | Documentation | `docs/` | Architecture, operator manual, API guidance, and benchmark notes. |

@@ -36,13 +36,14 @@
         <a href="#service">Service API</a>
         <a href="#event-driven">Event-driven core</a>
         <a href="#profiles">Profiles and import</a>
+        <a href="#frontend">Browser frontend</a>
       </div>
     </aside>
     <main class="content">
       <section class="hero">
         <div class="kicker">Backend</div>
         <h1>Backend module guide</h1>
-        <p>The backend is organised around one physics engine, one shared configuration model, and thin orchestration layers for the desktop, HTTP API, automation, and MCP.</p>
+        <p>The backend is organised around one physics engine, one shared configuration model, and thin orchestration layers for the desktop, browser frontend, HTTP API, automation, and MCP.</p>
       </section>
 
       <section class="card" id="twin-engine">
@@ -80,6 +81,11 @@
       <section class="card" id="profiles">
         <h2>Profiles and import modules</h2>
         <p><code>profile_store.py</code> persists instrument profiles, repairs older JSON definitions, and resolves profile names robustly. The service layer and MCP tools now expose structured instrument-profile drafting/finalisation workflows tied to vendor documentation.</p>
+      </section>
+
+      <section class="card" id="frontend">
+        <h2><code>python/frontend/</code></h2>
+        <p>The repository includes a React/Vite browser client. It is currently a secondary interface and still uses some compatibility HTTP routes, but it is a real module in the codebase and should be documented as such rather than ignored.</p>
       </section>
     </main>
   </div>
