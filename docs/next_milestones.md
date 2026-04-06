@@ -85,6 +85,8 @@ Main scientific review risks:
 Suggested acceptance signal:
 The milestone is reached when the backend supports sine-wave excitation and digital FD outputs with explicit mathematical documentation, separate reporting semantics, and at least one clear comparison path against the time-domain workflow.
 
+NOTE: sinewave excitaton shoudl accept parameters as initial phaseshift (default 0) and modulation depth (default 1.0) in degrees and unitless respectively.
+
 ## Cross-Cutting Guarded Areas
 
 These milestones all touch guarded scientific and architectural areas:
