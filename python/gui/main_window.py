@@ -865,6 +865,7 @@ class HILIGHTMainWindow(QMainWindow):
             ideal_conditional_f=ideal_f_conditional,
             ideal_throughput_scale=1.0,
             ideal_photon_count=float(getattr(self._coerce_physics_config(report["config"]), "precision_photons", 0.0)),
+            ci_level=float(getattr(self._coerce_physics_config(report["config"]), "precision_ci_level", 99.7)),
         )
         if accuracy_results:
             self.mle_accuracy_widget.plot_accuracy(x_range, accuracy_results)
@@ -1062,6 +1063,7 @@ class HILIGHTMainWindow(QMainWindow):
             ideal_conditional_f=ideal_cond_arr,
             ideal_throughput_scale=1.0,
             ideal_photon_count=float(getattr(self._coerce_physics_config(self.engine.config), "precision_photons", 0.0)),
+            ci_level=float(getattr(self.engine.config, "precision_ci_level", 99.7)),
         )
         self.mle_accuracy_widget.plot_accuracy(x_arr, accuracy_results)
         self.diagnostics_widget.set_sweep_frames(frames)
@@ -2122,7 +2124,10 @@ class HILIGHTMainWindow(QMainWindow):
         elif param == "deadtime_fixed_countrate_ns":
             cfg.detector_deadtime = float(value)
             cfg.metadata["force_precision_deadtime_mc"] = True
+            target_rate_hz = max(float(cfg.instr_sweep_fixed_countrate_kcps) * 1000.0, 1.0)
+            cfg.event_pixel_dwell_time_s = float(cfg.precision_photons) / target_rate_hz
             cfg.metadata["countrate_kcps"] = float(cfg.instr_sweep_fixed_countrate_kcps)
+            cfg.metadata["target_countrate_hz"] = target_rate_hz
         elif param == "countrate_via_dwell_hz":
             target_rate_hz = max(float(value), 1.0)
             cfg.precision_photons = 1000
@@ -2132,7 +2137,10 @@ class HILIGHTMainWindow(QMainWindow):
         elif param == "countrate_fixed_deadtime_kcps":
             cfg.detector_deadtime = float(cfg.instr_sweep_fixed_deadtime_ns)
             cfg.metadata["force_precision_deadtime_mc"] = True
+            target_rate_hz = max(float(value) * 1000.0, 1.0)
+            cfg.event_pixel_dwell_time_s = float(cfg.precision_photons) / target_rate_hz
             cfg.metadata["countrate_kcps"] = float(value)
+            cfg.metadata["target_countrate_hz"] = target_rate_hz
         elif param == "multihit_capabilities":
             cfg.metadata["force_precision_deadtime_mc"] = True
             capacity = max(int(round(value)), 1)
@@ -2301,6 +2309,7 @@ class HILIGHTMainWindow(QMainWindow):
                             ideal_conditional_f=f_ideal_conditional,
                             ideal_throughput_scale=1.0,
                             ideal_photon_count=float(getattr(self._coerce_physics_config(sweep_cfg), "precision_photons", 0.0)),
+                            ci_level=float(getattr(self._coerce_physics_config(sweep_cfg), "precision_ci_level", 99.7)),
                         )
                         QApplication.processEvents()
 
@@ -2335,6 +2344,7 @@ class HILIGHTMainWindow(QMainWindow):
                     ideal_conditional_f=f_ideal_conditional,
                     ideal_throughput_scale=1.0,
                     ideal_photon_count=float(getattr(self._coerce_physics_config(sweep_cfg), "precision_photons", 0.0)),
+                    ci_level=float(getattr(self._coerce_physics_config(sweep_cfg), "precision_ci_level", 99.7)),
                 )
 
                 mc_payload = None
@@ -2391,6 +2401,7 @@ class HILIGHTMainWindow(QMainWindow):
                                 ideal_conditional_f=f_ideal_conditional,
                                 ideal_throughput_scale=1.0,
                                 ideal_photon_count=float(getattr(self._coerce_physics_config(sweep_cfg), "precision_photons", 0.0)),
+                                ci_level=float(getattr(self._coerce_physics_config(sweep_cfg), "precision_ci_level", 99.7)),
                             )
                             self.mle_accuracy_widget.plot_accuracy(x_range, accuracy_results)
                             QApplication.processEvents()
@@ -2427,6 +2438,7 @@ class HILIGHTMainWindow(QMainWindow):
                         ideal_conditional_f=f_ideal_conditional,
                         ideal_throughput_scale=1.0,
                         ideal_photon_count=float(getattr(self._coerce_physics_config(sweep_cfg), "precision_photons", 0.0)),
+                        ci_level=float(getattr(self._coerce_physics_config(sweep_cfg), "precision_ci_level", 99.7)),
                     )
                     self.mle_accuracy_widget.plot_accuracy(x_range, accuracy_results)
 
@@ -2747,6 +2759,7 @@ class HILIGHTMainWindow(QMainWindow):
             2: ("Fisher Throughput", "throughput"),
         }
         metric_label, metric_key = metric_options.get(combo_index, metric_options[0])
+        ci_level = float(config_dump.get("precision_ci_level", 99.7))
         ideal_eff = np.minimum(1.0, 1.0 / (np.maximum(np.asarray(ideal_f, dtype=float), 1e-12) ** 2))
         payload = {
             "timestamp": timestamp,
@@ -2763,6 +2776,8 @@ class HILIGHTMainWindow(QMainWindow):
                 "log_y": self.fisher_widget.chk_log_y.isChecked(),
                 "metric": metric_key,
                 "metric_label": metric_label,
+                "ci_level": ci_level,
+                "ci_label": FisherWidget.format_ci_level(ci_level),
             },
             "accuracy": {
                 "stacked": self.mle_accuracy_widget.chk_stacked.isChecked(),
@@ -2956,6 +2971,7 @@ class HILIGHTMainWindow(QMainWindow):
     function precisionTraces(metricKey) {{
       const theoryKey = metricKey === "throughput" ? "theory_throughput" : (metricKey === "efficiency" ? "theory_eff" : "theory_f");
       const idealKey = metricKey === "throughput" ? "ideal_throughput" : (metricKey === "efficiency" ? "ideal_eff" : "ideal_f");
+      const ciLegend = report.precision_display.ci_label ? "Monte Carlo " + report.precision_display.ci_label + " CI" : "Monte Carlo CI";
       const palette = ["#8b5cf6", "#3b82f6", "#ec4899", "#f59e0b", "#ef4444", "#06b6d4", "#84cc16"];
       const traces = [{{
         x: report.x_range,
@@ -2998,14 +3014,14 @@ class HILIGHTMainWindow(QMainWindow):
               line: {{ width: 0, color }},
               fill: "tonexty",
               fillcolor: hexToRgba(color, 0.18),
-              name: `Monte Carlo 95% CI | ${{series.label}}`
+              name: `${{ciLegend}} | ${{series.label}}`
             }});
             traces.push({{
               x: report.x_range,
               y: series[mcKey],
-              mode: "lines",
+              mode: "markers",
               name: `Monte Carlo | ${{series.label}}`,
-              line: {{ width: 2, color }}
+              marker: {{ size: 8, color, symbol: "circle" }}
             }});
           }} else {{
             traces.push({{

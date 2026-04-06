@@ -38,8 +38,8 @@ window.MANUAL_SEARCH_INDEX = [
     title: "Analysis widgets",
     section: "Widgets",
     url: "widgets.html",
-    keywords: "precision widget mle accuracy instrument diagnostics pixel inspector phasor image validation widgets clipboard export legend use default settings",
-    body: "Purpose, operator meaning, and code responsibilities for each major desktop widget, including the new clipboard export workflow."
+    keywords: "precision widget mle accuracy instrument diagnostics pixel inspector phasor image validation widgets clipboard export legend use default settings saved profiles svg grid bounding box ticks inward outward line width axis width",
+    body: "Purpose, operator meaning, and code responsibilities for each major desktop widget, including clipboard export profiles, SVG handling, tick styling, line widths, and export-only styling controls."
   },
   {
     title: "Interactive tutorial",

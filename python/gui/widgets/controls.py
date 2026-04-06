@@ -2,6 +2,7 @@ import base64
 import html
 import re
 from io import BytesIO
+from statistics import NormalDist
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                              QDoubleSpinBox, QSpinBox, QPushButton,
@@ -36,6 +37,29 @@ class ControlWidget(QWidget):
     advanced_config_changed = pyqtSignal()
     custom_model_editor_requested = pyqtSignal()
     EVENT_CAPACITY_UNLIMITED = 1_000_000
+    PRECISION_PRESETS = {
+        "Low resolution": {
+            "photons": 400,
+            "mc_repeats": 20,
+            "accuracy_pvalue": 0.0001,
+            "bootstrap_samples": 40,
+            "basis": "period",
+        },
+        "Medium res.": {
+            "photons": 10_000,
+            "mc_repeats": 100,
+            "accuracy_pvalue": 0.0001,
+            "bootstrap_samples": 200,
+            "basis": "period",
+        },
+        "High res.": {
+            "photons": 10_000,
+            "mc_repeats": 400,
+            "accuracy_pvalue": 0.0001,
+            "bootstrap_samples": 1600,
+            "basis": "period",
+        },
+    }
     OPT_HISTORY_COLORS = {
         "objective": "#ef4444",
         "min_f": "#22c55e",
@@ -53,6 +77,7 @@ class ControlWidget(QWidget):
         self._anchor_syncing = False
         self._f_photon_basis_syncing = False
         self._photon_budget_syncing = False
+        self._precision_preset_syncing = False
         self.current_f_photon_basis_mode = "period"
         self.simulation_mode_preference = "auto"
         self.event_deadtime_mode = "nonparalyzable"
@@ -292,6 +317,10 @@ class ControlWidget(QWidget):
         exec_group = QGroupBox("Fisher Information")
         exec_form = QFormLayout(exec_group)
         exec_group.setStyleSheet("QGroupBox::title { color: #d946ef; font-weight: bold; }")
+        self.combo_precision_preset = QComboBox()
+        self.combo_precision_preset.addItem("Custom")
+        self.combo_precision_preset.addItems(list(self.PRECISION_PRESETS.keys()))
+        exec_form.addRow("Defaults:", self.combo_precision_preset)
         self.chk_validate_mc = QCheckBox("Validate with Monte Carlo")
         self.chk_validate_mc.setChecked(False)
         self.chk_compute_ci = QCheckBox("Evaluate CI")
@@ -310,6 +339,8 @@ class ControlWidget(QWidget):
         mc_toggle_layout.addWidget(self.chk_compute_ci)
         mc_toggle_layout.addWidget(QLabel("CI Level (%):"))
         mc_toggle_layout.addWidget(self.spin_ci_level)
+        self.lbl_ci_sigma_equiv = QLabel()
+        mc_toggle_layout.addWidget(self.lbl_ci_sigma_equiv)
         mc_toggle_layout.addStretch()
         exec_form.addRow(mc_toggle_row)
 
@@ -329,7 +360,7 @@ class ControlWidget(QWidget):
         self.spin_accuracy_pvalue.setValue(0.0001)
 
         self.spin_bootstrap_samples = QSpinBox()
-        self.spin_bootstrap_samples.setRange(200, 100000)
+        self.spin_bootstrap_samples.setRange(1, 100000)
         self.spin_bootstrap_samples.setSingleStep(100)
         self.spin_bootstrap_samples.setValue(2000)
         exec_form.addRow(two_column_row("Estimator accuracy p-value:", self.spin_accuracy_pvalue, "Bootstrap resamples:", self.spin_bootstrap_samples))
@@ -355,7 +386,17 @@ class ControlWidget(QWidget):
         exec_form.addRow(basis_row)
         self.chk_validate_mc.toggled.connect(self._sync_precision_execution_ui)
         self.chk_compute_ci.toggled.connect(lambda _: self._sync_precision_execution_ui(self.chk_validate_mc.isChecked()))
+        self.combo_precision_preset.currentTextChanged.connect(self._apply_precision_preset)
+        self.spin_precision_photons.valueChanged.connect(self._sync_precision_preset_selection)
+        self.spin_mc_repeats.valueChanged.connect(self._sync_precision_preset_selection)
+        self.spin_accuracy_pvalue.valueChanged.connect(self._sync_precision_preset_selection)
+        self.spin_bootstrap_samples.valueChanged.connect(self._sync_precision_preset_selection)
+        self.spin_ci_level.valueChanged.connect(self._update_ci_sigma_equivalence)
+        self.radio_f_basis_period.toggled.connect(self._sync_precision_preset_selection)
+        self.radio_f_basis_all.toggled.connect(self._sync_precision_preset_selection)
+        self.radio_f_basis_collected.toggled.connect(self._sync_precision_preset_selection)
         self._sync_precision_execution_ui(self.chk_validate_mc.isChecked())
+        self._update_ci_sigma_equivalence()
         decay_layout.addWidget(exec_group)
 
         self.spin_fx_min.valueChanged.connect(self.update_gridded_mle_summary)
@@ -606,7 +647,7 @@ class ControlWidget(QWidget):
         detector_header_layout.addStretch()
         hw_layout.addRow(detector_header_row)
         self.spin_jitter = QSpinBox(); self.spin_jitter.setValue(150)
-        self.spin_deadtime = QSpinBox(); self.spin_deadtime.setValue(45)
+        self.spin_deadtime = QSpinBox(); self.spin_deadtime.setRange(0, 1000); self.spin_deadtime.setValue(45)
         self.spin_pixel_dwell = QDoubleSpinBox()
         self.spin_pixel_dwell.setRange(1e-6, 1e9)
         self.spin_pixel_dwell.setDecimals(6)
@@ -1712,6 +1753,72 @@ class ControlWidget(QWidget):
         finally:
             self._f_photon_basis_syncing = False
 
+    def _current_precision_basis_mode(self):
+        if self.radio_f_basis_collected.isChecked():
+            return "collected"
+        if self.radio_f_basis_all.isChecked():
+            return "all"
+        return "period"
+
+    def _set_precision_basis_mode(self, mode):
+        mode_norm = str(mode).lower()
+        if mode_norm == "collected":
+            self.radio_f_basis_collected.setChecked(True)
+        elif mode_norm == "all":
+            self.radio_f_basis_all.setChecked(True)
+        else:
+            self.radio_f_basis_period.setChecked(True)
+
+    def _matching_precision_preset(self):
+        basis_mode = self._current_precision_basis_mode()
+        for label, preset in self.PRECISION_PRESETS.items():
+            if int(self.spin_precision_photons.value()) != int(preset["photons"]):
+                continue
+            if int(self.spin_mc_repeats.value()) != int(preset["mc_repeats"]):
+                continue
+            if not np.isclose(float(self.spin_accuracy_pvalue.value()), float(preset["accuracy_pvalue"]), rtol=0.0, atol=1e-12):
+                continue
+            if int(self.spin_bootstrap_samples.value()) != int(preset["bootstrap_samples"]):
+                continue
+            if basis_mode != str(preset.get("basis", "period")).lower():
+                continue
+            return label
+        return "Custom"
+
+    def _sync_precision_preset_selection(self, *_args):
+        if self._precision_preset_syncing:
+            return
+        self._precision_preset_syncing = True
+        try:
+            self.combo_precision_preset.setCurrentText(self._matching_precision_preset())
+        finally:
+            self._precision_preset_syncing = False
+
+    def _apply_precision_preset(self, preset_name):
+        if self._precision_preset_syncing:
+            return
+        preset = self.PRECISION_PRESETS.get(str(preset_name))
+        if preset is None:
+            self._sync_precision_preset_selection()
+            return
+        self._precision_preset_syncing = True
+        try:
+            self.spin_precision_photons.setValue(int(preset["photons"]))
+            self.spin_mc_repeats.setValue(int(preset["mc_repeats"]))
+            self.spin_accuracy_pvalue.setValue(float(preset["accuracy_pvalue"]))
+            self.spin_bootstrap_samples.setValue(int(preset["bootstrap_samples"]))
+            self._set_precision_basis_mode(preset.get("basis", "period"))
+            self.combo_precision_preset.setCurrentText(str(preset_name))
+        finally:
+            self._precision_preset_syncing = False
+        self._sync_precision_preset_selection()
+
+    def _update_ci_sigma_equivalence(self, *_args):
+        ci_level = min(max(float(self.spin_ci_level.value()), 0.0), 99.999)
+        central_probability = 0.5 + (ci_level / 200.0)
+        sigma_equivalent = NormalDist().inv_cdf(central_probability)
+        self.lbl_ci_sigma_equiv.setText(f"{sigma_equivalent:.1f}\u03c3")
+
     def _handle_x_selection(self):
         """Ensures exclusive selection (Radio button behavior)."""
         sender = self.sender()
@@ -1897,11 +2004,13 @@ class ControlWidget(QWidget):
             self.combo_fx_scale: "Spacing of the target-parameter sweep values.",
             self.chk_validate_mc: "Run Monte Carlo validation alongside the theoretical Fisher calculation.",
             self.chk_compute_ci: "Bootstrap the Monte Carlo repeats to estimate a confidence interval for F or F^-2.",
+            self.combo_precision_preset: "Apply one of the built-in Fisher precision defaults for photons, Monte Carlo repeats, bootstrap count, and photon-basis reporting.",
             self.spin_precision_photons: "Photon count used in Fisher and Monte Carlo precision analysis.",
             self.spin_mc_repeats: "Number of Monte Carlo repeats per point on the precision sweep.",
             self.spin_accuracy_pvalue: "Bootstrap-based p-value threshold used to judge estimator accuracy.",
             self.spin_bootstrap_samples: "Number of bootstrap resamples used for p-values and confidence intervals.",
             self.spin_ci_level: "Confidence level used for the Monte Carlo interval display.",
+            self.lbl_ci_sigma_equiv: "Approximate Gaussian sigma-equivalent for the currently selected central confidence interval.",
             self.spin_photons: "Average photon budget for synthetic image generation.",
             self.spin_image_repeats: "Requested number of Monte Carlo-style repeats represented for each swept x-axis value.",
             self.combo_image_fit_method: "Lifetime-fitting backend for the validation image.",
@@ -3474,6 +3583,8 @@ class ControlWidget(QWidget):
             self._update_model_math_panel()
             self._update_detector_math_panel()
             self._update_sweep_inputs_enabled()
+            self._update_ci_sigma_equivalence()
+            self._sync_precision_preset_selection()
             self.blockSignals(False)
 
     def set_theme(self, theme_name):

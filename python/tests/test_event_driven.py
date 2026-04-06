@@ -196,6 +196,22 @@ def test_twin_engine_event_driven_honors_finite_multihit_capacity():
     assert int(np.max(detections)) <= 1
 
 
+def test_deadtime_mc_pulse_count_tracks_pixel_dwell_time():
+    cfg = PhysicsConfig(
+        gate_edges=[0.0, 12.5],
+        period=12.5,
+        event_pixel_dwell_time_s=1e-6,
+    )
+    engine = TwinEngine(cfg)
+
+    short_dwell_pulses = engine._deadtime_mc_pulse_count()
+    cfg.event_pixel_dwell_time_s = 2e-6
+    long_dwell_pulses = engine._deadtime_mc_pulse_count()
+
+    assert short_dwell_pulses == 80
+    assert long_dwell_pulses == 160
+
+
 def test_event_driven_parallel_run_returns_valid_shape():
     sim_cfg = SimulationConfig(
         optical_model=_uniform_optical_model(lambda_per_frame=10.0),

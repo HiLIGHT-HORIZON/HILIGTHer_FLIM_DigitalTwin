@@ -47,3 +47,31 @@ def test_custom_gate_type_updates_gate_count_from_valid_edges():
 
     assert widget.spin_num_gates.value() == 3
     assert widget.lbl_gate_error.text() == ""
+
+
+def test_precision_defaults_and_ci_sigma_label_track_selected_controls():
+    _app()
+    widget = ControlWidget()
+
+    widget.spin_ci_level.setValue(99.7)
+    assert widget.lbl_ci_sigma_equiv.text() == "3.0σ"
+
+    widget.combo_precision_preset.setCurrentText("Low resolution")
+    assert widget.spin_precision_photons.value() == 400
+    assert widget.spin_mc_repeats.value() == 20
+    assert widget.spin_accuracy_pvalue.value() == 0.0001
+    assert widget.spin_bootstrap_samples.value() == 40
+    assert widget.radio_f_basis_period.isChecked()
+
+    widget.spin_precision_photons.setValue(401)
+    assert widget.combo_precision_preset.currentText() == "Custom"
+
+
+def test_detector_deadtime_control_supports_1000_ns():
+    _app()
+    widget = ControlWidget()
+
+    widget.spin_deadtime.setValue(1000)
+
+    assert widget.spin_deadtime.maximum() == 1000
+    assert widget.spin_deadtime.value() == 1000

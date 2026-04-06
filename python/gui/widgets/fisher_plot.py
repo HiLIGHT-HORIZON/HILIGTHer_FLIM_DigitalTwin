@@ -37,6 +37,8 @@ class FisherWidget(QWidget):
         self.ideal_photon_count = 0.0
         self.resolvability_default_photon_count = 0
         self._resolvability_allowed = False
+        self.current_ci_level = 99.7
+        self._has_mc_ci = False
 
         ctrl_layout = QHBoxLayout()
         self.chk_log_x = QCheckBox("Log X")
@@ -58,19 +60,6 @@ class FisherWidget(QWidget):
         ])
         self.combo_mode.currentIndexChanged.connect(self.refresh_plot)
         self.combo_mode.setToolTip("Choose whether to display F, photon efficiency, or Fisher throughput.")
-
-        self.chk_smooth_mc = QCheckBox("Smooth MC")
-        self.chk_smooth_mc.toggled.connect(self._set_mc_smoothing_enabled)
-        self.chk_smooth_mc.toggled.connect(self.refresh_plot)
-        self.chk_smooth_mc.setToolTip("Smooth Monte Carlo curves over the tau sweep for visualization only.")
-
-        self.spin_smooth_window = QSpinBox()
-        self.spin_smooth_window.setRange(3, 21)
-        self.spin_smooth_window.setSingleStep(2)
-        self.spin_smooth_window.setValue(5)
-        self.spin_smooth_window.setEnabled(False)
-        self.spin_smooth_window.valueChanged.connect(self.refresh_plot)
-        self.spin_smooth_window.setToolTip("Odd moving-average window used for Monte Carlo smoothing.")
 
         self.btn_reset = QPushButton("Reset")
         self.btn_reset.setToolTip("Reset the view to show all data points.")
@@ -109,9 +98,6 @@ class FisherWidget(QWidget):
         ctrl_layout.addWidget(self.lbl_resolvability_photons)
         ctrl_layout.addWidget(self.spin_resolvability_photons)
         ctrl_layout.addStretch()
-        ctrl_layout.addWidget(self.chk_smooth_mc)
-        ctrl_layout.addWidget(QLabel("Window:"))
-        ctrl_layout.addWidget(self.spin_smooth_window)
         ctrl_layout.addWidget(QLabel("Metric:"))
         ctrl_layout.addWidget(self.combo_mode)
         layout.addLayout(ctrl_layout)
@@ -167,6 +153,13 @@ class FisherWidget(QWidget):
         self.chk_show_mc.stateChanged.connect(self._apply_visibility)
         self.legend_layout.addWidget(self.chk_show_mc)
 
+        self.chk_show_mc_ci = QCheckBox()
+        self.chk_show_mc_ci.setChecked(True)
+        self.chk_show_mc_ci.stateChanged.connect(self._apply_visibility)
+        self.legend_layout.addWidget(self.chk_show_mc_ci)
+        self.set_ci_level(self.current_ci_level)
+        self.chk_show_mc_ci.setEnabled(False)
+
         self.legend_layout.addSpacing(10)
         self.sweep_label = QLabel()
         self.legend_layout.addWidget(self.sweep_label)
@@ -221,30 +214,16 @@ class FisherWidget(QWidget):
         self.chk_show_ideal.setStyleSheet(f"color: {accent}; font-weight: bold;")
         self.chk_show_theory.setStyleSheet(f"color: {text};")
         self.chk_show_mc.setStyleSheet(f"color: {text};")
+        self.chk_show_mc_ci.setStyleSheet(f"color: {text};")
 
-    def _set_mc_smoothing_enabled(self, enabled):
-        self.spin_smooth_window.setEnabled(enabled)
+    @staticmethod
+    def format_ci_level(ci_level):
+        text = f"{float(ci_level):.3f}".rstrip("0").rstrip(".")
+        return f"{text}%"
 
-    def _smooth_masked_series(self, values, mask, window):
-        arr = np.array(values, copy=True, dtype=float)
-        if window <= 1:
-            return arr
-
-        effective_window = int(window)
-        if effective_window % 2 == 0:
-            effective_window += 1
-
-        for segment in self._segment_indices(mask):
-            if segment.size < 3:
-                continue
-            seg_window = min(effective_window, segment.size if segment.size % 2 == 1 else segment.size - 1)
-            if seg_window < 3:
-                continue
-            pad = seg_window // 2
-            kernel = np.ones(seg_window, dtype=float) / float(seg_window)
-            padded = np.pad(arr[segment], (pad, pad), mode="edge")
-            arr[segment] = np.convolve(padded, kernel, mode="valid")
-        return arr
+    def set_ci_level(self, ci_level):
+        self.current_ci_level = float(ci_level)
+        self.chk_show_mc_ci.setText(f"MC CI {self.format_ci_level(self.current_ci_level)}")
 
     def set_xaxis_label(self, text):
         self.plot_widget.setLabel("bottom", text)
@@ -315,7 +294,9 @@ class FisherWidget(QWidget):
             self.combo_mode.setCurrentIndex(0)
             self.combo_mode.blockSignals(False)
 
-    def plot_batch(self, x, results_dict, ideal_x=None, ideal_f=None, ideal_conditional_f=None, ideal_throughput_scale=None, ideal_photon_count=None):
+    def plot_batch(self, x, results_dict, ideal_x=None, ideal_f=None, ideal_conditional_f=None, ideal_throughput_scale=None, ideal_photon_count=None, ci_level=None):
+        if ci_level is not None:
+            self.set_ci_level(ci_level)
         if ideal_x is not None:
             self.ideal_tau = np.array(ideal_x, copy=True)
             self.ideal_f = np.array(ideal_f, copy=True)
@@ -401,8 +382,10 @@ class FisherWidget(QWidget):
         self._clear_dynamic_legend()
         self.batch_data = {}
         self.series_groups = {}
+        self._has_mc_ci = False
         self.ideal_curve.setData([], [])
         self.resolvability_limit_curve.setData([], [])
+        self.chk_show_mc_ci.setEnabled(False)
         self._update_metric_availability()
 
     def clear_data(self):
@@ -450,7 +433,7 @@ class FisherWidget(QWidget):
         self.series_legend_holder.addWidget(checkbox)
         self.dynamic_legend_widgets.append(checkbox)
         self.series_checkboxes[base_label] = checkbox
-        group = {"color": color, "checkbox": checkbox, "theory": [], "mc": []}
+        group = {"color": color, "checkbox": checkbox, "theory": [], "mc": [], "mc_ci": []}
         self.series_groups[base_label] = group
         return group
 
@@ -473,10 +456,12 @@ class FisherWidget(QWidget):
         self.ideal_curve.setVisible(self.chk_show_ideal.isChecked())
         show_theory = self.chk_show_theory.isChecked()
         show_mc = self.chk_show_mc.isChecked()
+        show_mc_ci = self.chk_show_mc_ci.isChecked()
         for base_label, group in self.series_groups.items():
             series_enabled = self.series_checkboxes.get(base_label).isChecked()
             self._set_items_visible(group["theory"], series_enabled and show_theory)
             self._set_items_visible(group["mc"], series_enabled and show_mc)
+            self._set_items_visible(group["mc_ci"], series_enabled and show_mc_ci)
 
     def _export_legend_entries(self):
         entries = []
@@ -484,6 +469,7 @@ class FisherWidget(QWidget):
             entries.append({"label": "Ideal Case", "color": "#10b981", "style": "dash"})
         show_theory = self.chk_show_theory.isChecked()
         show_mc = self.chk_show_mc.isChecked()
+        show_mc_ci = self.chk_show_mc_ci.isChecked()
         for base_label, group in self.series_groups.items():
             checkbox = self.series_checkboxes.get(base_label)
             if checkbox is None or not checkbox.isChecked():
@@ -492,6 +478,8 @@ class FisherWidget(QWidget):
                 entries.append({"label": f"{base_label} (Theory)", "color": group["color"], "style": "line"})
             if show_mc and group["mc"]:
                 entries.append({"label": f"{base_label} (MC)", "color": group["color"], "style": "marker"})
+            if show_mc_ci and group["mc_ci"]:
+                entries.append({"label": f"{base_label} ({self.chk_show_mc_ci.text()})", "color": group["color"], "style": "line"})
         return entries
 
     def _create_ci_band_items(self, x, lower, upper, color):
@@ -614,12 +602,11 @@ class FisherWidget(QWidget):
         self.resolvability_limit_curve.setData([], [])
         self._update_metric_controls(metric_key)
 
-        smooth_mc = self.chk_smooth_mc.isChecked()
-        smooth_window = self.spin_smooth_window.value()
         all_x = []
         all_y = []
         color_map = {}
         color_index = 0
+        has_any_ci = False
 
         for label, payload in self.batch_data.items():
             category, base_label = self._series_identity(label)
@@ -679,18 +666,15 @@ class FisherWidget(QWidget):
                         ci_lower = ci_lower * throughput_scale
                         ci_upper = ci_upper * throughput_scale
                     ci_mask = mask & self._valid_mask(x, ci_lower) & self._valid_mask(x, ci_upper)
-                    if not np.any(ci_mask):
-                        continue
-                    if smooth_mc:
-                        ci_lower = self._smooth_masked_series(ci_lower, ci_mask, smooth_window)
-                        ci_upper = self._smooth_masked_series(ci_upper, ci_mask, smooth_window)
-                    all_x.append(np.array(x[ci_mask], copy=True))
-                    all_y.append(np.array(ci_lower[ci_mask], copy=True))
-                    all_x.append(np.array(x[ci_mask], copy=True))
-                    all_y.append(np.array(ci_upper[ci_mask], copy=True))
-                    for segment in self._segment_indices(ci_mask):
-                        for item in self._create_ci_band_items(x[segment], ci_lower[segment], ci_upper[segment], color):
-                            self._register_item(base_label, "mc", item)
+                    if np.any(ci_mask):
+                        has_any_ci = True
+                        all_x.append(np.array(x[ci_mask], copy=True))
+                        all_y.append(np.array(ci_lower[ci_mask], copy=True))
+                        all_x.append(np.array(x[ci_mask], copy=True))
+                        all_y.append(np.array(ci_upper[ci_mask], copy=True))
+                        for segment in self._segment_indices(ci_mask):
+                            for item in self._create_ci_band_items(x[segment], ci_lower[segment], ci_upper[segment], color):
+                                self._register_item(base_label, "mc_ci", item)
 
             compatible = payload.get("compatible")
             compatible_mask = mask.copy()
@@ -698,26 +682,6 @@ class FisherWidget(QWidget):
             if category == "mc" and compatible is not None and compatible.shape == x.shape:
                 compatible_mask = mask & compatible
                 incompatible_mask = mask & (~compatible)
-
-            if category == "mc" and smooth_mc:
-                y_display = self._smooth_masked_series(y_data, mask, smooth_window)
-                if np.any(compatible_mask):
-                    for segment in self._segment_indices(compatible_mask):
-                        item = pg.PlotDataItem(
-                            x=x[segment],
-                            y=y_display[segment],
-                            pen=pg.mkPen(color=color, width=2),
-                        )
-                        self._register_item(base_label, "mc", item)
-                if np.any(incompatible_mask):
-                    for segment in self._segment_indices(incompatible_mask):
-                        item = pg.PlotDataItem(
-                            x=x[segment],
-                            y=y_display[segment],
-                            pen=pg.mkPen(color="#9ca3af", width=2, style=Qt.PenStyle.DashLine),
-                        )
-                        self._register_item(base_label, "mc", item)
-                continue
 
             if category == "mc":
                 if np.any(compatible_mask):
@@ -779,4 +743,6 @@ class FisherWidget(QWidget):
                 x_line = np.array([np.min(x_concat[x_mask]), np.max(x_concat[x_mask])], dtype=float)
                 self.resolvability_limit_curve.setData(x_line, np.full(2, 3.0, dtype=float))
 
+        self._has_mc_ci = has_any_ci
+        self.chk_show_mc_ci.setEnabled(has_any_ci)
         self._apply_visibility()

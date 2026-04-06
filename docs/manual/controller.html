@@ -125,9 +125,10 @@
         </div>
         <table>
           <tr><th>Element</th><th>Purpose</th><th>Current notes</th></tr>
+          <tr><td><code>Defaults</code></td><td>Loads built-in low-, medium-, or high-resolution Fisher presets.</td><td>Presets set photons, MC repeats, estimator-accuracy p-value, bootstrap resamples, and the photon-basis radio to acquisition-period reporting.</td></tr>
           <tr><td><code>Photons</code></td><td>Sets the precision photon budget.</td><td>This same count is also used for resolvability unless the precision widget override is engaged.</td></tr>
           <tr><td><code>Validate with Monte Carlo</code></td><td>Runs repeat simulations against the same sweep.</td><td>Needed when testing estimator bias or event-driven departures from the fast theory path.</td></tr>
-          <tr><td><code>Evaluate CI</code> and CI level</td><td>Computes bootstrap confidence intervals.</td><td>The default level is now <code>99.7%</code> (3 sigma), not 95%.</td></tr>
+          <tr><td><code>Evaluate CI</code>, CI level, and sigma label</td><td>Computes bootstrap confidence intervals and shows the corresponding Gaussian sigma-equivalent.</td><td>The default level is <code>99.7%</code>, displayed as <code>3.0σ</code> next to the spinner.</td></tr>
           <tr><td><code>Bootstrap resamples</code></td><td>Sets bootstrap sample count.</td><td>Higher values stabilise CI estimates at the cost of runtime.</td></tr>
           <tr><td><code>Estimator accuracy p-value</code></td><td>Threshold for compatibility flags.</td><td>Used to grey/flag MC points that fail the configured compatibility criterion.</td></tr>
           <tr><td><code>Compute F-value on</code></td><td>Chooses collected, acquisition-period, or all-photon reporting.</td><td>The estimator statistics do not change when this is toggled; existing cached runs can often be rescaled rather than recomputed.</td></tr>

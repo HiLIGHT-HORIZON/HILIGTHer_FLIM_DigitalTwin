@@ -55,6 +55,11 @@ def _get_matplotlib_pyplot():
     return plt
 
 
+def _ci_level_text(payload):
+    ci_level = float(payload.get("precision_display", {}).get("ci_level", 95.0))
+    return f"{ci_level:.3f}".rstrip("0").rstrip(".") + "%"
+
+
 def write_precision_report_package(file_path, payload):
     html_path = Path(file_path)
     if html_path.suffix.lower() != ".html":
@@ -80,7 +85,7 @@ def _write_csv(path, header_rows, rows):
         writer.writerows(rows)
 
 
-def _header_descriptor(header, x_label):
+def _header_descriptor(header, x_label, ci_level_text):
     x_unit = "[ns]" if "tau" in str(x_label).lower() else ""
     if header == x_label:
         return ("X", str(x_label), f"{x_label} {x_unit}".strip())
@@ -145,22 +150,22 @@ def _header_descriptor(header, x_label):
         return ("Y", "Monte Carlo standard deviation", f"{label} [estimate]")
     if header.endswith("_mc_f_ci_lower"):
         label = header[: -len("_mc_f_ci_lower")].replace("_", " ")
-        return ("Y", "Lower 95% CI on F", f"{label} [F]")
+        return ("Y", f"Lower {ci_level_text} CI on F", f"{label} [F]")
     if header.endswith("_mc_f_ci_upper"):
         label = header[: -len("_mc_f_ci_upper")].replace("_", " ")
-        return ("Y", "Upper 95% CI on F", f"{label} [F]")
+        return ("Y", f"Upper {ci_level_text} CI on F", f"{label} [F]")
     if header.endswith("_mc_eff_ci_lower"):
         label = header[: -len("_mc_eff_ci_lower")].replace("_", " ")
-        return ("Y", "Lower 95% CI on F^-2", f"{label} [F^-2]")
+        return ("Y", f"Lower {ci_level_text} CI on F^-2", f"{label} [F^-2]")
     if header.endswith("_mc_eff_ci_upper"):
         label = header[: -len("_mc_eff_ci_upper")].replace("_", " ")
-        return ("Y", "Upper 95% CI on F^-2", f"{label} [F^-2]")
+        return ("Y", f"Upper {ci_level_text} CI on F^-2", f"{label} [F^-2]")
     if header.endswith("_mc_throughput_ci_lower"):
         label = header[: -len("_mc_throughput_ci_lower")].replace("_", " ")
-        return ("Y", "Lower 95% CI on Throughput", f"{label} [throughput]")
+        return ("Y", f"Lower {ci_level_text} CI on Throughput", f"{label} [throughput]")
     if header.endswith("_mc_throughput_ci_upper"):
         label = header[: -len("_mc_throughput_ci_upper")].replace("_", " ")
-        return ("Y", "Upper 95% CI on Throughput", f"{label} [throughput]")
+        return ("Y", f"Upper {ci_level_text} CI on Throughput", f"{label} [throughput]")
     if header.endswith("_mean"):
         label = header[: -len("_mean")].replace("_", " ")
         return ("Y", "MLE mean estimate", f"{label} [estimate]")
@@ -172,8 +177,8 @@ def _header_descriptor(header, x_label):
     return ("Y", "Exported value", header.replace("_", " "))
 
 
-def _header_rows(headers, x_label):
-    descriptors = [_header_descriptor(header, x_label) for header in headers]
+def _header_rows(headers, x_label, ci_level_text):
+    descriptors = [_header_descriptor(header, x_label, ci_level_text) for header in headers]
     return [
         [item[0] for item in descriptors],
         [item[1] for item in descriptors],
@@ -185,6 +190,7 @@ def _write_csv_assets(asset_dir, payload):
     entries = []
     x_values = np.asarray(payload["x_range"], dtype=float)
     x_label = payload["x_label"]
+    ci_level_text = _ci_level_text(payload)
 
     theory_headers = [x_label, "ideal_f", "ideal_eff", "ideal_throughput"]
     for series in payload["series"]:
@@ -197,7 +203,7 @@ def _write_csv_assets(asset_dir, payload):
             row.extend([series["theory_f"][idx], series["theory_eff"][idx], series["theory_throughput"][idx]])
         theory_rows.append(row)
     theory_name = "precision_theory.csv"
-    theory_header_rows = _header_rows(theory_headers, x_label)
+    theory_header_rows = _header_rows(theory_headers, x_label, ci_level_text)
     _write_csv(asset_dir / theory_name, theory_header_rows, theory_rows)
     entries.append({
         "title": "Precision Theory Data",
@@ -205,7 +211,7 @@ def _write_csv_assets(asset_dir, payload):
         "headers": theory_headers,
         "header_rows": theory_header_rows,
         "rows": theory_rows,
-        "column_help": _describe_columns(theory_headers, x_label),
+        "column_help": _describe_columns(theory_headers, x_label, ci_level_text),
     })
 
     mc_series = [series for series in payload["series"] if series.get("mc_f")]
@@ -245,7 +251,7 @@ def _write_csv_assets(asset_dir, payload):
                 ])
             mc_rows.append(row)
         mc_name = "precision_monte_carlo.csv"
-        mc_header_rows = _header_rows(mc_headers, x_label)
+        mc_header_rows = _header_rows(mc_headers, x_label, ci_level_text)
         _write_csv(asset_dir / mc_name, mc_header_rows, mc_rows)
         entries.append({
             "title": "Precision Monte Carlo Data",
@@ -253,7 +259,7 @@ def _write_csv_assets(asset_dir, payload):
             "headers": mc_headers,
             "header_rows": mc_header_rows,
             "rows": mc_rows,
-            "column_help": _describe_columns(mc_headers, x_label),
+            "column_help": _describe_columns(mc_headers, x_label, ci_level_text),
         })
 
     accuracy = payload.get("accuracy", {})
@@ -270,7 +276,7 @@ def _write_csv_assets(asset_dir, payload):
                 row.extend([series["mean"][idx], series["std"][idx]])
             accuracy_rows.append(row)
         accuracy_name = "accuracy_mle_tracking.csv"
-        accuracy_header_rows = _header_rows(accuracy_headers, x_label)
+        accuracy_header_rows = _header_rows(accuracy_headers, x_label, ci_level_text)
         _write_csv(asset_dir / accuracy_name, accuracy_header_rows, accuracy_rows)
         entries.append({
             "title": "MLE Accuracy Data",
@@ -278,7 +284,7 @@ def _write_csv_assets(asset_dir, payload):
             "headers": accuracy_headers,
             "header_rows": accuracy_header_rows,
             "rows": accuracy_rows,
-            "column_help": _describe_columns(accuracy_headers, x_label),
+            "column_help": _describe_columns(accuracy_headers, x_label, ci_level_text),
         })
 
     for frame_idx, frame in enumerate(payload.get("frames", []), start=1):
@@ -299,7 +305,7 @@ def _write_csv_assets(asset_dir, payload):
                 row.append(gate[idx])
             rows.append(row)
         filename = f"gates_{frame_idx:02d}_{frame_slug}.csv"
-        header_rows = _header_rows(headers, x_label)
+        header_rows = _header_rows(headers, x_label, ci_level_text)
         _write_csv(asset_dir / filename, header_rows, rows)
         entries.append({
             "title": f"Diagnostics Gate Data: {frame['label']}",
@@ -307,7 +313,7 @@ def _write_csv_assets(asset_dir, payload):
             "headers": headers,
             "header_rows": header_rows,
             "rows": rows,
-            "column_help": _describe_columns(headers, x_label),
+            "column_help": _describe_columns(headers, x_label, ci_level_text),
         })
 
     optimisation = payload.get("optimization")
@@ -317,7 +323,7 @@ def _write_csv_assets(asset_dir, payload):
             opt_headers = list(options.keys())
             opt_rows = [[options.get(header) for header in opt_headers]]
             opt_name = "optimisation_options.csv"
-            opt_header_rows = _header_rows(opt_headers, x_label)
+            opt_header_rows = _header_rows(opt_headers, x_label, ci_level_text)
             _write_csv(asset_dir / opt_name, opt_header_rows, opt_rows)
             entries.append({
                 "title": "Optimisation Options",
@@ -325,7 +331,7 @@ def _write_csv_assets(asset_dir, payload):
                 "headers": opt_headers,
                 "header_rows": opt_header_rows,
                 "rows": opt_rows,
-                "column_help": _describe_columns(opt_headers, x_label),
+                "column_help": _describe_columns(opt_headers, x_label, ci_level_text),
             })
 
         objective_history = optimisation.get("objective_history", [])
@@ -359,7 +365,7 @@ def _write_csv_assets(asset_dir, payload):
                     gate_count_history[idx] if idx < len(gate_count_history) else np.nan,
                 ])
             history_name = "optimisation_history.csv"
-            history_header_rows = _header_rows(history_headers, x_label)
+            history_header_rows = _header_rows(history_headers, x_label, ci_level_text)
             _write_csv(asset_dir / history_name, history_header_rows, history_rows)
             entries.append({
                 "title": "Optimisation History",
@@ -367,7 +373,7 @@ def _write_csv_assets(asset_dir, payload):
                 "headers": history_headers,
                 "header_rows": history_header_rows,
                 "rows": history_rows,
-                "column_help": _describe_columns(history_headers, x_label),
+                "column_help": _describe_columns(history_headers, x_label, ci_level_text),
             })
 
         snapshots = optimisation.get("snapshots", [])
@@ -385,7 +391,7 @@ def _write_csv_assets(asset_dir, payload):
                     ", ".join(f"{float(edge):.6g}" for edge in edges),
                 ])
             snapshot_name = "optimisation_snapshots.csv"
-            snapshot_header_rows = _header_rows(snapshot_headers, x_label)
+            snapshot_header_rows = _header_rows(snapshot_headers, x_label, ci_level_text)
             _write_csv(asset_dir / snapshot_name, snapshot_header_rows, snapshot_rows)
             entries.append({
                 "title": "Optimisation Snapshot Summary",
@@ -393,7 +399,7 @@ def _write_csv_assets(asset_dir, payload):
                 "headers": snapshot_headers,
                 "header_rows": snapshot_header_rows,
                 "rows": snapshot_rows,
-                "column_help": _describe_columns(snapshot_headers, x_label),
+                "column_help": _describe_columns(snapshot_headers, x_label, ci_level_text),
             })
 
     return entries
@@ -410,6 +416,7 @@ def _save_precision_svg(path, payload, theme_name):
     _style_axes(fig, ax, palette)
 
     x = np.asarray(payload["x_range"], dtype=float)
+    ci_level_text = _ci_level_text(payload)
     ideal_key = "ideal_throughput" if metric == "throughput" else ("ideal_eff" if metric == "efficiency" else "ideal_f")
     ideal = np.asarray(payload[ideal_key], dtype=float)
     ax.plot(x, ideal, linestyle="--", linewidth=2.0, color=palette["ideal"], label="Ideal Reference")
@@ -441,14 +448,13 @@ def _save_precision_svg(path, payload, theme_name):
                 if log_y:
                     mask &= (ci_low > 0) & (ci_high > 0)
                 if np.any(mask):
-                    ax.fill_between(x[mask], ci_low[mask], ci_high[mask], color=color, alpha=0.18, label=f"Monte Carlo 95% CI | {series['label']}")
-            else:
-                mask = np.isfinite(x) & np.isfinite(mc_vals)
-                if log_x:
-                    mask &= x > 0
-                if log_y:
-                    mask &= mc_vals > 0
-                ax.scatter(x[mask], mc_vals[mask], color=color, s=24, alpha=0.9, label=f"Monte Carlo | {series['label']}")
+                    ax.fill_between(x[mask], ci_low[mask], ci_high[mask], color=color, alpha=0.18, label=f"Monte Carlo {ci_level_text} CI | {series['label']}")
+            mask = np.isfinite(x) & np.isfinite(mc_vals)
+            if log_x:
+                mask &= x > 0
+            if log_y:
+                mask &= mc_vals > 0
+            ax.scatter(x[mask], mc_vals[mask], color=color, s=24, alpha=0.9, label=f"Monte Carlo | {series['label']}")
 
     if log_x:
         ax.set_xscale("log")
@@ -752,7 +758,7 @@ def _format_cell(value):
     return str(value)
 
 
-def _describe_column(header, x_label):
+def _describe_column(header, x_label, ci_level_text):
     if header == x_label:
         return f"{header}: swept x-axis value used for this precision run."
     if header == "time_ns":
@@ -818,10 +824,10 @@ def _describe_column(header, x_label):
         return f"{header}: standard deviation of the estimated lifetime or parameter from Monte Carlo repeats for sweep series '{label}'."
     if header.endswith("_mc_f_ci_lower"):
         label = header[: -len("_mc_f_ci_lower")]
-        return f"{header}: lower 95% bootstrap confidence bound on Monte Carlo F for sweep series '{label}'."
+        return f"{header}: lower {ci_level_text} bootstrap confidence bound on Monte Carlo F for sweep series '{label}'."
     if header.endswith("_mc_f_ci_upper"):
         label = header[: -len("_mc_f_ci_upper")]
-        return f"{header}: upper 95% bootstrap confidence bound on Monte Carlo F for sweep series '{label}'."
+        return f"{header}: upper {ci_level_text} bootstrap confidence bound on Monte Carlo F for sweep series '{label}'."
     if header.endswith("_mc_eff_ci_lower"):
         label = header[: -len("_mc_eff_ci_lower")]
         return f"{header}: lower bootstrap confidence bound on Monte Carlo photon efficiency for sweep series '{label}'."
@@ -843,8 +849,8 @@ def _describe_column(header, x_label):
     return f"{header}: exported numeric column."
 
 
-def _describe_columns(headers, x_label):
-    return [_describe_column(header, x_label) for header in headers]
+def _describe_columns(headers, x_label, ci_level_text):
+    return [_describe_column(header, x_label, ci_level_text) for header in headers]
 
 
 def _build_report_html(payload, asset_dir_name, table_entries, image_entries):

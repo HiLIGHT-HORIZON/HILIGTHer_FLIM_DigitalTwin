@@ -2591,17 +2591,12 @@ class TwinEngine:
             hist, _ = self.simulate_gate_histograms(tau, int(n_total), 1)
             return hist[0]
         
-        # Determine number of pulses to simulate
-        # Assume total photons are distributed over a 1s acquisition for throughput calc
-        # but here we'll just simulate enough pulses to reach n_total on average.
-        p_detect_per_pulse = n_total / (1e6) # Dummy scaling
-        
         # Time vector for PDF
         t = self.time_vector
         pdf = self.dt_pdf(t, tau=tau) if tau is not None else self.dt_pdf(t)
         cdf = np.cumsum(pdf)
-        
-        n_pulses = 10000
+
+        n_pulses = self._deadtime_mc_pulse_count(cfg)
         gate_edges = np.asarray(cfg.gate_edges, dtype=np.float64)
         counts = _simulate_deadtime_counts_numba(
             cdf.astype(np.float64),
@@ -2615,6 +2610,16 @@ class TwinEngine:
             int(n_pulses),
         )
         return counts
+
+    def _deadtime_mc_pulse_count(self, cfg: Optional[PhysicsConfig] = None) -> int:
+        cfg = cfg or self.config
+        dwell_s = float(max(getattr(cfg, "event_pixel_dwell_time_s", 1e-3), 1e-12))
+        period_ns = float(getattr(cfg, "period", 0.0))
+        if period_ns <= 0.0:
+            gate_edges = list(getattr(cfg, "gate_edges", []) or [])
+            period_ns = float(gate_edges[-1] + 5.0) if gate_edges else 12.5
+        period_s = max(period_ns * 1e-9, 1e-12)
+        return max(int(np.ceil(dwell_s / period_s)), 1)
 
     def advanced_instrument_simulation(self, a_sim: float, tau_grid: np.ndarray, b_sim: float):
         """

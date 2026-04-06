@@ -54,8 +54,8 @@
           <tr><th>Control</th><th>Purpose</th></tr>
           <tr><td><code>Log X</code> / <code>Log Y</code></td><td>Axis scaling only; does not change the data.</td></tr>
           <tr><td><code>Metric</code></td><td>Selects the displayed metric.</td></tr>
-          <tr><td><code>Smooth MC</code></td><td>Visual smoothing of Monte Carlo points only.</td></tr>
-          <tr><td>Series checkboxes</td><td>Show/hide ideal, theory, MC, and batch-sweep overlays.</td></tr>
+          <tr><td>Series checkboxes</td><td>Show/hide ideal, theory, Monte Carlo points, CI bands labelled with the active confidence level, and batch-sweep overlays.</td></tr>
+          <tr><td>Monte Carlo markers</td><td>MC validation remains point-based even when confidence-interval bands are displayed.</td></tr>
           <tr><td>Resolvability photon spinner</td><td>Shown only in <code>Resolvability (R)</code> mode and only when resolvability is supported.</td></tr>
         </table>
       </section>
@@ -94,12 +94,17 @@
         <table>
           <tr><th>Feature</th><th>Current behavior</th></tr>
           <tr><td>Settings gear</td><td>Opens per-graph export settings next to the clipboard button.</td></tr>
+          <tr><td>Saved profiles</td><td>Named clipboard-export profiles can be saved, updated, renamed, and deleted from the dialog, then reused across graphs. Selecting a saved profile keeps it active while you edit, so <code>Update</code> rewrites that profile instead of bouncing back to a generic custom state.</td></tr>
           <tr><td><code>Use default settings</code></td><td>When enabled, exports the graph with its live/current appearance and makes the remaining controls informational.</td></tr>
           <tr><td>Custom size and aspect</td><td>Applied to the main graph area, not to the on-screen widget layout.</td></tr>
           <tr><td>Font size</td><td>Applied to the export path only.</td></tr>
+          <tr><td>Line widths and markers</td><td>Custom exports can override plot-trace width, marker size, and axis/tick width independently without changing the live widget permanently.</td></tr>
           <tr><td>Theme override</td><td>Can force light or dark export independently of the GUI theme.</td></tr>
+          <tr><td>Grid and box styling</td><td>Custom exports can independently control X/Y grids, grid intensity, and whether the plot area gets a visible bounding box.</td></tr>
+          <tr><td>Tick styling</td><td>Exports can choose major-only, major-plus-minor, or no ticks, flip ticks inward or outward, override tick length, and label every visible exported tick level without changing the live widget.</td></tr>
           <tr><td>PNG / SVG</td><td>Both are supported for clipboard export.</td></tr>
           <tr><td>Include legend</td><td>Adds a separate static export legend, not the interactive checkbox panel.</td></tr>
+          <tr><td>SVG curve output</td><td>SVG export now merges adjacent line segments into continuous polylines so downstream editors see one curve per trace instead of many tiny fragments.</td></tr>
         </table>
         <p><code>SAVE AS</code> remains the report exporter and writes a browsable HTML report, figure assets, and CSV data from the active run.</p>
       </section>

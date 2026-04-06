@@ -1,0 +1,27 @@
+{
+  "current": {
+    "use_defaults": true,
+    "include_legend": false,
+    "dpi": 1000,
+    "aspect_w": 1.0,
+    "aspect_h": 1.0,
+    "size_w": 4.0,
+    "size_h": 4.0,
+    "unit": "cm",
+    "lock_aspect": true,
+    "font_size_pt": 0.0,
+    "theme_mode": "gui",
+    "fmt": "png",
+    "grid_x": true,
+    "grid_y": true,
+    "grid_alpha": 0.3,
+    "show_bounding_box": false,
+    "tick_visibility": "major_minor",
+    "tick_direction": "inner",
+    "tick_length": 0.0,
+    "plot_line_width": 0.0,
+    "axis_line_width": 0.0,
+    "marker_size": 0.0
+  },
+  "profiles": {}
+}

@@ -70,6 +70,7 @@ build/
 !/data/.gitkeep
 python/data/sessions/*
 !python/data/sessions/.gitkeep
+python/profiles/clipboard_exports/defaults.current.json
 
 # --- Legacy / MATLAB Specifics ---
 legacy/SPC-handbook-11ed-07.pdf
