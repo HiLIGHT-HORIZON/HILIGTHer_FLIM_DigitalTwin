@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import QApplication
 import numpy as np
 
 from gui.widgets.fisher_plot import FisherWidget
+from gui.widgets.mle_accuracy_plot import MLEAccuracyWidget
 
 
 def _app():
@@ -42,3 +43,39 @@ def test_fisher_widget_labels_ci_checkbox_and_keeps_mc_as_points():
     widget.chk_show_mc_ci.setChecked(False)
     assert all(not item.isVisible() for item in current["mc_ci"])
     assert all(item.isVisible() for item in current["mc"])
+
+
+def test_mle_accuracy_widget_summary_mode_plots_one_bar_per_curve():
+    _app()
+    widget = MLEAccuracyWidget()
+    widget.plot_accuracy(
+        np.array([1.0, 2.0, 3.0]),
+        {
+            "Curve A": {
+                "mean": np.array([1.0, 2.2, 3.1]),
+                "std": np.array([0.2, 0.2, 0.1]),
+            },
+            "Curve B": {
+                "mean": np.array([0.7, 1.5, 3.6]),
+                "std": np.array([0.2, 0.25, 0.3]),
+            },
+        },
+    )
+
+    widget.btn_accuracy_summary.setChecked(True)
+
+    assert not widget.chk_stacked.isEnabled()
+    assert "Accuracy Summary" in widget.legend_title.text()
+    assert len(widget.series_items) == 2
+
+    first_bar = widget.series_items[0][0][0]
+    second_bar = widget.series_items[1][0][0]
+    assert np.isclose(float(first_bar.opts["height"][0]), 0.81649658, rtol=1e-6)
+    assert np.isclose(float(second_bar.opts["height"][0]), 1.84842275, rtol=1e-6)
+    assert widget.summary_tick_labels == ["Curve A", "Curve B"]
+
+
+def test_mle_accuracy_widget_summary_compacts_long_tick_labels():
+    assert MLEAccuracyWidget._format_summary_tick_label("Count Rate = 1 GHz (deadtime corrected)") == "1 GHz\nDT corr."
+    assert MLEAccuracyWidget._format_summary_tick_label("Count Rate = 1 GHz (Isbaner corrected)") == "1 GHz\nIsbaner corr."
+    assert MLEAccuracyWidget._format_summary_tick_label("Current Configuration (Rapp-inspired corrected)") == "Current\nRapp-insp. corr."

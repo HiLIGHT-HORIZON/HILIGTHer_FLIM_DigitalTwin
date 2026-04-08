@@ -78,6 +78,7 @@
         <h2>Desktop automation API</h2>
         <p><code>python/gui/automation_api.py</code> is an in-process API for a live Qt window. It exposes layout, controller state, run/export triggers, plot payloads, diagnostics frames, and optimisation state without going through HTTP.</p>
         <p>This is separate from the GUI schema: the schema describes the workspace declaratively, while the automation API performs actions against a running desktop session.</p>
+        <p>Optimisation payloads expose throughput histories derived from all-photon Fisher efficiency internally, even when the active GUI display basis is conditional or collected-photon reporting. In count-rate mode, throughput can also be based on the dead-time-corrected Fisher curve when correction is enabled, and the returned history may include both coarse and refined count-rate candidates.</p>
       </section>
 
       <section class="card" id="gui-schema">

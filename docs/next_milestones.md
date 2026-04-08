@@ -1,37 +1,10 @@
 # Next Milestones
 
-This document records the next scientific and platform milestones planned after `1.0.0 beta`. It is a roadmap artifact for engineering and scientific review. It does not describe implemented user-facing functionality.
+This document records the next scientific and platform milestones planned after `1.1.0 beta`. It is a roadmap artifact for engineering and scientific review. It does not describe implemented user-facing functionality.
 
 The milestones below are intentionally listed without hard priority ranking. A recommended execution order is provided at the end to reduce semantic drift and implementation risk.
 
-## 1. Dead-Time Correction Methods with Fisher Analysis
-
-Problem statement:
-The current backend can model detector deadtime and event loss, but the next milestone is to support correction-aware precision analysis rather than only loss-aware simulation.
-
-User and scientific value:
-This will let users compare raw detector-limited performance, correction-aware reporting, and ideal references using one coherent precision framework.
-
-Intended outcome:
-The precision workflow should support explicit dead-time correction methods and show how correction affects reported Fisher-derived performance metrics without collapsing the distinction between collected-photon precision and survival.
-
-Dependencies on existing backend semantics:
-
-- conditional collected-photon Fisher reporting
-- survival and photon-basis rescaling
-- event-driven detector reference behavior
-- ideal-reference precision workflow
-
-Main scientific review risks:
-
-- changing the meaning of `F`, `eta`, or photon-basis reporting by accident
-- mixing correction of observed counts with correction of estimator semantics
-- introducing correction logic that is inconsistent between theory, Monte Carlo, and reporting layers
-
-Suggested acceptance signal:
-The milestone is reached when users can compare uncorrected, corrected, and ideal-reference deadtime cases within the precision workflow and the scientific meaning of each reported quantity is explicitly documented and human-audited.
-
-## 2. Pixellated Detector Simulation
+## 1. Pixellated Detector Simulation
 
 Problem statement:
 The current detector model is channel- and resource-based, but it does not yet expose pixellated detector arrays as a first-class simulation concept.
@@ -58,7 +31,7 @@ Main scientific review risks:
 Suggested acceptance signal:
 The milestone is reached when users can simulate single-channel and pixellated detector cases under consistent backend semantics, compare independent and shared-resource array behaviors, and obtain array-aware outputs that remain scientifically interpretable.
 
-## 3. Frequency-Domain Support with Digital FD and Sine-Wave Excitation
+## 2. Frequency-Domain Support with Digital FD and Sine-Wave Excitation
 
 Problem statement:
 The current application is time-domain centered. The next milestone is to add a frequency-domain branch, starting with a digital FD workflow and sine-wave excitation.
@@ -106,8 +79,7 @@ For any implementation work in these areas:
 
 The milestones are roadmap items rather than strict priorities, but the recommended implementation order is:
 
-1. Dead-time correction methods with Fisher analysis
-2. Pixellated detector simulation
-3. Frequency-domain support with digital FD and sine-wave excitation
+1. Pixellated detector simulation
+2. Frequency-domain support with digital FD and sine-wave excitation
 
-This order extends the current time-domain precision core first, then adds detector-topology complexity, and only then introduces a new analysis domain.
+This order extends the current time-domain precision core with detector-topology complexity first, and only then introduces a new analysis domain.

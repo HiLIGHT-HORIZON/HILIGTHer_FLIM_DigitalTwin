@@ -1,6 +1,7 @@
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QCheckBox, QFrame, QScrollArea, QPushButton)
 from PyQt6.QtCore import Qt
 from .clipboard_export import ClipboardExportManager
@@ -17,6 +18,7 @@ class MLEAccuracyWidget(QWidget):
         self.series_data = {}
         self.x_label = "Ground Truth"
         self.y_offset = 0.0
+        self.summary_tick_labels = []
 
         # Controls Header
         ctrl_layout = QHBoxLayout()
@@ -25,6 +27,14 @@ class MLEAccuracyWidget(QWidget):
         self.chk_stacked.setToolTip("Apply an artificial offset to separate overlapping sweep curves.")
         self.chk_stacked.stateChanged.connect(self.refresh_plot)
         ctrl_layout.addWidget(self.chk_stacked)
+
+        self.btn_accuracy_summary = QPushButton("Accuracy Summary")
+        self.btn_accuracy_summary.setCheckable(True)
+        self.btn_accuracy_summary.setToolTip(
+            "Show one summary bar per plotted curve using the RMS standardized bias metric."
+        )
+        self.btn_accuracy_summary.toggled.connect(self._on_summary_toggled)
+        ctrl_layout.addWidget(self.btn_accuracy_summary)
         
         self.btn_copy = QPushButton("📋")
         self.btn_copy.setToolTip("Copy screenshot to clipboard")
@@ -155,6 +165,42 @@ class MLEAccuracyWidget(QWidget):
             }
         self.refresh_plot()
 
+    @staticmethod
+    def _accuracy_summary_metric(x, mean, std):
+        x = np.asarray(x, dtype=float)
+        mean = np.asarray(mean, dtype=float)
+        std = np.asarray(std, dtype=float)
+        mask = np.isfinite(x) & np.isfinite(mean) & np.isfinite(std) & (std > 0)
+        if not np.any(mask):
+            return np.nan
+        z = (mean[mask] - x[mask]) / std[mask]
+        return float(np.sqrt(np.mean(np.square(z))))
+
+    def _on_summary_toggled(self, checked):
+        self.chk_stacked.setEnabled(not checked)
+        self.refresh_plot()
+
+    @staticmethod
+    def _format_summary_tick_label(label):
+        text = str(label).strip()
+        if "=" in text:
+            text = text.split("=", 1)[1].strip()
+        text = text.replace("(deadtime corrected)", "DT corr.")
+        text = text.replace("deadtime corrected", "DT corr.")
+        text = text.replace("(Isbaner corrected)", "Isbaner corr.")
+        text = text.replace("(Rapp-inspired corrected)", "Rapp-insp. corr.")
+        text = text.replace("(Rapp corrected)", "Rapp corr.")
+        text = text.replace("Current Configuration", "Current")
+        for suffix in ("DT corr.", "Isbaner corr.", "Rapp-insp. corr.", "Rapp corr."):
+            if suffix in text:
+                main = text.replace(suffix, "").replace("()", "").strip()
+                return f"{main}\n{suffix}"
+        if len(text) > 18 and " " in text:
+            parts = text.split()
+            midpoint = max(1, len(parts) // 2)
+            return " ".join(parts[:midpoint]) + "\n" + " ".join(parts[midpoint:])
+        return text
+
     def refresh_plot(self):
         # Clear existing items and legend widgets
         for items, widget in self.series_items:
@@ -167,13 +213,77 @@ class MLEAccuracyWidget(QWidget):
         all_x = []
         all_y = []
         stacked = self.chk_stacked.isChecked()
+        summary_mode = self.btn_accuracy_summary.isChecked()
         title_color = "#e5eefb" if self.current_theme == "dark" else "#0f172a"
-        self.legend_title.setText(
-            f"<b style='font-size: 14px; color: {title_color};'>MLE Tracking (stacked)</b>"
-            if stacked else
-            f"<b style='font-size: 14px; color: {title_color};'>MLE Tracking</b>"
-        )
-        
+        if summary_mode:
+            self.legend_title.setText(
+                f"<b style='font-size: 14px; color: {title_color};'>Accuracy Summary</b>"
+            )
+            self.plot_widget.setLabel('bottom', 'Curve')
+            self.plot_widget.setLabel('left', 'RMS Standardized Bias (sigma)')
+        else:
+            self.legend_title.setText(
+                f"<b style='font-size: 14px; color: {title_color};'>MLE Tracking (stacked)</b>"
+                if stacked else
+                f"<b style='font-size: 14px; color: {title_color};'>MLE Tracking</b>"
+            )
+            self.plot_widget.setLabel('bottom', self.x_label)
+            self.plot_widget.setLabel('left', 'Estimated Value')
+
+        if summary_mode:
+            axis = self.plot_widget.getAxis('bottom')
+            font = QFont()
+            font.setPointSize(8)
+            try:
+                axis.setTickFont(font)
+            except Exception:
+                pass
+            axis.setHeight(72)
+            axis.setStyle(autoExpandTextSpace=False, tickTextOffset=12)
+            ticks = []
+            self.summary_tick_labels = []
+            for idx, (label, payload) in enumerate(self.series_data.items(), start=1):
+                metric = self._accuracy_summary_metric(payload["x"], payload["mean"], payload["std"])
+                if not np.isfinite(metric):
+                    continue
+                color = self.colors[(idx - 1) % len(self.colors)]
+                bar = pg.BarGraphItem(
+                    x=np.array([float(idx)]),
+                    height=np.array([metric], dtype=float),
+                    width=0.7,
+                    brush=pg.mkBrush(color),
+                    pen=pg.mkPen(color=color, width=1.5),
+                )
+                self.plot_widget.addItem(bar)
+                chk = self._add_manual_legend(
+                    f"{label} ({metric:.3g} sigma)",
+                    [bar],
+                    color,
+                )
+                self.series_items.append(([bar], chk))
+                tick_label = self._format_summary_tick_label(label)
+                self.summary_tick_labels.append(tick_label)
+                ticks.append((float(idx), tick_label))
+                all_x.append(np.array([float(idx)]))
+                all_y.append(np.array([metric], dtype=float))
+
+            axis.setTicks([ticks] if ticks else [])
+            self.expected_line.hide()
+            if all_y:
+                y_all = np.concatenate(all_y)
+                ymax = float(np.nanmax(y_all))
+                self.plot_widget.setXRange(0.4, max(len(ticks), 1) + 0.6, padding=0.0)
+                self.plot_widget.setYRange(0.0, max(ymax * 1.15, 1.0), padding=0.0)
+            else:
+                self.plot_widget.setXRange(0.0, 1.0, padding=0.0)
+                self.plot_widget.setYRange(0.0, 1.0, padding=0.0)
+            return
+
+        axis = self.plot_widget.getAxis('bottom')
+        axis.setTicks(None)
+        axis.setHeight(40)
+        axis.setStyle(autoExpandTextSpace=True, tickTextOffset=8)
+
         # Calculate offset based on range if stacked
         offset_step = 0.0
         if stacked and self.series_data:

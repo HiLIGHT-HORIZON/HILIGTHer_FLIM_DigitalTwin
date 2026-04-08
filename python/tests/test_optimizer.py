@@ -159,3 +159,118 @@ def test_direct_gate_optimization_responds_to_photon_basis_mode():
     assert np.isfinite(collected_j)
     assert not np.allclose(all_edges, collected_edges, atol=1e-3)
     assert not np.isclose(all_j, collected_j, rtol=1e-2)
+
+
+def test_optimization_summary_uses_all_photon_basis_for_throughput(monkeypatch):
+    engine = TwinEngine(PhysicsConfig(optimization_f_photon_basis="collected"))
+    seen_modes = []
+
+    def fake_compute_fisher_info(x_range, n_photons, photon_basis_mode="all"):
+        seen_modes.append(str(photon_basis_mode))
+        if photon_basis_mode == "all":
+            return np.ones_like(x_range, dtype=float), np.ones_like(x_range, dtype=float)
+        return np.ones_like(x_range, dtype=float), np.full_like(x_range, 2.0, dtype=float)
+
+    monkeypatch.setattr(engine, "compute_fisher_info", fake_compute_fisher_info)
+
+    summary = engine._optimization_efficiency_summary(
+        engine.config,
+        np.array([1.0, 2.0, 3.0]),
+        objective_mode="fisher_throughput",
+        n_photons=1000,
+        reference_excitation_area=1.0,
+        reference_precision_rate_hz=1000.0,
+    )
+
+    assert seen_modes == ["collected", "all"]
+    assert summary["display_photon_basis"] == "collected"
+    assert summary["objective_photon_basis"] == "all"
+    assert np.isclose(summary["display_peak_efficiency"], 0.25)
+    assert np.isclose(summary["peak_efficiency"], 1.0)
+
+
+def test_count_rate_optimization_respects_accuracy_guard(monkeypatch):
+    cfg = PhysicsConfig(
+        optimize_count_rate=True,
+        optimization_objective="fisher_throughput",
+        count_rate_optimization_min_kcps=1.0,
+        count_rate_optimization_max_kcps=100.0,
+        count_rate_optimization_steps=3,
+        count_rate_optimization_scale="log",
+        count_rate_optimization_enforce_accuracy=True,
+        count_rate_optimization_max_bias_pct=5.0,
+        precision_photons=1000,
+    )
+    engine = TwinEngine(cfg)
+
+    def fake_evaluate(candidate_cfg, x_range, algorithm, step, callback, progress_callback, objective_mode, reference_excitation_area, reference_precision_rate_hz=None, note=""):
+        rate_kcps = candidate_cfg.precision_photons / candidate_cfg.event_pixel_dwell_time_s / 1000.0
+        return {
+            "objective": 1.0 / max(rate_kcps, 1e-12),
+            "throughput_metric": float(rate_kcps),
+            "throughput_auc": float(rate_kcps),
+            "peak_efficiency": 1.0,
+            "auc_efficiency": 1.0,
+            "min_f": 1.0,
+            "edges": np.array([0.0, 1.0]),
+            "f_val": np.array([1.0, 1.0]),
+            "fisher_info": np.array([1.0, 1.0]),
+            "config": candidate_cfg.model_dump(),
+            "note": note,
+        }
+
+    def fake_bias(candidate_cfg, x_range, n_photons):
+        rate_kcps = candidate_cfg.precision_photons / candidate_cfg.event_pixel_dwell_time_s / 1000.0
+        max_bias = 1.0 if rate_kcps <= 10.0 + 1e-9 else 12.0
+        return {
+            "predicted_estimate": np.array([1.0, 2.0]),
+            "relative_bias_pct": np.array([max_bias, max_bias]),
+            "max_relative_bias_pct": max_bias,
+            "rms_relative_bias_pct": max_bias,
+        }
+
+    monkeypatch.setattr(engine, "_evaluate_optimization_config", fake_evaluate)
+    monkeypatch.setattr(engine, "_predicted_accuracy_bias_summary", fake_bias)
+
+    best_cfg, _best_j, _info = engine.optimize_count_rate((1.0, 3.0), n_tau=2)
+    best_rate_kcps = best_cfg.precision_photons / best_cfg.event_pixel_dwell_time_s / 1000.0
+
+    assert np.isclose(best_rate_kcps, 10.0, rtol=1e-6)
+    assert np.all(np.asarray(_info["coarse_candidate_kcps"], dtype=float) >= 1.0)
+    assert np.all(np.asarray(_info["coarse_candidate_kcps"], dtype=float) <= 100.0)
+    assert np.all(np.asarray(_info["refined_candidate_kcps"], dtype=float) >= 1.0)
+    assert np.all(np.asarray(_info["refined_candidate_kcps"], dtype=float) <= 100.0)
+
+
+def test_optimization_summary_uses_corrected_fisher_when_deadtime_correction_enabled(monkeypatch):
+    cfg = PhysicsConfig(
+        optimization_f_photon_basis="collected",
+        deadtime_correction_method="isbaner_histogram",
+    )
+    engine = TwinEngine(cfg)
+    seen = []
+
+    def fail_raw(*args, **kwargs):
+        raise AssertionError("raw compute_fisher_info should not be used for corrected summary")
+
+    def fake_corrected(x_range, n_photons, correction_method=None, photon_basis_mode=None):
+        seen.append((str(correction_method), str(photon_basis_mode)))
+        if photon_basis_mode == "all":
+            return np.ones_like(x_range), np.ones_like(x_range), {"method": correction_method}
+        return np.ones_like(x_range), np.full_like(x_range, 2.0), {"method": correction_method}
+
+    monkeypatch.setattr(engine, "compute_fisher_info", fail_raw)
+    monkeypatch.setattr(engine, "compute_deadtime_corrected_fisher_info", fake_corrected)
+
+    summary = engine._optimization_efficiency_summary(
+        cfg,
+        np.array([1.0, 2.0, 3.0]),
+        objective_mode="fisher_throughput",
+        n_photons=1000,
+        reference_excitation_area=1.0,
+        reference_precision_rate_hz=1000.0,
+    )
+
+    assert seen == [("isbaner_histogram", "collected"), ("isbaner_histogram", "all")]
+    assert summary["deadtime_correction_enabled"] is True
+    assert summary["objective_photon_basis"] == "all"

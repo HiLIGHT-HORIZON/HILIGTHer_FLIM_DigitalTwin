@@ -136,17 +136,21 @@ class PhysicsConfig(BaseModel):
     precision_accuracy_pvalue: float = 0.0001
     precision_bootstrap_samples: int = 2000
     precision_ci_level: float = 99.7
+    deadtime_correction_method: str = "none"  # none, isbaner_histogram, rapp_inspired_inverse
     sweep_autoplay: bool = True
 
     # Optimization Controller
     optimize_detection_gates: bool = False
     optimize_excitation_profile: bool = False
+    optimize_count_rate: bool = False
     optimization_mode: str = "sequential"  # legacy compatibility field; joint optimisation now alternates sequentially
-    optimization_first: str = "detection"  # detection, excitation
+    optimization_first: str = "detection"  # detection, excitation, count_rate
     optimization_iterations: int = 20
     optimization_f_photon_basis: str = "collected"  # collected, period, all
     optimization_objective: str = "fisher_throughput"  # fisher_information, fisher_throughput, photon_efficiency_auc, throughput_auc
     optimization_max_fi_loss_pct: float = 5.0
+    count_rate_optimization_enforce_accuracy: bool = True
+    count_rate_optimization_max_bias_pct: float = 2.0
     optimization_realtime_visualization: bool = False
     optimization_realtime_interval_s: float = 5.0
     optimization_intermediate_steps: int = 6
@@ -173,6 +177,10 @@ class PhysicsConfig(BaseModel):
     excitation_optimization_width_min: float = 0.05
     excitation_optimization_width_max: float = 10.0
     excitation_optimization_control_points: int = 8
+    count_rate_optimization_min_kcps: float = 10.0
+    count_rate_optimization_max_kcps: float = 1000.0
+    count_rate_optimization_steps: int = 24
+    count_rate_optimization_scale: str = "log"  # log, linear
 
     sim_mode: str = "spatial gradient" # spatial gradient, uniform model
     simulation_mode_preference: str = "auto"  # auto, ideal_poisson, event_driven

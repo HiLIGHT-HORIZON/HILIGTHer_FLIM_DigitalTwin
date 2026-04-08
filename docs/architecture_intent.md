@@ -19,6 +19,7 @@ The current product intent also includes:
 - explicit separation of collected-photon conditional precision from photon survival,
 - a fast Poisson core that can include a detector transfer function,
 - a slower event-driven detector core used as the explicit chronological reference,
+- selectable dead-time correction families that must stay aligned across the backend, GUI, optimisation, and service surfaces, and operate on experimentally available histogram data plus calibrated instrument metadata rather than hidden emitted-photon budgets,
 - structured MCP-assisted instrument-profile drafting and finalisation,
 - publication-oriented clipboard/report export without changing the live widget layout.
 
@@ -111,11 +112,15 @@ The optimisation workflow is integrated into the main desktop workspace. It shou
 
 - detection-gate optimisation,
 - excitation-profile optimisation,
+- count-rate optimisation by varying dwell time,
 - sequential joint optimisation,
 - live objective/minimum-F displays,
 - retained intermediate states,
 - optional post-run Monte Carlo validation,
 - export of optimisation settings and outcomes.
+
+Throughput-style optimisation objectives should be evaluated in the all-photon basis internally, even when the operator chooses a different Fisher reporting basis for display. This keeps rate-driven comparisons coherent under collection losses, dead time, and pile-up.
+For count-rate optimisation, throughput selection should also honor an explicit estimator-accuracy guard rather than simply preferring the highest scanned rate, and the search should refine around the feasible boundary instead of relying on a single fixed grid.
 
 ## State Intent
 The backend configuration object is the single source of truth for:

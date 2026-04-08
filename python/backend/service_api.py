@@ -517,6 +517,7 @@ class DigitalTwinService:
         self.engine.config = cfg
         self.engine.invalidate_grid()
         try:
+            self.engine.config.a_photons = float(cfg.precision_photons)
             ideal_fi, ideal_f = self.engine.compute_ideal_reference(x_range, int(cfg.precision_photons))
             theory_fi, theory_f = self.engine.compute_fisher_info(
                 x_range,
@@ -534,6 +535,23 @@ class DigitalTwinService:
                     "f_value": theory_f.tolist(),
                 },
             }
+            if str(getattr(cfg, "deadtime_correction_method", "none")).lower() != "none":
+                corrected_fi, corrected_f, correction = self.engine.compute_deadtime_corrected_fisher_info(
+                    x_range,
+                    int(cfg.precision_photons),
+                    correction_method=getattr(cfg, "deadtime_correction_method", "none"),
+                )
+                payload["deadtime_correction"] = {
+                    "method": str(getattr(cfg, "deadtime_correction_method", "none")),
+                    "theory": {
+                        "fisher_info": np.asarray(corrected_fi, dtype=float).tolist(),
+                        "f_value": np.asarray(corrected_f, dtype=float).tolist(),
+                    },
+                    "summary": {
+                        "applied": bool(correction.get("applied", False)),
+                        "note": str(correction.get("note", "")),
+                    },
+                }
             if cfg.precision_validate_mc:
                 payload["monte_carlo"] = self.engine.monte_carlo_precision_curve(
                     x_range,
@@ -554,7 +572,7 @@ class DigitalTwinService:
             cfg = PhysicsConfig(**cfg_dict)
 
         if not cfg.optimize_detection_gates:
-            if not cfg.optimize_excitation_profile:
+            if not cfg.optimize_excitation_profile and not bool(getattr(cfg, "optimize_count_rate", False)):
                 return {"status": "invalid_request", "detail": "Enable at least one optimisation target to run optimisation."}
 
         x_range = (
@@ -599,15 +617,23 @@ class DigitalTwinService:
                 "status": "success",
                 "algorithm": str(
                     cfg.detection_optimization_algorithm
-                    if cfg.optimize_detection_gates
+                    if cfg.optimize_detection_gates and not cfg.optimize_excitation_profile and not bool(getattr(cfg, "optimize_count_rate", False))
                     else f"excitation_{cfg.excitation_optimization_profile}"
+                    if cfg.optimize_excitation_profile and not bool(getattr(cfg, "optimize_count_rate", False)) and not cfg.optimize_detection_gates
+                    else "count_rate_scan"
+                    if bool(getattr(cfg, "optimize_count_rate", False)) and not cfg.optimize_detection_gates and not cfg.optimize_excitation_profile
+                    else "joint"
                 ),
                 "workflow": (
                     "joint"
-                    if cfg.optimize_detection_gates and cfg.optimize_excitation_profile
+                    if sum(1 for enabled in (cfg.optimize_detection_gates, cfg.optimize_excitation_profile, bool(getattr(cfg, "optimize_count_rate", False))) if enabled) > 1
                     else "detection"
                     if cfg.optimize_detection_gates
                     else "excitation"
+                    if cfg.optimize_excitation_profile
+                    else "count_rate"
+                    if bool(getattr(cfg, "optimize_count_rate", False))
+                    else "detection"
                 ),
                 "x_range": x_range.tolist(),
                 "best_edges": np.asarray(best_edges, dtype=float).tolist(),
@@ -628,6 +654,7 @@ class DigitalTwinService:
                 "optimization_config": {
                     "optimize_detection_gates": bool(cfg.optimize_detection_gates),
                     "optimize_excitation_profile": bool(cfg.optimize_excitation_profile),
+                    "optimize_count_rate": bool(getattr(cfg, "optimize_count_rate", False)),
                     "optimization_objective": str(getattr(cfg, "optimization_objective", "fisher_information")),
                     "optimization_max_fi_loss_pct": float(getattr(cfg, "optimization_max_fi_loss_pct", 5.0)),
                     "optimization_mode": str(getattr(cfg, "optimization_mode", "sequential")),
@@ -653,6 +680,12 @@ class DigitalTwinService:
                     "excitation_optimization_width_min": float(getattr(cfg, "excitation_optimization_width_min", 0.05)),
                     "excitation_optimization_width_max": float(getattr(cfg, "excitation_optimization_width_max", 10.0)),
                     "excitation_optimization_control_points": int(getattr(cfg, "excitation_optimization_control_points", 8)),
+                    "count_rate_optimization_min_kcps": float(getattr(cfg, "count_rate_optimization_min_kcps", 10.0)),
+                    "count_rate_optimization_max_kcps": float(getattr(cfg, "count_rate_optimization_max_kcps", 1000.0)),
+                    "count_rate_optimization_steps": int(getattr(cfg, "count_rate_optimization_steps", 24)),
+                    "count_rate_optimization_scale": str(getattr(cfg, "count_rate_optimization_scale", "log")),
+                    "count_rate_optimization_enforce_accuracy": bool(getattr(cfg, "count_rate_optimization_enforce_accuracy", True)),
+                    "count_rate_optimization_max_bias_pct": float(getattr(cfg, "count_rate_optimization_max_bias_pct", 2.0)),
                 },
                 "final_config": final_cfg.model_dump() if hasattr(final_cfg, "model_dump") else final_cfg.dict(),
             }

@@ -553,6 +553,7 @@ class HILIGHTMainWindow(QMainWindow):
         self.control_widget.btn_manage_inst.clicked.connect(self.open_instrument_manager)
         self.control_widget.chk_opt_detection.toggled.connect(self._on_optimization_scope_toggled)
         self.control_widget.chk_opt_excitation.toggled.connect(self._on_optimization_scope_toggled)
+        self.control_widget.chk_opt_count_rate.toggled.connect(self._on_optimization_scope_toggled)
         self.control_widget.radio_f_basis_period.toggled.connect(self._on_f_basis_changed)
         self.control_widget.radio_f_basis_all.toggled.connect(self._on_f_basis_changed)
         self.control_widget.radio_f_basis_collected.toggled.connect(self._on_f_basis_changed)
@@ -716,9 +717,15 @@ class HILIGHTMainWindow(QMainWindow):
             return PhysicsConfig(**copy.deepcopy(cfg_like))
         raise TypeError(f"Unsupported configuration payload: {type(cfg_like).__name__}")
 
-    def _precision_throughput_scale(self, cfg_like, reference_excitation_area):
+    def _precision_throughput_scale(self, cfg_like, reference_excitation_area, reference_precision_rate_hz=None):
         cfg = self._coerce_physics_config(cfg_like)
-        return float(self.engine._throughput_metric(cfg, float(reference_excitation_area)))
+        return float(
+            self.engine._throughput_metric(
+                cfg,
+                float(reference_excitation_area),
+                reference_precision_rate_hz=reference_precision_rate_hz,
+            )
+        )
 
     def _resolvability_enabled(self, cfg_like):
         cfg = self._coerce_physics_config(cfg_like)
@@ -811,6 +818,61 @@ class HILIGHTMainWindow(QMainWindow):
                 payload["efficiency_ci_upper"] = np.clip(1.0 / np.square(np.maximum(np.asarray(payload["f_ci_lower"], dtype=float), 1e-12)), 0.0, 1.0)
         return payload
 
+    def _deadtime_corrected_theory_series(self, cfg_like, x_range):
+        cfg = self._coerce_physics_config(cfg_like)
+        method = str(getattr(cfg, "deadtime_correction_method", "none")).lower()
+        if method == "none":
+            return None
+        original_cfg = self.engine.config
+        try:
+            self.engine.config = copy.deepcopy(cfg)
+            self.engine.invalidate_grid()
+            corrected_fi, corrected_f, correction = self.engine.compute_deadtime_corrected_fisher_info(
+                np.asarray(x_range, dtype=float),
+                int(cfg.precision_photons),
+                correction_method=method,
+            )
+            if not bool(correction.get("applied", False)):
+                return None
+            return {
+                "fisher_info": np.asarray(corrected_fi, dtype=float),
+                "f_value": np.asarray(corrected_f, dtype=float),
+                "correction": correction,
+            }
+        finally:
+            self.engine.config = original_cfg
+            self.engine.invalidate_grid()
+
+    @staticmethod
+    def _deadtime_method_display_name(cfg_like) -> str:
+        method = str(getattr(cfg_like, "deadtime_correction_method", "none")).lower()
+        method_map = {
+            "isbaner_histogram": "Isbaner",
+            "rapp_inspired_inverse": "Rapp-inspired",
+            "rapp_stationary": "Rapp-inspired",
+        }
+        return method_map.get(method, "Dead-time")
+
+    def _deadtime_corrected_series_label(self, cfg_like, base_label: str) -> str:
+        return f"{base_label} ({self._deadtime_method_display_name(self._coerce_physics_config(cfg_like))} corrected)"
+
+    def _deadtime_corrected_mc_payload(self, mc_payload, cfg_like):
+        if mc_payload is None:
+            return None
+        corrected_inner = (mc_payload.get("deadtime_correction") or {}).get("monte_carlo_corrected")
+        if corrected_inner is None:
+            return None
+        return self._display_mc_payload(corrected_inner, cfg_like)
+
+    def _deadtime_corrected_accuracy_payload(self, mc_payload, cfg_like, x_range, corrected_theory_f=None):
+        corrected_display = self._deadtime_corrected_mc_payload(mc_payload, cfg_like)
+        if corrected_display is None:
+            return None
+        return {
+            "mean": np.asarray(corrected_display["mean_tau"], dtype=float),
+            "std": np.asarray(corrected_display["std_tau"], dtype=float),
+        }
+
     def _redisplay_last_precision_run(self):
         report = self.last_precision_run
         if not report:
@@ -822,12 +884,13 @@ class HILIGHTMainWindow(QMainWindow):
         self.fisher_widget.set_xaxis_label(target_label)
         self.mle_accuracy_widget.set_xaxis_label(f"Ground Truth {target_label}")
         reference_excitation_area = self.engine._excitation_area_and_peak(self._coerce_physics_config(report["config"]))[0]
+        reference_precision_rate_hz = self.engine._configured_precision_rate_hz(self._coerce_physics_config(report["config"]))
         plot_results = {}
         accuracy_results = {}
         frames = []
         for item in report.get("series", []):
             label = item["label"]
-            throughput_scale = self._precision_throughput_scale(item.get("config", report["config"]), reference_excitation_area)
+            throughput_scale = self._precision_throughput_scale(item.get("config", report["config"]), reference_excitation_area, reference_precision_rate_hz)
             theory_f = self._display_theory_curve(item, x_range)
             plot_results[f"Theory | {label}"] = {
                 "y": theory_f,
@@ -856,6 +919,47 @@ class HILIGHTMainWindow(QMainWindow):
                     "mean": np.asarray(mc_payload["mean_tau"], dtype=float),
                     "std": np.asarray(mc_payload["std_tau"], dtype=float),
                 }
+            corrected_theory = self._deadtime_corrected_theory_series(item.get("config", report["config"]), x_range)
+            if corrected_theory is not None:
+                corrected_theory_label = self._deadtime_corrected_series_label(
+                    item.get("config", report["config"]),
+                    f"Theory | {label}",
+                )
+                plot_results[corrected_theory_label] = {
+                    "y": np.asarray(corrected_theory["f_value"], dtype=float),
+                    "conditional_f": np.asarray(corrected_theory["f_value"], dtype=float),
+                    "photon_count": float(getattr(self._coerce_physics_config(item.get("config", report["config"])), "precision_photons", 0.0)),
+                    "resolvability_enabled": self._resolvability_enabled(item.get("config", report["config"])),
+                    "throughput_scale": throughput_scale,
+                }
+            corrected_mc = self._deadtime_corrected_mc_payload(item.get("mc"), item.get("config", report["config"]))
+            if corrected_mc is not None:
+                corrected_mc_label = self._deadtime_corrected_series_label(
+                    item.get("config", report["config"]),
+                    f"Monte Carlo | {label}",
+                )
+                plot_results[corrected_mc_label] = {
+                    "y": np.asarray(corrected_mc["f_value"], dtype=float),
+                    "conditional_f": np.asarray(corrected_mc.get("f_value_conditional", corrected_mc["f_value"]), dtype=float),
+                    "conditional_f_ci_lower": np.asarray(corrected_mc.get("f_ci_lower_conditional", np.full(len(x_range), np.nan)), dtype=float),
+                    "conditional_f_ci_upper": np.asarray(corrected_mc.get("f_ci_upper_conditional", np.full(len(x_range), np.nan)), dtype=float),
+                    "photon_count": float(getattr(self._coerce_physics_config(item.get("config", report["config"])), "precision_photons", 0.0)),
+                    "resolvability_enabled": self._resolvability_enabled(item.get("config", report["config"])),
+                    "compatible": np.asarray(corrected_mc["compatible"], dtype=bool),
+                    "f_ci_lower": np.asarray(corrected_mc["f_ci_lower"], dtype=float),
+                    "f_ci_upper": np.asarray(corrected_mc["f_ci_upper"], dtype=float),
+                    "efficiency_ci_lower": np.asarray(corrected_mc["efficiency_ci_lower"], dtype=float),
+                    "efficiency_ci_upper": np.asarray(corrected_mc["efficiency_ci_upper"], dtype=float),
+                    "throughput_scale": throughput_scale,
+                }
+                corrected_accuracy = self._deadtime_corrected_accuracy_payload(
+                    item.get("mc"),
+                    item.get("config", report["config"]),
+                    x_range,
+                    corrected_theory_f=None if corrected_theory is None else corrected_theory["f_value"],
+                )
+                if corrected_accuracy is not None:
+                    accuracy_results[self._deadtime_corrected_series_label(item.get("config", report["config"]), label)] = corrected_accuracy
             frames.append(copy.deepcopy(item["diagnostics_frame"]))
         self.fisher_widget.plot_batch(
             x_range,
@@ -1177,7 +1281,11 @@ class HILIGHTMainWindow(QMainWindow):
     def _on_optimization_scope_toggled(self, _checked):
         if self.optimization_toggle_suppressed:
             return
-        active = self.control_widget.chk_opt_detection.isChecked() or self.control_widget.chk_opt_excitation.isChecked()
+        active = (
+            self.control_widget.chk_opt_detection.isChecked()
+            or self.control_widget.chk_opt_excitation.isChecked()
+            or self.control_widget.chk_opt_count_rate.isChecked()
+        )
         if active and not self.optimization_mode_active:
             self._disable_diagnostics_autoplay_for_optimization()
             self._set_optimization_mode_ui(True, running=False)
@@ -1219,8 +1327,9 @@ class HILIGHTMainWindow(QMainWindow):
 
         run_detection = bool(getattr(cfg, "optimize_detection_gates", False))
         run_excitation = bool(getattr(cfg, "optimize_excitation_profile", False))
+        run_count_rate = bool(getattr(cfg, "optimize_count_rate", False))
 
-        if not run_detection and not run_excitation:
+        if not run_detection and not run_excitation and not run_count_rate:
             QMessageBox.information(
                 self,
                 "Optimisation",
@@ -1262,15 +1371,15 @@ class HILIGHTMainWindow(QMainWindow):
         self.optimization_x_range = np.array(payload["x_range"], copy=True)
         self.optimization_ideal_f = np.array(payload["ideal_f"], copy=True)
         self.optimization_ideal_f_conditional = np.array(payload.get("ideal_f_conditional", payload["ideal_f"]), copy=True)
-        baseline_eff = np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(baseline["theory_f"], dtype=float)), 1e-12))
         self.control_widget.update_optimization_progress(
             [0],
             [baseline["objective"]],
             {
                 "min_f": [baseline["min_f"]],
-                "min_eff": [float(np.nanmax(baseline_eff)) if np.any(np.isfinite(baseline_eff)) else np.nan],
-                "auc_eff": [float(np.trapezoid(baseline_eff) if hasattr(np, "trapezoid") else np.trapz(baseline_eff))],
-                "throughput": [float(np.nanmax(baseline_eff)) if np.any(np.isfinite(baseline_eff)) else np.nan],
+                "min_eff": [float(payload.get("peak_efficiency", np.nan))],
+                "auc_eff": [float(payload.get("auc_efficiency", np.nan))],
+                "throughput": [float(payload.get("throughput_metric", np.nan))],
+                "throughput_auc": [float(payload.get("throughput_auc", np.nan))],
                 "gate_count": [int(baseline.get("gate_count", 0))],
             },
         )
@@ -1475,13 +1584,23 @@ class HILIGHTMainWindow(QMainWindow):
         cfg.precision_accuracy_pvalue = cw.spin_accuracy_pvalue.value()
         cfg.precision_bootstrap_samples = cw.spin_bootstrap_samples.value()
         cfg.precision_ci_level = cw.spin_ci_level.value()
+        deadtime_correction_map = {
+            "none": "none",
+            "isbaner-style histogram": "isbaner_histogram",
+            "rapp-inspired inverse": "rapp_inspired_inverse",
+        }
+        cfg.deadtime_correction_method = deadtime_correction_map.get(
+            cw.combo_deadtime_correction.currentText().lower(),
+            "none",
+        )
         cfg.sweep_autoplay = self.diagnostics_widget.chk_autoplay.isChecked()
 
         # Optimization
         cfg.optimize_detection_gates = cw.chk_opt_detection.isChecked()
         cfg.optimize_excitation_profile = cw.chk_opt_excitation.isChecked()
+        cfg.optimize_count_rate = cw.chk_opt_count_rate.isChecked()
         cfg.optimization_mode = "sequential"
-        optimization_first_map = {"detection first": "detection", "excitation first": "excitation"}
+        optimization_first_map = {"detection first": "detection", "excitation first": "excitation", "count rate first": "count_rate"}
         cfg.optimization_first = optimization_first_map.get(cw.combo_optimization_first.currentText().lower(), "detection")
         cfg.optimization_iterations = cw.spin_optimization_iterations.value()
         if cw.radio_f_basis_collected.isChecked():
@@ -1505,6 +1624,12 @@ class HILIGHTMainWindow(QMainWindow):
         cfg.optimization_realtime_interval_s = cw.spin_optimization_realtime_interval.value()
         cfg.optimization_intermediate_steps = cw.spin_optimization_steps_to_show.value()
         cfg.optimization_validate_mc_intermediates = cw.chk_optimization_validate_mc.isChecked()
+        cfg.count_rate_optimization_min_kcps = float(cw.spin_count_rate_min_kcps.value())
+        cfg.count_rate_optimization_max_kcps = float(cw.spin_count_rate_max_kcps.value())
+        cfg.count_rate_optimization_steps = int(cw.spin_count_rate_steps.value())
+        cfg.count_rate_optimization_scale = "linear" if cw.combo_count_rate_scale.currentText().lower() == "linear" else "log"
+        cfg.count_rate_optimization_enforce_accuracy = bool(cw.chk_count_rate_accuracy_guard.isChecked())
+        cfg.count_rate_optimization_max_bias_pct = float(cw.spin_count_rate_max_bias_pct.value())
 
         detection_algorithm_map = {
             "direct mean f minimisation": "direct_slsqp",
@@ -2246,6 +2371,7 @@ class HILIGHTMainWindow(QMainWindow):
                     photon_basis_mode="collected",
                 )
             baseline_reference_area, _ = self.engine._excitation_area_and_peak(baseline_cfg)
+            baseline_reference_rate_hz = self.engine._configured_precision_rate_hz(baseline_cfg)
 
             plot_results = {}
             accuracy_results = {}
@@ -2283,7 +2409,7 @@ class HILIGHTMainWindow(QMainWindow):
 
                 theory_f = np.full(len(x_range), np.nan)
                 theory_fi = np.full(len(x_range), np.nan)
-                throughput_scale = self._precision_throughput_scale(sweep_cfg, baseline_reference_area)
+                throughput_scale = self._precision_throughput_scale(sweep_cfg, baseline_reference_area, baseline_reference_rate_hz)
                 theory_label = "Theory" if raw_value is None else f"Theory | {label}"
 
                 def theory_callback(point_idx, fisher_val, f_val):
@@ -2336,6 +2462,17 @@ class HILIGHTMainWindow(QMainWindow):
                     "resolvability_enabled": self._resolvability_enabled(sweep_cfg),
                     "throughput_scale": throughput_scale,
                 }
+                corrected_theory = self._deadtime_corrected_theory_series(sweep_cfg, x_range)
+                if corrected_theory is not None:
+                    theory_base_label = "Theory" if raw_value is None else f"Theory | {label}"
+                    corrected_theory_label = self._deadtime_corrected_series_label(sweep_cfg, theory_base_label)
+                    plot_results[corrected_theory_label] = {
+                        "y": np.asarray(corrected_theory["f_value"], dtype=float),
+                        "conditional_f": np.asarray(corrected_theory["f_value"], dtype=float),
+                        "photon_count": float(getattr(self._coerce_physics_config(sweep_cfg), "precision_photons", 0.0)),
+                        "resolvability_enabled": self._resolvability_enabled(sweep_cfg),
+                        "throughput_scale": throughput_scale,
+                    }
                 self.fisher_widget.plot_batch(
                     x_range,
                     plot_results,
@@ -2430,6 +2567,32 @@ class HILIGHTMainWindow(QMainWindow):
                         "mean": np.array(mc_payload["mean_tau"], copy=True),
                         "std": np.array(mc_payload["std_tau"], copy=True),
                     }
+                    corrected_mc_payload = self._deadtime_corrected_mc_payload(mc_payload, sweep_cfg)
+                    if corrected_mc_payload is not None:
+                        mc_base_label = "Monte Carlo" if raw_value is None else f"Monte Carlo | {label}"
+                        corrected_mc_label = self._deadtime_corrected_series_label(sweep_cfg, mc_base_label)
+                        plot_results[corrected_mc_label] = {
+                            "y": np.asarray(corrected_mc_payload["f_value"], dtype=float),
+                            "conditional_f": np.asarray(corrected_mc_payload.get("f_value_conditional", corrected_mc_payload["f_value"]), dtype=float),
+                            "conditional_f_ci_lower": np.asarray(corrected_mc_payload.get("f_ci_lower_conditional", np.full(len(x_range), np.nan)), dtype=float),
+                            "conditional_f_ci_upper": np.asarray(corrected_mc_payload.get("f_ci_upper_conditional", np.full(len(x_range), np.nan)), dtype=float),
+                            "photon_count": float(getattr(self._coerce_physics_config(sweep_cfg), "precision_photons", 0.0)),
+                            "resolvability_enabled": self._resolvability_enabled(sweep_cfg),
+                            "compatible": np.asarray(corrected_mc_payload["compatible"], dtype=bool),
+                            "f_ci_lower": np.asarray(corrected_mc_payload["f_ci_lower"], dtype=float),
+                            "f_ci_upper": np.asarray(corrected_mc_payload["f_ci_upper"], dtype=float),
+                            "efficiency_ci_lower": np.asarray(corrected_mc_payload["efficiency_ci_lower"], dtype=float),
+                            "efficiency_ci_upper": np.asarray(corrected_mc_payload["efficiency_ci_upper"], dtype=float),
+                            "throughput_scale": throughput_scale,
+                        }
+                        corrected_accuracy = self._deadtime_corrected_accuracy_payload(
+                            mc_payload,
+                            sweep_cfg,
+                            x_range,
+                            corrected_theory_f=None if corrected_theory is None else corrected_theory["f_value"],
+                        )
+                        if corrected_accuracy is not None:
+                            accuracy_results[self._deadtime_corrected_series_label(sweep_cfg, label)] = corrected_accuracy
                     self.fisher_widget.plot_batch(
                         x_range,
                         plot_results,

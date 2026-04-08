@@ -306,4 +306,4 @@ We have used CODEX extensively for porting, improving the GUI, and adding many f
   
 - Human-in-the-loop. All modules are periodically audited to ensure the Digital Twin remains grounded in the correct physics and maths.
   
-Current status of auditing. We are proceeding with a new auditing cycle. At its completion, we will release the first beta version. However, the alpha version is currently already stable and publicly shared. It behaves correctly but we want to implement a final manual audit.
+Current status of auditing. We are proceeding with a new auditing cycle on the active beta line. The beta version is already publicly shared, and the remaining manual audit work is intended to strengthen scientific confidence before a later stable release.

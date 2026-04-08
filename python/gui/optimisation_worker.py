@@ -108,17 +108,24 @@ class DetectionOptimisationWorker(QThread):
     @staticmethod
     def _build_progress_record(payload: Dict[str, Any], step: int) -> Dict[str, Any]:
         theory_f = np.asarray(payload["f_val"], dtype=float).copy()
-        eff = np.minimum(1.0, 1.0 / np.maximum(np.square(theory_f), 1e-12))
+        peak_eff = float(payload.get("peak_efficiency", np.nan))
+        auc_eff = float(payload.get("auc_efficiency", np.nan))
+        if not np.isfinite(peak_eff) or not np.isfinite(auc_eff):
+            eff = np.minimum(1.0, 1.0 / np.maximum(np.square(theory_f), 1e-12))
+            if not np.isfinite(peak_eff):
+                peak_eff = float(np.nanmax(eff)) if np.any(np.isfinite(eff)) else np.nan
+            if not np.isfinite(auc_eff):
+                auc_eff = float(np.trapezoid(eff) if hasattr(np, "trapezoid") else np.trapz(eff))
         gate_count = int(max(0, len(np.asarray(payload["edges"], dtype=float)) - 1))
-        throughput = float(payload.get("throughput_metric", (float(np.nanmax(eff)) if np.any(np.isfinite(eff)) else np.nan) / max(gate_count, 1)))
+        throughput = float(payload.get("throughput_metric", peak_eff / max(gate_count, 1)))
         throughput_auc = float(payload.get("throughput_auc", np.nan))
         return {
             "label": f"Iteration {int(step)}",
             "step": int(step),
             "objective": float(payload["objective"]),
             "min_f": float(payload["min_f"]),
-            "min_eff": float(np.nanmax(eff)) if np.any(np.isfinite(eff)) else np.nan,
-            "auc_eff": float(np.trapezoid(eff) if hasattr(np, "trapezoid") else np.trapz(eff)),
+            "min_eff": peak_eff,
+            "auc_eff": auc_eff,
             "throughput": throughput,
             "throughput_auc": throughput_auc,
             "gate_count": gate_count,
@@ -261,6 +268,7 @@ class DetectionOptimisationWorker(QThread):
             _, ideal_f = preview_engine.compute_ideal_reference(x_range, int(cfg.precision_photons))
             objective_mode = str(getattr(cfg, "optimization_objective", "fisher_information")).lower()
             reference_area, _ = preview_engine._excitation_area_and_peak(cfg)
+            reference_rate_hz = preview_engine._configured_precision_rate_hz(cfg)
 
             baseline_cfg = self._resolve_start_partition_cfg(cfg)
             baseline_engine = TwinEngine(copy.deepcopy(baseline_cfg))
@@ -272,12 +280,20 @@ class DetectionOptimisationWorker(QThread):
             baseline_objective = (
                 float(np.nanmean(baseline_f)) if np.any(np.isfinite(baseline_f)) else np.inf
             )
-            if objective_mode != "fisher_information":
-                baseline_peak_eff = baseline_engine._peak_efficiency_from_f_values(baseline_f)
-                baseline_objective = 1.0 / max(
-                    baseline_peak_eff * baseline_engine._throughput_metric(baseline_cfg, reference_area),
-                    1e-12,
-                )
+            baseline_summary = baseline_engine._optimization_efficiency_summary(
+                baseline_cfg,
+                x_range,
+                objective_mode=objective_mode,
+                n_photons=int(baseline_cfg.precision_photons),
+                reference_excitation_area=reference_area,
+                reference_precision_rate_hz=reference_rate_hz,
+            )
+            if objective_mode == "photon_efficiency_auc":
+                baseline_objective = 1.0 / max(float(baseline_summary["auc_efficiency"]), 1e-12)
+            elif objective_mode == "throughput_auc":
+                baseline_objective = 1.0 / max(float(baseline_summary["throughput_auc"]), 1e-12)
+            elif objective_mode != "fisher_information":
+                baseline_objective = 1.0 / max(float(baseline_summary["throughput_metric"]), 1e-12)
             baseline_snapshot = self._build_snapshot(
                 preview_engine,
                 baseline_cfg,
@@ -295,15 +311,19 @@ class DetectionOptimisationWorker(QThread):
                 "x_range": np.array(x_range, copy=True),
                 "ideal_f": np.array(ideal_f, copy=True),
                 "baseline": self._clone_snapshot(baseline_snapshot),
+                "peak_efficiency": float(baseline_summary["peak_efficiency"]),
+                "auc_efficiency": float(baseline_summary["auc_efficiency"]),
+                "throughput_metric": float(baseline_summary["throughput_metric"]),
+                "throughput_auc": float(baseline_summary["throughput_auc"]),
             })
 
             progress_records: List[Dict[str, Any]] = []
             objective_history = [baseline_snapshot["objective"]]
             min_f_history = [baseline_snapshot["min_f"]]
-            min_eff_history = [float(np.nanmax(np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(baseline_snapshot["theory_f"], dtype=float)), 1e-12))))]
-            auc_eff_history = [float(np.trapezoid(np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(baseline_snapshot["theory_f"], dtype=float)), 1e-12))) if hasattr(np, "trapezoid") else np.trapz(np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(baseline_snapshot["theory_f"], dtype=float)), 1e-12))))]
-            throughput_history = [float(np.nanmax(np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(baseline_snapshot["theory_f"], dtype=float)), 1e-12))))]
-            throughput_auc_history = [float(np.trapezoid(np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(baseline_snapshot["theory_f"], dtype=float)), 1e-12))) if hasattr(np, "trapezoid") else np.trapz(np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(baseline_snapshot["theory_f"], dtype=float)), 1e-12))))]
+            min_eff_history = [float(baseline_summary["peak_efficiency"])]
+            auc_eff_history = [float(baseline_summary["auc_efficiency"])]
+            throughput_history = [float(baseline_summary["throughput_metric"])]
+            throughput_auc_history = [float(baseline_summary["throughput_auc"])]
             gate_count_history = [int(baseline_snapshot.get("gate_count", 0))]
             realtime_enabled = bool(getattr(cfg, "optimization_realtime_visualization", False))
             realtime_interval_s = max(float(getattr(cfg, "optimization_realtime_interval_s", 5.0)), 0.2)
@@ -374,6 +394,14 @@ class DetectionOptimisationWorker(QThread):
                 step=len(progress_records) + 1,
                 note="final",
             )
+            final_summary = final_engine._optimization_efficiency_summary(
+                final_cfg,
+                x_range,
+                objective_mode=objective_mode,
+                n_photons=int(final_cfg.precision_photons),
+                reference_excitation_area=reference_area,
+                reference_precision_rate_hz=reference_rate_hz,
+            )
 
             selected_progress_records = self._sample_snapshots(
                 progress_records,
@@ -418,11 +446,10 @@ class DetectionOptimisationWorker(QThread):
             if not progress_records or not np.allclose(np.asarray(progress_records[-1]["edges"], dtype=float), np.asarray(best_edges, dtype=float), rtol=1e-9, atol=1e-9):
                 objective_series.append(final_snapshot["objective"])
                 min_f_series.append(final_snapshot["min_f"])
-                final_eff = np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(final_snapshot["theory_f"], dtype=float)), 1e-12))
-                min_eff_series.append(float(np.nanmax(final_eff)) if np.any(np.isfinite(final_eff)) else np.nan)
-                auc_eff_series.append(float(np.trapezoid(final_eff) if hasattr(np, "trapezoid") else np.trapz(final_eff)))
-                throughput_series.append(float(np.nanmax(final_eff)))
-                throughput_auc_series.append(float(np.trapezoid(final_eff) if hasattr(np, "trapezoid") else np.trapz(final_eff)))
+                min_eff_series.append(float(final_summary["peak_efficiency"]))
+                auc_eff_series.append(float(final_summary["auc_efficiency"]))
+                throughput_series.append(float(final_summary["throughput_metric"]))
+                throughput_auc_series.append(float(final_summary["throughput_auc"]))
                 gate_count_series.append(int(final_snapshot.get("gate_count", max(0, len(np.asarray(best_edges, dtype=float)) - 1))))
 
             self.result_ready.emit({

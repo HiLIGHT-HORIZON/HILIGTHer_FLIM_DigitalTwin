@@ -19,14 +19,14 @@ from pathlib import Path
 
 
 VERSION_MAJOR = 1
-VERSION_MINOR = 0
+VERSION_MINOR = 1
 RELEASE_STAGE = "beta"
 
-# Build 40 is the first planned committed build for the 1.0.0 beta line.
-PATCH_BASE_BUILD = 40
+# Build 43 is the first planned committed build for the 1.1.0 beta line.
+PATCH_BASE_BUILD = 43
 
 # Fallbacks used when git metadata is unavailable.
-FALLBACK_BUILD_NUMBER = 39
+FALLBACK_BUILD_NUMBER = 43
 FALLBACK_COMMIT = "unknown"
 
 

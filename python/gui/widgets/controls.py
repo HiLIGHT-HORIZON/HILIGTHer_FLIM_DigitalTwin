@@ -157,10 +157,6 @@ class ControlWidget(QWidget):
         self.btn_simulation_mode_badge.setText("Poisson (+DTF)")
         self.btn_simulation_mode_badge.setToolTip("Click to cycle simulation-core preference. DTF = detector transfer function.")
         self.btn_simulation_mode_badge.clicked.connect(self._cycle_simulation_mode_preference)
-        self.validation_mode_preference = "ideal_poisson"
-        self.btn_validation_mode_badge = QToolButton()
-        self.btn_validation_mode_badge.setToolTip("Click to cycle validation-core preference. DTF = detector transfer function.")
-        self.btn_validation_mode_badge.clicked.connect(self._cycle_validation_mode_preference)
         core_row = QWidget()
         core_row_layout = QHBoxLayout(core_row)
         core_row_layout.setContentsMargins(0, 0, 0, 0)
@@ -169,9 +165,6 @@ class ControlWidget(QWidget):
         core_row_layout.addSpacing(10)
         core_row_layout.addWidget(QLabel("Sim. core:"))
         core_row_layout.addWidget(self.btn_simulation_mode_badge, 0)
-        core_row_layout.addSpacing(8)
-        core_row_layout.addWidget(QLabel("Val. core:"))
-        core_row_layout.addWidget(self.btn_validation_mode_badge, 0)
         core_row_layout.addStretch()
         model_form.addRow(core_row)
 
@@ -364,6 +357,13 @@ class ControlWidget(QWidget):
         self.spin_bootstrap_samples.setSingleStep(100)
         self.spin_bootstrap_samples.setValue(2000)
         exec_form.addRow(two_column_row("Estimator accuracy p-value:", self.spin_accuracy_pvalue, "Bootstrap resamples:", self.spin_bootstrap_samples))
+        self.combo_deadtime_correction = QComboBox()
+        self.combo_deadtime_correction.addItems([
+            "None",
+            "Isbaner-style histogram",
+            "Rapp-inspired inverse",
+        ])
+        exec_form.addRow("Dead-time correction:", self.combo_deadtime_correction)
 
         basis_row = QWidget()
         basis_row_layout = QHBoxLayout(basis_row)
@@ -898,11 +898,13 @@ class ControlWidget(QWidget):
         optimization_scope_form = QFormLayout(optimization_scope_group)
         self.chk_opt_detection = QCheckBox("Optimise detection gates")
         self.chk_opt_excitation = QCheckBox("Optimise excitation profile")
+        self.chk_opt_count_rate = QCheckBox("Optimise count rate")
         scope_row = QWidget()
         scope_row_layout = QHBoxLayout(scope_row)
         scope_row_layout.setContentsMargins(0, 0, 0, 0)
         scope_row_layout.addWidget(self.chk_opt_detection)
         scope_row_layout.addWidget(self.chk_opt_excitation)
+        scope_row_layout.addWidget(self.chk_opt_count_rate)
         scope_row_layout.addStretch()
         optimization_scope_form.addRow(scope_row)
 
@@ -911,7 +913,7 @@ class ControlWidget(QWidget):
         self.combo_optimization_mode.hide()
 
         self.combo_optimization_first = QComboBox()
-        self.combo_optimization_first.addItems(["Detection First", "Excitation First"])
+        self.combo_optimization_first.addItems(["Detection First", "Excitation First", "Count Rate First"])
         self.spin_optimization_iterations = QSpinBox()
         self.spin_optimization_iterations.setRange(1, 50)
         self.spin_optimization_iterations.setValue(20)
@@ -1049,6 +1051,36 @@ class ControlWidget(QWidget):
         excitation_opt_form.addRow(excitation_row)
         self.excitation_opt_group = excitation_opt_group
         optimization_layout.addWidget(self.excitation_opt_group)
+
+        count_rate_opt_group = QGroupBox("Count-Rate Optimisation")
+        count_rate_opt_form = QFormLayout(count_rate_opt_group)
+        self.spin_count_rate_min_kcps = QDoubleSpinBox()
+        self.spin_count_rate_min_kcps.setRange(0.001, 1_000_000.0)
+        self.spin_count_rate_min_kcps.setDecimals(3)
+        self.spin_count_rate_min_kcps.setValue(10.0)
+        self.spin_count_rate_max_kcps = QDoubleSpinBox()
+        self.spin_count_rate_max_kcps.setRange(0.001, 1_000_000.0)
+        self.spin_count_rate_max_kcps.setDecimals(3)
+        self.spin_count_rate_max_kcps.setValue(1000.0)
+        count_rate_opt_form.addRow(two_column_row("Min rate (kcps):", self.spin_count_rate_min_kcps, "Max rate (kcps):", self.spin_count_rate_max_kcps))
+        self.spin_count_rate_steps = QSpinBox()
+        self.spin_count_rate_steps.setRange(2, 200)
+        self.spin_count_rate_steps.setValue(24)
+        self.combo_count_rate_scale = QComboBox()
+        self.combo_count_rate_scale.addItems(["Log", "Linear"])
+        count_rate_opt_form.addRow(two_column_row("Steps:", self.spin_count_rate_steps, "Scale:", self.combo_count_rate_scale))
+        self.chk_count_rate_accuracy_guard = QCheckBox("Protect accuracy")
+        self.chk_count_rate_accuracy_guard.setChecked(True)
+        self.spin_count_rate_max_bias_pct = QDoubleSpinBox()
+        self.spin_count_rate_max_bias_pct.setRange(0.0, 1000.0)
+        self.spin_count_rate_max_bias_pct.setDecimals(3)
+        self.spin_count_rate_max_bias_pct.setSingleStep(0.1)
+        self.spin_count_rate_max_bias_pct.setValue(2.0)
+        count_rate_opt_form.addRow(
+            two_column_row("Guard:", self.chk_count_rate_accuracy_guard, "Max bias (%):", self.spin_count_rate_max_bias_pct)
+        )
+        self.count_rate_opt_group = count_rate_opt_group
+        optimization_layout.addWidget(self.count_rate_opt_group)
         self.opt_groups = [optimization_scope_group, optimization_view_group, self.detection_opt_group, self.excitation_opt_group]
 
         self.lbl_optimization_current = QLabel("Current simulated value: baseline configuration")
@@ -1293,6 +1325,8 @@ class ControlWidget(QWidget):
         self.combo_excitation_optimization_profile.currentIndexChanged.connect(self._sync_optimization_ui)
         self.chk_opt_detection.toggled.connect(self._sync_optimization_ui)
         self.chk_opt_excitation.toggled.connect(self._sync_optimization_ui)
+        self.chk_opt_count_rate.toggled.connect(self._sync_optimization_ui)
+        self.chk_count_rate_accuracy_guard.toggled.connect(self._sync_optimization_ui)
         self.chk_optimization_realtime.toggled.connect(self._sync_optimization_ui)
         self.radio_f_basis_period.toggled.connect(self._sync_f_photon_basis_controls)
         self.radio_f_basis_all.toggled.connect(self._sync_f_photon_basis_controls)
@@ -2010,6 +2044,7 @@ class ControlWidget(QWidget):
             self.spin_accuracy_pvalue: "Bootstrap-based p-value threshold used to judge estimator accuracy.",
             self.spin_bootstrap_samples: "Number of bootstrap resamples used for p-values and confidence intervals.",
             self.spin_ci_level: "Confidence level used for the Monte Carlo interval display.",
+            self.combo_deadtime_correction: "Apply a dead-time correction companion estimator and theory curve using the selected correction family.",
             self.lbl_ci_sigma_equiv: "Approximate Gaussian sigma-equivalent for the currently selected central confidence interval.",
             self.spin_photons: "Average photon budget for synthetic image generation.",
             self.spin_image_repeats: "Requested number of Monte Carlo-style repeats represented for each swept x-axis value.",
@@ -2067,6 +2102,13 @@ class ControlWidget(QWidget):
             self.chk_opt_excitation: "Enable optimisation of the excitation waveform or width.",
             self.combo_optimization_mode: "Joint optimisation now alternates sequentially; this hidden compatibility control remains fixed to Sequential.",
             self.combo_optimization_first: "When both optimisations are enabled, choose which one runs first in the alternating sequential loop.",
+            self.chk_opt_count_rate: "Sweep count rate by changing pixel dwell time and optimise the selected Fisher objective.",
+            self.spin_count_rate_min_kcps: "Minimum count rate considered during count-rate optimisation, in kilocounts per second.",
+            self.spin_count_rate_max_kcps: "Maximum count rate considered during count-rate optimisation, in kilocounts per second.",
+            self.spin_count_rate_steps: "Number of count-rate candidates evaluated between the minimum and maximum bounds.",
+            self.combo_count_rate_scale: "Spacing of the count-rate candidates during optimisation.",
+            self.chk_count_rate_accuracy_guard: "Reject count-rate candidates whose predicted estimator bias exceeds the selected threshold.",
+            self.spin_count_rate_max_bias_pct: "Maximum allowed predicted absolute relative bias across the sweep during count-rate optimisation.",
             self.spin_optimization_iterations: "Maximum number of alternating detection/excitation rounds when both optimisation targets are enabled.",
             self.combo_optimization_objective: "Excitation optimisation objective. Fisher Throughput is the default and combines peak photon efficiency with throughput scaling.",
             self.spin_optimization_fi_loss: "Maximum absolute peak photon-efficiency loss allowed in throughput mode, expressed as F^-2 percentage points relative to the Dirac-reference design.",
@@ -2786,26 +2828,6 @@ class ControlWidget(QWidget):
         )
         self.advanced_config_changed.emit()
 
-    def _cycle_validation_mode_preference(self):
-        order = ["ideal_poisson", "event_driven", "auto"]
-        current = str(getattr(self, "validation_mode_preference", "ideal_poisson")).lower()
-        if current not in order:
-            current = "ideal_poisson"
-        next_idx = (order.index(current) + 1) % len(order)
-        self.validation_mode_preference = order[next_idx]
-        effective_mode = "ideal_poisson" if self.validation_mode_preference == "auto" else self.validation_mode_preference
-        self._set_core_badge(
-            self.btn_validation_mode_badge,
-            {
-                "preference": self.validation_mode_preference,
-                "effective_mode": effective_mode,
-                "requires_event_driven": False,
-                "forced_event_driven": self.validation_mode_preference == "event_driven",
-                "reason": "Validation fitting uses the selected validation core badge for display and future compatibility.",
-                "approximated_event_effects": False,
-            },
-        )
-
     def _set_core_badge(self, button, status):
         preference = str((status or {}).get("preference", "auto")).lower()
         effective = str((status or {}).get("effective_mode", "ideal_poisson")).lower()
@@ -2889,25 +2911,22 @@ class ControlWidget(QWidget):
 
     def _update_simulation_mode_badge(self, status):
         self._set_core_badge(self.btn_simulation_mode_badge, status)
-        validation_pref = str(getattr(self, "validation_mode_preference", "ideal_poisson")).lower()
-        validation_effective = "ideal_poisson" if validation_pref == "auto" else validation_pref
-        self._set_core_badge(
-            self.btn_validation_mode_badge,
-            {
-                "preference": validation_pref,
-                "effective_mode": validation_effective,
-                "requires_event_driven": False,
-                "forced_event_driven": validation_pref == "event_driven",
-                "reason": "Validation fitting normally uses Ideal Poisson to avoid fitting detector artefacts.",
-                "approximated_event_effects": False,
-            },
-        )
 
     def _sync_optimization_ui(self, *_args):
+        if self.chk_opt_count_rate.isChecked():
+            if self.chk_opt_detection.isChecked():
+                self.chk_opt_detection.blockSignals(True)
+                self.chk_opt_detection.setChecked(False)
+                self.chk_opt_detection.blockSignals(False)
+            if self.chk_opt_excitation.isChecked():
+                self.chk_opt_excitation.blockSignals(True)
+                self.chk_opt_excitation.setChecked(False)
+                self.chk_opt_excitation.blockSignals(False)
         detection_enabled = self.chk_opt_detection.isChecked()
         excitation_enabled = self.chk_opt_excitation.isChecked()
-        optimisation_active = detection_enabled or excitation_enabled
-        multi_target = detection_enabled and excitation_enabled
+        count_rate_enabled = self.chk_opt_count_rate.isChecked()
+        optimisation_active = detection_enabled or excitation_enabled or count_rate_enabled
+        multi_target = sum(1 for enabled in (detection_enabled, excitation_enabled, count_rate_enabled) if enabled) > 1
         objective_text = self.combo_optimization_objective.currentText().lower()
         throughput_mode = objective_text in {"fisher throughput", "throughput auc"}
         free_form = self.combo_excitation_optimization_profile.currentText().lower() == "free form"
@@ -2915,8 +2934,10 @@ class ControlWidget(QWidget):
         self.combo_optimization_mode.setEnabled(False)
         self.combo_optimization_first.setEnabled(multi_target)
         self.spin_optimization_iterations.setEnabled(multi_target)
-        self.combo_optimization_objective.setEnabled(excitation_enabled)
-        self.spin_optimization_fi_loss.setEnabled(excitation_enabled and throughput_mode)
+        self.combo_optimization_objective.setEnabled(excitation_enabled or count_rate_enabled)
+        self.spin_optimization_fi_loss.setEnabled((excitation_enabled or count_rate_enabled) and throughput_mode)
+        self.chk_opt_detection.setEnabled(not count_rate_enabled)
+        self.chk_opt_excitation.setEnabled(not count_rate_enabled)
 
         self.combo_detection_algorithm.setEnabled(detection_enabled)
         self.btn_detection_algorithm_settings.setEnabled(
@@ -2943,6 +2964,13 @@ class ControlWidget(QWidget):
         self.spin_excitation_width_max.setEnabled(excitation_enabled and not free_form)
         self.spin_excitation_control_points.setEnabled(excitation_enabled and free_form)
         self.excitation_opt_group.setVisible(excitation_enabled)
+        self.spin_count_rate_min_kcps.setEnabled(count_rate_enabled)
+        self.spin_count_rate_max_kcps.setEnabled(count_rate_enabled)
+        self.spin_count_rate_steps.setEnabled(count_rate_enabled)
+        self.combo_count_rate_scale.setEnabled(count_rate_enabled)
+        self.chk_count_rate_accuracy_guard.setEnabled(count_rate_enabled)
+        self.spin_count_rate_max_bias_pct.setEnabled(count_rate_enabled and self.chk_count_rate_accuracy_guard.isChecked())
+        self.count_rate_opt_group.setVisible(count_rate_enabled)
         self.chk_optimization_realtime.setEnabled(optimisation_active)
         self.spin_optimization_realtime_interval.setEnabled(optimisation_active and self.chk_optimization_realtime.isChecked())
         self.spin_optimization_steps_to_show.setEnabled(optimisation_active)
@@ -3353,6 +3381,15 @@ class ControlWidget(QWidget):
             self.spin_accuracy_pvalue.setValue(getattr(cfg, "precision_accuracy_pvalue", 0.0001))
             self.spin_bootstrap_samples.setValue(getattr(cfg, "precision_bootstrap_samples", 2000))
             self.spin_ci_level.setValue(getattr(cfg, "precision_ci_level", 99.7))
+            deadtime_correction_map = {
+                "none": "None",
+                "isbaner_histogram": "Isbaner-style histogram",
+                "rapp_inspired_inverse": "Rapp-inspired inverse",
+                "rapp_stationary": "Rapp-inspired inverse",
+            }
+            self.combo_deadtime_correction.setCurrentText(
+                deadtime_correction_map.get(getattr(cfg, "deadtime_correction_method", "none"), "None")
+            )
 
             # Laser / Physics
             self.spin_period.setValue(cfg.period)
@@ -3430,11 +3467,12 @@ class ControlWidget(QWidget):
             # Optimization
             self.chk_opt_detection.setChecked(getattr(cfg, "optimize_detection_gates", False))
             self.chk_opt_excitation.setChecked(getattr(cfg, "optimize_excitation_profile", False))
+            self.chk_opt_count_rate.setChecked(getattr(cfg, "optimize_count_rate", False))
             optimization_mode_map = {"sequential": "Sequential", "iterative": "Iterative"}
             self.combo_optimization_mode.setCurrentText(
                 optimization_mode_map.get(getattr(cfg, "optimization_mode", "sequential"), "Sequential")
             )
-            optimization_first_map = {"detection": "Detection First", "excitation": "Excitation First"}
+            optimization_first_map = {"detection": "Detection First", "excitation": "Excitation First", "count_rate": "Count Rate First"}
             self.combo_optimization_first.setCurrentText(
                 optimization_first_map.get(getattr(cfg, "optimization_first", "detection"), "Detection First")
             )
@@ -3507,6 +3545,12 @@ class ControlWidget(QWidget):
             self.spin_excitation_width_min.setValue(getattr(cfg, "excitation_optimization_width_min", 0.05))
             self.spin_excitation_width_max.setValue(getattr(cfg, "excitation_optimization_width_max", 10.0))
             self.spin_excitation_control_points.setValue(getattr(cfg, "excitation_optimization_control_points", 8))
+            self.spin_count_rate_min_kcps.setValue(float(getattr(cfg, "count_rate_optimization_min_kcps", 10.0)))
+            self.spin_count_rate_max_kcps.setValue(float(getattr(cfg, "count_rate_optimization_max_kcps", 1000.0)))
+            self.spin_count_rate_steps.setValue(int(getattr(cfg, "count_rate_optimization_steps", 24)))
+            self.combo_count_rate_scale.setCurrentText("Linear" if str(getattr(cfg, "count_rate_optimization_scale", "log")).lower() == "linear" else "Log")
+            self.chk_count_rate_accuracy_guard.setChecked(bool(getattr(cfg, "count_rate_optimization_enforce_accuracy", True)))
+            self.spin_count_rate_max_bias_pct.setValue(float(getattr(cfg, "count_rate_optimization_max_bias_pct", 2.0)))
             self._update_irf_ui()
 
             # Instrument params

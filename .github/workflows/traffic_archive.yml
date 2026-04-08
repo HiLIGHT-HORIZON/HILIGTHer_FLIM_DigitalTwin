@@ -1,0 +1,23 @@
+name: Archive Repository Traffic
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs every night at midnight UTC
+  workflow_dispatch:    # Allows you to trigger it manually for testing
+
+jobs:
+  archive-traffic:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Traffic Branch
+        uses: actions/checkout@v4
+        with:
+          ref: 'traffic-stats' # This switches to your data branch
+
+      - name: Fetch and Store Traffic Data
+        uses: sangonzalezplus/traffic-read-action@v1.2.0
+        with:
+          TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
+          REPO: ${{ github.repository }}
+          TRAFFIC_BRANCH: "traffic-stats"
+          TRAFFIC_DIR: "data" # Organizes logs into a 'data' folder

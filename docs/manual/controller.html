@@ -67,8 +67,7 @@
           <tr><td>Model editor icon</td><td>Opens the custom model editor.</td><td>Custom models are persisted, carry parameter metadata, and can be used by the same fitting/precision workflow as built-ins.</td></tr>
           <tr><td>Model maths icon</td><td>Expands the current model equation.</td><td>The maths pane renders symbolic maths for the active model rather than raw source text.</td></tr>
           <tr><td><code>Decay wrapping</code></td><td>Wraps earlier-pulse contributions into the current acquisition window.</td><td>This is a decay/PDF decision, separate from gate wrap-around.</td></tr>
-          <tr><td><code>Sim. core</code></td><td>Shows the active simulation backend.</td><td>Displays <code>Poisson</code>, <code>Poisson (+DTF)</code>, or <code>Event-driven</code>.</td></tr>
-          <tr><td><code>Val. core</code></td><td>Shows the active validation backend.</td><td>Usually mirrors the simulation logic but is displayed separately because MC validation can be more restrictive or more expensive.</td></tr>
+          <tr><td><code>Sim. core</code></td><td>Shows the active backend used by the simulation-first workflows.</td><td>Displays <code>Poisson</code>, <code>Poisson (+DTF)</code>, or <code>Event-driven</code>. This is the one authoritative core selector exposed in the controller.</td></tr>
           <tr><td><code>Background (%)</code></td><td>Sets decay-model background in percent.</td><td>The analysis/fitting path now treats this as additive background counts rather than only a fragile latent-mixture parameter.</td></tr>
           <tr><td><code>Precision Sweep Configuration</code></td><td>Controls X-axis parameter, range, steps, scaling, and lookup-grid refinement.</td><td>These values drive both theory and gridded MLE validation.</td></tr>
         </table>
@@ -131,6 +130,7 @@
           <tr><td><code>Evaluate CI</code>, CI level, and sigma label</td><td>Computes bootstrap confidence intervals and shows the corresponding Gaussian sigma-equivalent.</td><td>The default level is <code>99.7%</code>, displayed as <code>3.0σ</code> next to the spinner.</td></tr>
           <tr><td><code>Bootstrap resamples</code></td><td>Sets bootstrap sample count.</td><td>Higher values stabilise CI estimates at the cost of runtime.</td></tr>
           <tr><td><code>Estimator accuracy p-value</code></td><td>Threshold for compatibility flags.</td><td>Used to grey/flag MC points that fail the configured compatibility criterion.</td></tr>
+          <tr><td><code>Dead-time correction</code></td><td>Selects the histogram-side correction family used to build corrected companion estimates and corrected Fisher reporting.</td><td>The dropdown now exposes <code>None</code>, <code>Isbaner-style histogram</code>, and <code>Rapp-inspired inverse</code>. Both corrected modes now operate from the observed gated histogram plus calibrated detector settings only; they do not require a known emitted-photon budget.</td></tr>
           <tr><td><code>Compute F-value on</code></td><td>Chooses collected, acquisition-period, or all-photon reporting.</td><td>The estimator statistics do not change when this is toggled; existing cached runs can often be rescaled rather than recomputed.</td></tr>
         </table>
       </section>
@@ -142,7 +142,9 @@
 
       <section class="card" id="optimisation">
         <h2>Optimisation tab</h2>
-        <p>The optimisation tab exposes detection-gate optimisation, excitation-profile optimisation, and the joint alternating workflow. The history plots are retained and exportable. The objective can be Fisher information, Fisher throughput, photon-efficiency AUC, or throughput AUC, all interpreted through the current photon-basis semantics.</p>
+        <p>The optimisation tab exposes detection-gate optimisation, excitation-profile optimisation, count-rate optimisation, and the joint alternating workflow. The history plots are retained and exportable. The objective can be Fisher information, Fisher throughput, photon-efficiency AUC, or throughput AUC.</p>
+        <p>Displayed Fisher curves still respect the selected photon-basis reporting mode, but throughput objectives are internally evaluated in the all-photon basis so rate sweeps remain physically comparable under pile-up and dead-time losses. When dead-time correction is enabled, the count-rate throughput objective uses the corrected Fisher curve rather than the raw detector-limited one.</p>
+        <p>Count-rate optimisation also supports an accuracy-protection guard: the scan rejects rates whose predicted estimator bias exceeds the configured maximum, then chooses the highest-throughput feasible rate. Internally, the search now runs as a coarse scan plus a refinement pass around the best feasible region and the first accuracy boundary.</p>
       </section>
 
       <section class="card" id="batch-sweep">

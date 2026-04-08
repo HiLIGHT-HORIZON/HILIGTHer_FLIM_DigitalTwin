@@ -523,3 +523,194 @@ def test_event_driven_fisher_path_keeps_detector_transfer_active():
     assert np.isfinite(fi_dead[0])
     assert fi_dead[0] < fi_base[0]
     assert f_dead[0] > f_base[0]
+
+
+@pytest.mark.parametrize(
+    "method",
+    ["isbaner_histogram", "rapp_inspired_inverse"],
+)
+def test_deadtime_correction_methods_return_finite_corrected_fisher(method):
+    cfg = PhysicsConfig(
+        detector_deadtime=45.0,
+        precision_photons=2000,
+        a_photons=2000.0,
+        deadtime_correction_method=method,
+        gate_edges=[0.0, 1.1, 3.4, 9.0, 12.5],
+        event_pixel_dwell_time_s=1e-3,
+    )
+    engine = TwinEngine(cfg)
+    tau_grid = np.array([1.0, 2.5, 5.0], dtype=float)
+
+    fi, f_val, correction = engine.compute_deadtime_corrected_fisher_info(
+        tau_grid,
+        n_photons=2000,
+        correction_method=method,
+        photon_basis_mode="all",
+    )
+
+    assert fi.shape == tau_grid.shape
+    assert f_val.shape == tau_grid.shape
+    assert np.all(np.isfinite(f_val))
+    assert correction["method"] == method
+    assert isinstance(correction.get("note", ""), str)
+    assert np.allclose(
+        np.asarray(correction["corrected_budget"], dtype=float),
+        np.asarray(correction["observed_budget"], dtype=float),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
+def test_deadtime_correction_methods_produce_distinct_corrected_curves():
+    cfg = PhysicsConfig(
+        detector_deadtime=60.0,
+        precision_photons=2000,
+        a_photons=2000.0,
+        gate_edges=[0.0, 0.8, 2.0, 4.0, 12.5],
+        event_pixel_dwell_time_s=2e-5,
+    )
+    engine = TwinEngine(cfg)
+    tau_grid = np.array([0.9, 1.7, 3.2], dtype=float)
+
+    _, f_isbaner, _ = engine.compute_deadtime_corrected_fisher_info(
+        tau_grid,
+        n_photons=2000,
+        correction_method="isbaner_histogram",
+        photon_basis_mode="all",
+    )
+    _, f_rapp, _ = engine.compute_deadtime_corrected_fisher_info(
+        tau_grid,
+        n_photons=2000,
+        correction_method="rapp_inspired_inverse",
+        photon_basis_mode="all",
+    )
+    assert not np.allclose(f_rapp, f_isbaner, rtol=1e-5, atol=1e-8)
+
+
+def test_deadtime_free_baseline_mle_shows_bias_and_isbaner_histogram_recovers_toward_truth():
+    cfg = PhysicsConfig(
+        detector_deadtime=60.0,
+        precision_photons=2000,
+        a_photons=2000.0,
+        gate_edges=[0.0, 0.8, 2.0, 4.0, 12.5],
+        event_pixel_dwell_time_s=2e-5,
+        f_x_param="tau1",
+        f_x_min=0.5,
+        f_x_max=4.0,
+        f_x_steps=20,
+        f_x_scale="linear",
+    )
+    engine = TwinEngine(cfg)
+    engine.distill_gates()
+    engine.ensure_grid_current()
+
+    truth = 1.7
+    pdf = engine.dt_pdf(engine.time_vector, tau=truth)
+    gate_profiles = engine._statistical_gate_profiles(engine.gate_shapes)
+    probs, frac = engine._gate_statistics_from_pdf(pdf, float(cfg.precision_photons), gate_profiles, cfg)
+    observed = (probs * frac * float(cfg.precision_photons)).reshape(1, -1)
+
+    baseline = float(engine.estimate_tau_batch(observed)[0])
+    isbaner = float(
+        engine.estimate_tau_batch(
+            observed,
+            correction_method="isbaner_histogram",
+        )[0]
+    )
+
+    assert baseline < truth
+    assert abs(isbaner - truth) < abs(baseline - truth)
+
+
+@pytest.mark.parametrize("method", ["isbaner_histogram", "rapp_inspired_inverse"])
+def test_deadtime_corrections_do_not_require_known_total_photon_budget(method):
+    cfg = PhysicsConfig(
+        detector_deadtime=60.0,
+        precision_photons=2000,
+        a_photons=2000.0,
+        gate_edges=[0.0, 0.8, 2.0, 4.0, 12.5],
+        event_pixel_dwell_time_s=2e-5,
+        f_x_param="tau1",
+        f_x_min=0.5,
+        f_x_max=4.0,
+        f_x_steps=20,
+        f_x_scale="linear",
+    )
+    engine = TwinEngine(cfg)
+    engine.distill_gates()
+    engine.ensure_grid_current()
+
+    truth = 1.7
+    pdf = engine.dt_pdf(engine.time_vector, tau=truth)
+    gate_profiles = engine._statistical_gate_profiles(engine.gate_shapes)
+    probs, frac = engine._gate_statistics_from_pdf(pdf, float(cfg.precision_photons), gate_profiles, cfg)
+    observed = (probs * frac * float(cfg.precision_photons)).reshape(1, -1)
+
+    estimate_default = float(engine.estimate_tau_batch(observed, correction_method=method)[0])
+    estimate_low = float(engine.estimate_tau_batch(observed, photon_budget=500.0, correction_method=method)[0])
+    estimate_high = float(engine.estimate_tau_batch(observed, photon_budget=5000.0, correction_method=method)[0])
+
+    assert np.isclose(estimate_default, estimate_low, rtol=1e-12, atol=1e-12)
+    assert np.isclose(estimate_default, estimate_high, rtol=1e-12, atol=1e-12)
+
+
+def test_deadtime_method_template_families_match_cached_grid_semantics():
+    cfg = PhysicsConfig(
+        detector_deadtime=80.0,
+        precision_photons=2000,
+        a_photons=2000.0,
+        gate_edges=[0.0, 0.8, 2.0, 4.0, 6.0, 8.0, 10.0, 12.5],
+        event_pixel_dwell_time_s=1e-5,
+        f_x_param="tau1",
+        f_x_min=1.0,
+        f_x_max=4.0,
+        f_x_steps=7,
+        f_x_scale="linear",
+    )
+    engine = TwinEngine(cfg)
+    engine.distill_gates()
+    engine.ensure_grid_current()
+
+    raw_mass_expected = np.asarray(engine.grid_templates, dtype=float) * np.asarray(engine.grid_collected_fractions, dtype=float)[:, None]
+    observed_mass_expected = np.asarray(engine.grid_raw_templates, dtype=float) * np.asarray(engine.grid_raw_collected_fractions, dtype=float)[:, None]
+
+    isbaner_mass, _, _ = engine._corrected_template_masses_for_method("isbaner_histogram")
+    rapp_mass, _, _ = engine._corrected_template_masses_for_method("rapp_inspired_inverse")
+
+    assert np.allclose(isbaner_mass, raw_mass_expected, rtol=1e-12, atol=1e-12)
+    assert np.allclose(rapp_mass, observed_mass_expected, rtol=1e-12, atol=1e-12)
+
+
+def test_ideal_poisson_detector_effects_follow_distorted_gate_distribution():
+    np.random.seed(0)
+    cfg = PhysicsConfig(
+        detector_deadtime=120.0,
+        precision_photons=1200,
+        a_photons=1200.0,
+        gate_edges=[0.0, 0.8, 2.0, 4.0, 6.0, 8.0, 10.0, 12.5],
+        event_pixel_dwell_time_s=1e-5,
+        simulation_mode="ideal_poisson",
+        simulation_mode_preference="ideal_poisson",
+        f_x_param="tau1",
+    )
+    engine = TwinEngine(cfg)
+    engine.distill_gates()
+
+    truth = 4.0
+    pdf = engine.dt_pdf(engine.time_vector, tau=truth)
+    gate_profiles = engine._statistical_gate_profiles(engine.gate_shapes)
+    raw_cond, raw_frac = engine._gate_statistics_without_detector_from_pdf(pdf, float(cfg.precision_photons), gate_profiles, cfg)
+    obs_cond, obs_frac = engine._gate_statistics_from_pdf(pdf, float(cfg.precision_photons), gate_profiles, cfg)
+
+    counts, _ = engine.simulate_gate_histograms(truth, cfg.precision_photons, 200)
+    mean_counts = np.mean(counts, axis=0)
+    mean_total = float(np.sum(mean_counts))
+    observed_cond = mean_counts / max(mean_total, 1e-12)
+    raw_cond = np.asarray(raw_cond, dtype=float)
+    distorted_cond = np.asarray(obs_cond, dtype=float)
+
+    raw_error = float(np.linalg.norm(observed_cond - raw_cond))
+    distorted_error = float(np.linalg.norm(observed_cond - distorted_cond))
+
+    assert distorted_error < raw_error
+    assert np.isclose(mean_total, float(cfg.precision_photons) * float(obs_frac), rtol=0.2, atol=5.0)

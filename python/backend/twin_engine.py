@@ -104,12 +104,20 @@ class TwinEngine:
         self.fitted_sigma = 0.1 # [ns]
         
         # Fast Fitting Grid
-        self.grid_templates = None # Pre-calculated gate signatures
+        self.grid_templates = None # Detector-free baseline gate signatures
+        self.grid_collected_fractions = None
+        self.grid_raw_templates = None # Detector-distorted companion gate signatures
+        self.grid_raw_collected_fractions = None
+        self.grid_gate_activity = None
         self.grid_tau_axis = None
         self.grid_signature = None
 
     def invalidate_grid(self):
         self.grid_templates = None
+        self.grid_collected_fractions = None
+        self.grid_raw_templates = None
+        self.grid_raw_collected_fractions = None
+        self.grid_gate_activity = None
         self.grid_tau_axis = None
         self.grid_signature = None
 
@@ -227,6 +235,13 @@ class TwinEngine:
             cfg.gate_wraparound,
             cfg.period,
             cfg.timing_jitter,
+            cfg.a_photons,
+            cfg.detector_deadtime,
+            cfg.detector_afterpulsing_probability,
+            cfg.detector_dark_count_rate_cps,
+            cfg.b_multihit_mode,
+            getattr(cfg, "event_multihit_capacity", None),
+            getattr(cfg, "event_pixel_dwell_time_s", 1e-3),
             cfg.dt_override,
             cfg.dt_input,
             cfg.f_x_scale,
@@ -675,6 +690,136 @@ class TwinEngine:
         acquisition_budget = total_budget * self._acquisition_period_fraction(cfg)
         return max(acquisition_budget, 0.0)
 
+    def _resolve_deadtime_correction_method(
+        self,
+        correction_method: Optional[str] = None,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> str:
+        cfg = cfg or self.config
+        if correction_method is None:
+            correction_method = getattr(cfg, "deadtime_correction_method", "none")
+        method = str(correction_method).lower()
+        if method == "rapp_stationary":
+            return "rapp_inspired_inverse"
+        if method not in {"none", "isbaner_histogram", "rapp_inspired_inverse"}:
+            return "none"
+        return method
+
+    def _detector_free_cfg(self, cfg: Optional[PhysicsConfig] = None) -> PhysicsConfig:
+        cfg = copy.deepcopy(cfg or self.config)
+        cfg.detector_deadtime = 0.0
+        cfg.detector_afterpulsing_probability = 0.0
+        cfg.detector_dark_count_rate_cps = 0.0
+        cfg.b_multihit_mode = True
+        cfg.event_multihit_capacity = None
+        cfg.event_deadtime_mode = "none"
+        return cfg
+
+    def _gate_statistics_without_detector_from_pdf(
+        self,
+        pdf: np.ndarray,
+        n_photons: float,
+        gate_profiles: np.ndarray,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> Tuple[np.ndarray, float]:
+        raw_cfg = self._detector_free_cfg(cfg)
+        return self._gate_statistics_from_pdf(pdf, n_photons, gate_profiles, raw_cfg)
+
+    @staticmethod
+    def _safe_gate_activity(observed_gate_mass: np.ndarray, raw_gate_mass: np.ndarray) -> np.ndarray:
+        observed_gate_mass = np.asarray(observed_gate_mass, dtype=float)
+        raw_gate_mass = np.asarray(raw_gate_mass, dtype=float)
+        activity = np.ones_like(observed_gate_mass, dtype=float)
+        valid = raw_gate_mass > 1e-15
+        activity[valid] = observed_gate_mass[valid] / np.maximum(raw_gate_mass[valid], 1e-15)
+        return np.clip(activity, 1e-6, 1.0)
+
+    def _deadtime_method_note(self, method: str) -> str:
+        notes = {
+            "none": "Dead-time correction disabled.",
+            "isbaner_histogram": (
+                "Histogram-style correction using only the observed gated histogram and a calibrated detector model. "
+                "It inverts the modeled gate activity and refits against detector-free templates using detected-photon information only."
+            ),
+            "rapp_inspired_inverse": (
+                "Rapp-inspired detected-photon inverse fit using only the observed gated histogram and the calibrated "
+                "detector-limited gate templates. This does not require a known total photon budget."
+            ),
+        }
+        return notes.get(str(method).lower(), "Dead-time correction companion estimator enabled.")
+
+    def _deadtime_correction_summary(
+        self,
+        observed_budget: np.ndarray,
+        correction_method: Optional[str] = None,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> Dict[str, Any]:
+        cfg = cfg or self.config
+        observed = np.maximum(np.asarray(observed_budget, dtype=float), 0.0)
+        corrected = np.array(observed, copy=True)
+        f_scale = np.ones_like(observed, dtype=float)
+        method = self._resolve_deadtime_correction_method(correction_method, cfg)
+        deadtime_ns = float(max(getattr(cfg, "detector_deadtime", 0.0), 0.0))
+        dwell_s = float(max(getattr(cfg, "event_pixel_dwell_time_s", 1e-3), 1e-12))
+        applied = False
+        note = self._deadtime_method_note(method)
+
+        return {
+            "method": method,
+            "applied": applied,
+            "note": note,
+            "deadtime_ns": deadtime_ns,
+            "dwell_s": dwell_s,
+            "observed_budget": observed,
+            "corrected_budget": corrected,
+            "f_scale": f_scale,
+        }
+
+    def _corrected_template_masses_for_method(
+        self,
+        correction_method: str,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        method = self._resolve_deadtime_correction_method(correction_method, self.config)
+        # `grid_templates` stores the detector-free baseline templates used by the
+        # raw gridded MLE, while `grid_raw_templates` stores the detector-distorted
+        # companion templates. Keep that split intact here so each correction method
+        # works from the intended histogram family.
+        raw_gate_mass = np.asarray(self.grid_templates, dtype=float) * np.asarray(self.grid_collected_fractions, dtype=float)[:, None]
+        observed_gate_mass = np.asarray(self.grid_raw_templates, dtype=float) * np.asarray(self.grid_raw_collected_fractions, dtype=float)[:, None]
+        gate_activity = np.asarray(self.grid_gate_activity, dtype=float)
+
+        if method == "rapp_inspired_inverse":
+            return observed_gate_mass, np.asarray(self.grid_collected_fractions, dtype=float), gate_activity
+        if method == "isbaner_histogram":
+            return raw_gate_mass, np.asarray(self.grid_collected_fractions, dtype=float), gate_activity
+        return observed_gate_mass, np.asarray(self.grid_collected_fractions, dtype=float), gate_activity
+
+    def _log_likelihood_for_deadtime_method(
+        self,
+        observed_counts: np.ndarray,
+        correction_method: str,
+    ) -> np.ndarray:
+        method = self._resolve_deadtime_correction_method(correction_method, self.config)
+        observed = np.maximum(np.asarray(observed_counts, dtype=float), 0.0)
+        template_gate_mass, template_collected_fraction, gate_activity = self._corrected_template_masses_for_method(method)
+
+        if method == "rapp_inspired_inverse":
+            observed_norm = observed / np.maximum(np.sum(observed, axis=1, keepdims=True), 1e-12)
+            log_gate = np.log(np.maximum(self.grid_raw_templates, 1e-300))
+            return observed_norm @ log_gate.T
+
+        corrected_counts = observed[:, None, :] / np.maximum(gate_activity[None, :, :], 1e-6)
+
+        corrected_totals = np.sum(corrected_counts, axis=2, keepdims=True)
+        corrected_norm = np.divide(
+            corrected_counts,
+            np.maximum(corrected_totals, 1e-12),
+            out=np.zeros_like(corrected_counts),
+            where=corrected_totals > 0.0,
+        )
+        log_gate = np.log(np.maximum(self.grid_templates, 1e-300))
+        return np.sum(corrected_norm * log_gate[None, :, :], axis=2)
+
     def _dark_counts_per_frame(self, cfg: Optional[PhysicsConfig] = None) -> float:
         cfg = cfg or self.config
         dwell_s = float(max(getattr(cfg, "event_pixel_dwell_time_s", 1e-3), 1e-12))
@@ -1100,6 +1245,10 @@ class TwinEngine:
         stat_gate_shapes = self._statistical_gate_profiles(self.gate_shapes)
         n_gates = stat_gate_shapes.shape[0]
         self.grid_templates = np.zeros((cfg.grid_steps, n_gates))
+        self.grid_collected_fractions = np.zeros(cfg.grid_steps, dtype=float)
+        self.grid_raw_templates = np.zeros((cfg.grid_steps, n_gates))
+        self.grid_raw_collected_fractions = np.zeros(cfg.grid_steps, dtype=float)
+        self.grid_gate_activity = np.ones((cfg.grid_steps, n_gates), dtype=float)
         
         t = self.time_vector
         original_param_value = self._get_cfg_param(cfg.f_x_param)
@@ -1112,7 +1261,19 @@ class TwinEngine:
                 stat_gate_shapes,
                 cfg,
             )
-            self.grid_templates[i, :] = p_vec
+            raw_vec, raw_collected_fraction = self._gate_statistics_without_detector_from_pdf(
+                pdf,
+                float(getattr(cfg, "a_photons", 0.0)),
+                stat_gate_shapes,
+                cfg,
+            )
+            self.grid_templates[i, :] = raw_vec
+            self.grid_collected_fractions[i] = float(raw_collected_fraction)
+            self.grid_raw_templates[i, :] = p_vec
+            self.grid_raw_collected_fractions[i] = float(_collected_fraction)
+            observed_gate_mass = np.asarray(p_vec, dtype=float) * float(_collected_fraction)
+            raw_gate_mass = np.asarray(raw_vec, dtype=float) * float(raw_collected_fraction)
+            self.grid_gate_activity[i, :] = self._safe_gate_activity(observed_gate_mass, raw_gate_mass)
         self._set_cfg_param(cfg.f_x_param, original_param_value)
         self.grid_signature = self._grid_signature()
 
@@ -1134,7 +1295,12 @@ class TwinEngine:
             return np.full(gate_profiles.shape[0], 1.0 / gate_profiles.shape[0])
         return probs
 
-    def _estimate_param_batch_gridded(self, counts_batch: np.ndarray) -> np.ndarray:
+    def _estimate_param_batch_gridded(
+        self,
+        counts_batch: np.ndarray,
+        photon_budget: Optional[float] = None,
+        correction_method: Optional[str] = None,
+    ) -> np.ndarray:
         counts_batch = np.asarray(counts_batch, dtype=float)
         self.ensure_grid_current()
 
@@ -1144,9 +1310,16 @@ class TwinEngine:
         if not np.any(valid):
             return estimates
 
-        obs_norm = counts_batch[valid] / totals[valid]
-        log_templates = np.log(np.maximum(self.grid_templates, 1e-300))
-        log_likelihood = obs_norm @ log_templates.T
+        correction_method = self._resolve_deadtime_correction_method(correction_method, self.config)
+        if correction_method != "none":
+            log_likelihood = self._log_likelihood_for_deadtime_method(
+                counts_batch[valid],
+                correction_method,
+            )
+        else:
+            obs_norm = counts_batch[valid] / totals[valid]
+            log_templates = np.log(np.maximum(self.grid_templates, 1e-300))
+            log_likelihood = obs_norm @ log_templates.T
         best_idx = np.argmax(log_likelihood, axis=1)
         refined = np.array(self.grid_tau_axis[best_idx], copy=True)
 
@@ -1178,7 +1351,12 @@ class TwinEngine:
         estimates[valid] = np.clip(refined, self.grid_tau_axis[0], self.grid_tau_axis[-1])
         return estimates
 
-    def estimate_tau_batch(self, counts_batch: np.ndarray) -> np.ndarray:
+    def estimate_tau_batch(
+        self,
+        counts_batch: np.ndarray,
+        photon_budget: Optional[float] = None,
+        correction_method: Optional[str] = None,
+    ) -> np.ndarray:
         """Returns gridded-MLE estimates for the currently selected X-axis parameter."""
         counts_batch = np.asarray(counts_batch, dtype=float)
         target = str(getattr(self.config, "f_x_param", "tau1"))
@@ -1197,7 +1375,11 @@ class TwinEngine:
                 estimates[idx] = self._fit_param_refined(obs)
             return estimates
 
-        return self._estimate_param_batch_gridded(counts_batch)
+        return self._estimate_param_batch_gridded(
+            counts_batch,
+            photon_budget=photon_budget,
+            correction_method=correction_method,
+        )
 
     def plan_validation_image_geometry(self, n_values: Optional[int] = None,
                                        target_repeats: Optional[int] = None) -> Dict[str, int]:
@@ -1673,12 +1855,35 @@ class TwinEngine:
         photon_times = np.interp(photon_u, cdf, t)
 
         gate_hist_all = np.zeros((n_repeats, n_gates), dtype=float)
+        gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
+        if self._has_detector_event_effects(self.config):
+            detected_gate_prob, collected_fraction = self._gate_statistics_from_pdf(
+                pdf,
+                float(n_photons),
+                gate_profiles,
+                self.config,
+            )
+            detected_gate_prob = np.asarray(detected_gate_prob, dtype=float)
+            prob_sum = float(np.sum(detected_gate_prob))
+            if prob_sum <= 0.0:
+                detected_gate_prob = np.full(n_gates, 1.0 / max(n_gates, 1), dtype=float)
+            else:
+                detected_gate_prob = detected_gate_prob / prob_sum
+            expected_detected_total = max(float(n_photons) * float(collected_fraction), 0.0)
+            detected_totals = np.random.poisson(expected_detected_total, size=n_repeats)
+            for rep_idx in range(n_repeats):
+                detected_total = int(max(detected_totals[rep_idx], 0))
+                if detected_total > 0:
+                    gate_hist_all[rep_idx, :] = np.random.multinomial(detected_total, detected_gate_prob)
+            n_detections = np.sum(gate_hist_all, axis=1)
+            return gate_hist_all, n_detections
+
         gate_vals = np.zeros((n_repeats, n_photons, n_gates), dtype=float)
         for gate_idx in range(n_gates):
             gate_vals[:, :, gate_idx] = np.interp(photon_times, t, self.gate_shapes[gate_idx, :], left=0.0, right=0.0)
 
         if getattr(self.config, "gate_collection_mode", "histogram") == "sequential":
-            gate_prob = np.clip(self._statistical_gate_profiles(self.gate_shapes) @ pdf, 0.0, 1.0)
+            gate_prob = np.clip(gate_profiles @ pdf, 0.0, 1.0)
             photons_per_gate = float(n_photons) * self._collection_efficiency_scale(n_gates)
             gate_hist_all = np.random.binomial(
                 int(round(photons_per_gate)),
@@ -1701,7 +1906,6 @@ class TwinEngine:
 
         bg_fraction = min(max(float(getattr(self.config, "background_level", 0.0)), 0.0), 1.0)
         if bg_fraction > 0.0:
-            gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
             uniform_pdf = np.full(t.shape[0], 1.0 / max(t.shape[0], 1), dtype=float)
             bg_gate_prob = np.asarray(gate_profiles @ uniform_pdf, dtype=float)
             bg_gate_prob = bg_gate_prob * self._collection_efficiency_scale(n_gates)
@@ -1713,15 +1917,6 @@ class TwinEngine:
                     extra = int(bg_total[rep_idx])
                     if extra > 0:
                         gate_hist_all[rep_idx, :] += np.random.multinomial(extra, bg_gate_prob)
-
-        if self._has_detector_event_effects(self.config):
-            rng = np.random.default_rng()
-            for rep_idx in range(n_repeats):
-                gate_hist_all[rep_idx, :] = self._apply_detector_transfer_to_count_vector(
-                    gate_hist_all[rep_idx, :],
-                    rng,
-                    self.config,
-                )
 
         n_detections = np.sum(gate_hist_all, axis=1)
         return gate_hist_all, n_detections
@@ -2340,6 +2535,161 @@ class TwinEngine:
             
         return fi, f_val
 
+    def compute_deadtime_corrected_fisher_info(
+        self,
+        tau_grid: np.ndarray,
+        n_photons: int = 1,
+        correction_method: Optional[str] = None,
+        photon_basis_mode: Optional[str] = None,
+    ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+        method = self._resolve_deadtime_correction_method(correction_method, self.config)
+        if method in {"rapp_inspired_inverse", "isbaner_histogram"}:
+            return self._compute_method_specific_deadtime_fisher_info(
+                tau_grid,
+                n_photons=n_photons,
+                correction_method=method,
+                photon_basis_mode=photon_basis_mode,
+            )
+        fi, raw_f = self.compute_fisher_info(
+            tau_grid,
+            n_photons,
+            photon_basis_mode=photon_basis_mode or "all",
+        )
+        observed_budget = np.zeros(len(np.asarray(tau_grid, dtype=float)), dtype=float)
+        original_param_value = self._get_cfg_param(self.config.f_x_param)
+        self.distill_gates()
+        gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
+        irf_cached = self.dt_excitation(self.time_vector)
+        irf_sum = np.sum(irf_cached)
+        if irf_sum > 0:
+            irf_cached /= irf_sum
+        for idx, value in enumerate(np.asarray(tau_grid, dtype=float)):
+            self._set_cfg_param(self.config.f_x_param, float(value))
+            pdf = self.dt_pdf(self.time_vector, irf=irf_cached)
+            _obs_cond, obs_frac = self._gate_statistics_from_pdf(pdf, float(n_photons), gate_profiles, self.config)
+            observed_budget[idx] = float(n_photons) * float(obs_frac)
+        self._set_cfg_param(self.config.f_x_param, original_param_value)
+        correction = self._deadtime_correction_summary(
+            observed_budget,
+            correction_method=correction_method,
+            cfg=self.config,
+        )
+        corrected_f = np.asarray(raw_f, dtype=float) * np.asarray(correction["f_scale"], dtype=float)
+        return fi, corrected_f, correction
+
+    def _compute_method_specific_deadtime_fisher_info(
+        self,
+        tau_grid: np.ndarray,
+        n_photons: int = 1,
+        correction_method: Optional[str] = None,
+        photon_basis_mode: Optional[str] = None,
+    ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+        cfg = self.config
+        method = self._resolve_deadtime_correction_method(correction_method, cfg)
+        photon_basis_mode_norm = self._resolve_f_photon_basis_mode(photon_basis_mode)
+        rise = max(float(getattr(cfg, "gate_rise", 0.0)), 0.0)
+        fall = max(float(getattr(cfg, "gate_fall", rise)), 0.0)
+        dt_user = cfg.dt_override if (cfg.dt_override and cfg.dt_override > 0) else (cfg.dt_input if (cfg.dt_input and cfg.dt_input > 0) else 0.01)
+        dt = dt_user if rise <= 0.0 and fall <= 0.0 else max(min(dt_user, max(rise, fall, 1e-4) / 5.0), 0.005)
+        if bool(getattr(cfg, "burst_enabled", False)):
+            burst_period = max(float(getattr(cfg, "burst_sub_period", 0.0)), 1e-6)
+            dt = min(dt, max(burst_period / 20.0, 0.001))
+
+        original_dt_override = cfg.dt_override
+        try:
+            cfg.dt_override = dt
+            self.distill_gates()
+            gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
+            t = np.array(self.time_vector, copy=True)
+        finally:
+            cfg.dt_override = original_dt_override
+
+        irf_cached = self.dt_excitation(t)
+        irf_sum = np.sum(irf_cached)
+        if irf_sum > 0:
+            irf_cached /= irf_sum
+
+        fisher_values = np.zeros(len(tau_grid), dtype=float)
+        f_values = np.full(len(tau_grid), np.nan, dtype=float)
+        collected_budgets = np.zeros(len(tau_grid), dtype=float)
+        corrected_budgets = np.zeros(len(tau_grid), dtype=float)
+        epsilon = 0.01
+
+        for k, x_val in enumerate(tau_grid):
+            orig_x_val = self._get_cfg_param(cfg.f_x_param)
+            try:
+                param_val = float(x_val)
+                lower_bound, upper_bound = self._get_cfg_param_bounds(cfg.f_x_param)
+                delta_param = self._get_cfg_param_step(cfg.f_x_param, param_val, dt, epsilon)
+                plus_val = param_val + delta_param
+                minus_val = param_val - delta_param
+                if lower_bound is not None:
+                    minus_val = max(lower_bound, minus_val)
+                    plus_val = max(lower_bound, plus_val)
+                if upper_bound is not None:
+                    minus_val = min(upper_bound, minus_val)
+                    plus_val = min(upper_bound, plus_val)
+
+                def _method_probs(value: float) -> Tuple[np.ndarray, float, float]:
+                    self._set_cfg_param(cfg.f_x_param, value)
+                    pdf = self.dt_pdf(t, irf=irf_cached)
+                    obs_cond, obs_frac = self._gate_statistics_from_pdf(pdf, float(n_photons), gate_profiles, cfg)
+                    raw_cond, raw_frac = self._gate_statistics_without_detector_from_pdf(pdf, float(n_photons), gate_profiles, cfg)
+                    obs_mass = np.asarray(obs_cond, dtype=float) * float(obs_frac)
+                    raw_mass = np.asarray(raw_cond, dtype=float) * float(raw_frac)
+                    if method == "isbaner_histogram":
+                        probs = np.asarray(raw_cond, dtype=float)
+                    else:
+                        probs = np.asarray(obs_cond, dtype=float)
+                    budget = float(n_photons) * float(obs_frac)
+                    return np.asarray(probs, dtype=float), float(obs_frac), float(budget)
+
+                p_cen, observed_frac, photon_budget = _method_probs(param_val)
+                p_plus, _plus_frac, _plus_budget = _method_probs(plus_val)
+                p_minus, _minus_frac, _minus_budget = _method_probs(minus_val)
+                self._set_cfg_param(cfg.f_x_param, param_val)
+
+                dP_dparam = (p_plus - p_minus) / max(plus_val - minus_val, 1e-12)
+                p_safe = np.maximum(p_cen, 1e-15)
+                fisher_info = float(max(photon_budget, 0.0)) * float(np.sum((dP_dparam ** 2) / p_safe))
+                fisher_values[k] = fisher_info
+                collected_budgets[k] = float(n_photons) * float(observed_frac)
+                corrected_budgets[k] = float(photon_budget)
+
+                if fisher_info > 0.0 and abs(param_val) > 1e-12:
+                    sigma_param = 1.0 / np.sqrt(fisher_info)
+                    reference_budget = self._f_value_reference_budget(
+                        float(collected_budgets[k]),
+                        (collected_budgets[k] / max(photon_budget, 1e-12) if photon_budget > 0.0 else 0.0),
+                        photon_basis_mode=photon_basis_mode_norm,
+                        cfg=cfg,
+                    )
+                    if photon_basis_mode_norm == "period":
+                        reference_budget = float(photon_budget) * self._collection_efficiency_scale(len(cfg.gate_edges) - 1)
+                    else:
+                        reference_budget = float(collected_budgets[k])
+                    f_values[k] = (sigma_param / abs(param_val)) * np.sqrt(reference_budget) if reference_budget > 0.0 else np.nan
+            finally:
+                self._set_cfg_param(cfg.f_x_param, orig_x_val)
+
+        observed_budget = collected_budgets if np.any(collected_budgets > 0.0) else np.full(len(np.asarray(tau_grid, dtype=float)), float(max(n_photons, 0.0)))
+        correction = {
+            "method": method,
+            "applied": bool(np.any(np.isfinite(f_values))),
+            "note": self._deadtime_method_note(method),
+            "deadtime_ns": float(max(getattr(cfg, "detector_deadtime", 0.0), 0.0)),
+            "dwell_s": float(max(getattr(cfg, "event_pixel_dwell_time_s", 1e-3), 1e-12)),
+            "observed_budget": np.asarray(observed_budget, dtype=float),
+            "corrected_budget": np.asarray(corrected_budgets, dtype=float),
+            "f_scale": np.divide(
+                np.asarray(f_values, dtype=float),
+                np.maximum(np.asarray(f_values, dtype=float), 1e-12),
+                out=np.ones_like(np.asarray(f_values, dtype=float)),
+                where=np.isfinite(f_values),
+            ),
+        }
+        return fisher_values, f_values, correction
+
     def _bootstrap_accuracy_pvalue(self, samples: np.ndarray, truth: float,
                                    n_bootstrap: int, rng: np.random.Generator) -> float:
         samples = np.asarray(samples, dtype=float)
@@ -2450,6 +2800,23 @@ class TwinEngine:
         f_ci_upper_conditional = np.full(len(x_grid), np.nan)
         eff_ci_lower = np.full(len(x_grid), np.nan)
         eff_ci_upper = np.full(len(x_grid), np.nan)
+        correction_method = self._resolve_deadtime_correction_method(None, self.config)
+        corrected_mean_tau = np.full(len(x_grid), np.nan)
+        corrected_std_tau = np.full(len(x_grid), np.nan)
+        corrected_f_values = np.full(len(x_grid), np.nan)
+        corrected_f_values_conditional = np.full(len(x_grid), np.nan)
+        corrected_f_values_effective = np.full(len(x_grid), np.nan)
+        corrected_p_eff = np.full(len(x_grid), np.nan)
+        corrected_p_eff_conditional = np.full(len(x_grid), np.nan)
+        corrected_p_values = np.full(len(x_grid), np.nan)
+        corrected_compatible = np.full(len(x_grid), False, dtype=bool)
+        corrected_n_valid = np.zeros(len(x_grid), dtype=int)
+        corrected_f_ci_lower = np.full(len(x_grid), np.nan)
+        corrected_f_ci_upper = np.full(len(x_grid), np.nan)
+        corrected_f_ci_lower_conditional = np.full(len(x_grid), np.nan)
+        corrected_f_ci_upper_conditional = np.full(len(x_grid), np.nan)
+        corrected_eff_ci_lower = np.full(len(x_grid), np.nan)
+        corrected_eff_ci_upper = np.full(len(x_grid), np.nan)
         rng = np.random.default_rng()
 
         for idx, param_val in enumerate(x_grid):
@@ -2482,11 +2849,71 @@ class TwinEngine:
                     irf_cached=irf_cached,
                 )
             param_est = self.estimate_tau_batch(counts)
+            corrected_est = None
+            if correction_method != "none":
+                corrected_est = self.estimate_tau_batch(
+                    counts,
+                    photon_budget=float(n_photons),
+                    correction_method=correction_method,
+                )
             finite_est = param_est[np.isfinite(param_est)]
             n_valid[idx] = int(finite_est.size)
 
-            mean_tau[idx] = np.nanmean(param_est)
-            std_tau[idx] = np.nanstd(param_est, ddof=1) if np.sum(np.isfinite(param_est)) > 1 else 0.0
+            def _summarise_estimates(estimates_local: np.ndarray, param_val_local: float) -> Dict[str, Any]:
+                finite_only = np.asarray(estimates_local, dtype=float)
+                finite_only = finite_only[np.isfinite(finite_only)]
+                summary = {
+                    "n_valid": int(finite_only.size),
+                    "mean_tau": np.nanmean(estimates_local),
+                    "std_tau": np.nanstd(estimates_local, ddof=1) if np.sum(np.isfinite(estimates_local)) > 1 else 0.0,
+                    "f_value": np.nan,
+                    "f_value_conditional": np.nan,
+                    "f_value_effective": np.nan,
+                    "efficiency": np.nan,
+                    "efficiency_conditional": np.nan,
+                    "p_value": np.nan,
+                    "compatible": False,
+                    "f_ci_lower": np.nan,
+                    "f_ci_upper": np.nan,
+                    "f_ci_lower_conditional": np.nan,
+                    "f_ci_upper_conditional": np.nan,
+                    "efficiency_ci_lower": np.nan,
+                    "efficiency_ci_upper": np.nan,
+                }
+                denom_local = abs(param_val_local)
+                if np.isfinite(summary["std_tau"]) and mean_detected > 0.0 and denom_local > 1e-12:
+                    summary["f_value_conditional"] = (summary["std_tau"] / denom_local) * np.sqrt(mean_detected)
+                    if summary["f_value_conditional"] > 0.0:
+                        summary["efficiency_conditional"] = min(1.0, 1.0 / (summary["f_value_conditional"] ** 2))
+                if np.isfinite(summary["std_tau"]) and photon_budget > 0.0 and denom_local > 1e-12:
+                    summary["f_value_effective"] = (summary["std_tau"] / denom_local) * np.sqrt(photon_budget)
+                    summary["f_value"] = summary["f_value_effective"]
+                    if summary["f_value_effective"] > 0.0:
+                        summary["efficiency"] = min(1.0, 1.0 / (summary["f_value_effective"] ** 2))
+                if summary["n_valid"] >= 2:
+                    summary["p_value"] = self._bootstrap_accuracy_pvalue(
+                        finite_only,
+                        float(param_val_local),
+                        bootstrap_samples,
+                        rng,
+                    )
+                    summary["compatible"] = bool(np.isfinite(summary["p_value"]) and summary["p_value"] >= alpha_threshold)
+                elif summary["n_valid"] == 1:
+                    summary["p_value"] = 1.0 if np.isclose(finite_only[0], param_val_local) else 0.0
+                    summary["compatible"] = bool(summary["p_value"] >= alpha_threshold)
+                if compute_ci:
+                    ci_payload = self._bootstrap_precision_intervals(
+                        estimates_local,
+                        n_detections,
+                        float(param_val_local),
+                        bootstrap_samples,
+                        rng,
+                        photon_budget=photon_budget,
+                        conditional_photon_budget=mean_detected,
+                    )
+                    summary.update(ci_payload)
+                return summary
+
             mean_detected = float(np.nanmean(n_detections)) if len(n_detections) else 0.0
             photon_basis_mode = self._resolve_f_photon_basis_mode()
             collected_fraction = (mean_detected / float(n_photons)) if float(n_photons) > 0 else 0.0
@@ -2497,45 +2924,40 @@ class TwinEngine:
                 photon_basis_mode=photon_basis_mode,
                 cfg=self.config,
             )
-            denom = abs(param_val)
-            if np.isfinite(std_tau[idx]) and mean_detected > 0:
-                if denom > 1e-12:
-                    f_values_conditional[idx] = (std_tau[idx] / denom) * np.sqrt(mean_detected)
-                    if f_values_conditional[idx] > 0:
-                        p_eff_conditional[idx] = min(1.0, 1.0 / (f_values_conditional[idx] ** 2))
-            if np.isfinite(std_tau[idx]) and photon_budget > 0:
-                if denom > 1e-12:
-                    f_values_effective[idx] = (std_tau[idx] / denom) * np.sqrt(photon_budget)
-                    f_values[idx] = f_values_effective[idx]
-                    if f_values_effective[idx] > 0:
-                        p_eff[idx] = min(1.0, 1.0 / (f_values_effective[idx] ** 2))
-            if n_valid[idx] >= 2:
-                p_values[idx] = self._bootstrap_accuracy_pvalue(
-                    finite_est,
-                    float(param_val),
-                    bootstrap_samples,
-                    rng,
-                )
-                compatible[idx] = bool(np.isfinite(p_values[idx]) and p_values[idx] >= alpha_threshold)
-            elif n_valid[idx] == 1:
-                p_values[idx] = 1.0 if np.isclose(finite_est[0], param_val) else 0.0
-                compatible[idx] = bool(p_values[idx] >= alpha_threshold)
-            if compute_ci:
-                ci_payload = self._bootstrap_precision_intervals(
-                    param_est,
-                    n_detections,
-                    float(param_val),
-                    bootstrap_samples,
-                    rng,
-                    photon_budget=photon_budget,
-                    conditional_photon_budget=mean_detected,
-                )
-                f_ci_lower[idx] = ci_payload["f_ci_lower"]
-                f_ci_upper[idx] = ci_payload["f_ci_upper"]
-                f_ci_lower_conditional[idx] = ci_payload["f_ci_lower_conditional"]
-                f_ci_upper_conditional[idx] = ci_payload["f_ci_upper_conditional"]
-                eff_ci_lower[idx] = ci_payload["efficiency_ci_lower"]
-                eff_ci_upper[idx] = ci_payload["efficiency_ci_upper"]
+            raw_summary = _summarise_estimates(param_est, float(param_val))
+            mean_tau[idx] = raw_summary["mean_tau"]
+            std_tau[idx] = raw_summary["std_tau"]
+            f_values[idx] = raw_summary["f_value"]
+            f_values_conditional[idx] = raw_summary["f_value_conditional"]
+            f_values_effective[idx] = raw_summary["f_value_effective"]
+            p_eff[idx] = raw_summary["efficiency"]
+            p_eff_conditional[idx] = raw_summary["efficiency_conditional"]
+            p_values[idx] = raw_summary["p_value"]
+            compatible[idx] = raw_summary["compatible"]
+            f_ci_lower[idx] = raw_summary["f_ci_lower"]
+            f_ci_upper[idx] = raw_summary["f_ci_upper"]
+            f_ci_lower_conditional[idx] = raw_summary["f_ci_lower_conditional"]
+            f_ci_upper_conditional[idx] = raw_summary["f_ci_upper_conditional"]
+            eff_ci_lower[idx] = raw_summary["efficiency_ci_lower"]
+            eff_ci_upper[idx] = raw_summary["efficiency_ci_upper"]
+            if corrected_est is not None:
+                corrected_summary = _summarise_estimates(corrected_est, float(param_val))
+                corrected_n_valid[idx] = corrected_summary["n_valid"]
+                corrected_mean_tau[idx] = corrected_summary["mean_tau"]
+                corrected_std_tau[idx] = corrected_summary["std_tau"]
+                corrected_f_values[idx] = corrected_summary["f_value"]
+                corrected_f_values_conditional[idx] = corrected_summary["f_value_conditional"]
+                corrected_f_values_effective[idx] = corrected_summary["f_value_effective"]
+                corrected_p_eff[idx] = corrected_summary["efficiency"]
+                corrected_p_eff_conditional[idx] = corrected_summary["efficiency_conditional"]
+                corrected_p_values[idx] = corrected_summary["p_value"]
+                corrected_compatible[idx] = corrected_summary["compatible"]
+                corrected_f_ci_lower[idx] = corrected_summary["f_ci_lower"]
+                corrected_f_ci_upper[idx] = corrected_summary["f_ci_upper"]
+                corrected_f_ci_lower_conditional[idx] = corrected_summary["f_ci_lower_conditional"]
+                corrected_f_ci_upper_conditional[idx] = corrected_summary["f_ci_upper_conditional"]
+                corrected_eff_ci_lower[idx] = corrected_summary["efficiency_ci_lower"]
+                corrected_eff_ci_upper[idx] = corrected_summary["efficiency_ci_upper"]
             if point_callback is not None:
                 point_callback(
                     idx,
@@ -2552,7 +2974,7 @@ class TwinEngine:
                 )
 
         self._set_cfg_param(target_param, original_param_value)
-        return {
+        result = {
             "estimate_param": target_param,
             "mean_tau": mean_tau,
             "std_tau": std_tau,
@@ -2574,6 +2996,32 @@ class TwinEngine:
             "efficiency_ci_lower": eff_ci_lower,
             "efficiency_ci_upper": eff_ci_upper,
         }
+        if correction_method != "none":
+            result["deadtime_correction"] = {
+                "method": correction_method,
+                "estimator": "histogram_corrected_gridded_mle",
+                "monte_carlo_corrected": {
+                    "mean_tau": corrected_mean_tau,
+                    "std_tau": corrected_std_tau,
+                    "mean_estimate": corrected_mean_tau,
+                    "std_estimate": corrected_std_tau,
+                    "f_value": corrected_f_values,
+                    "f_value_conditional": corrected_f_values_conditional,
+                    "f_value_effective": corrected_f_values_effective,
+                    "efficiency": corrected_p_eff,
+                    "efficiency_conditional": corrected_p_eff_conditional,
+                    "p_value": corrected_p_values,
+                    "compatible": corrected_compatible,
+                    "n_valid": corrected_n_valid,
+                    "f_ci_lower": corrected_f_ci_lower,
+                    "f_ci_upper": corrected_f_ci_upper,
+                    "f_ci_lower_conditional": corrected_f_ci_lower_conditional,
+                    "f_ci_upper_conditional": corrected_f_ci_upper_conditional,
+                    "efficiency_ci_lower": corrected_eff_ci_lower,
+                    "efficiency_ci_upper": corrected_eff_ci_upper,
+                },
+            }
+        return result
 
     def simulate_photons_with_deadtime(self, tau: Optional[float], n_total: int, b_rate: float = 0.0) -> np.ndarray:
         """
@@ -3563,19 +4011,260 @@ class TwinEngine:
         finally:
             self.config = original_cfg
 
-    def _throughput_metric(self, cfg: PhysicsConfig, reference_excitation_area: float) -> float:
+    def _configured_precision_rate_hz(self, cfg: Optional[PhysicsConfig] = None) -> float:
+        cfg = cfg or self.config
+        photons = max(float(getattr(cfg, "precision_photons", 0.0)), 0.0)
+        dwell_s = max(float(getattr(cfg, "event_pixel_dwell_time_s", 1e-3)), 1e-12)
+        return photons / dwell_s
+
+    def _throughput_metric(
+        self,
+        cfg: PhysicsConfig,
+        reference_excitation_area: float,
+        reference_precision_rate_hz: Optional[float] = None,
+    ) -> float:
         gate_count = max(int(len(getattr(cfg, "gate_edges", [])) - 1), 1)
         area, _ = self._excitation_area_and_peak(cfg)
         constraint = str(getattr(cfg, "excitation_optimization_constraint", "fixed_dose")).lower()
         photon_scale = area / max(float(reference_excitation_area), 1e-12) if constraint == "fixed_peak" else 1.0
         collection_scale = 1.0 / gate_count if str(getattr(cfg, "gate_collection_mode", "histogram")).lower() == "sequential" else 1.0
-        return max(photon_scale * collection_scale, 1e-12)
+        if reference_precision_rate_hz is None:
+            rate_scale = 1.0
+        else:
+            rate_scale = self._configured_precision_rate_hz(cfg) / max(float(reference_precision_rate_hz), 1e-12)
+        return max(photon_scale * collection_scale * rate_scale, 1e-12)
 
     @staticmethod
-    def _peak_efficiency_from_f_values(f_values: np.ndarray) -> float:
+    def _efficiency_curve_from_f_values(f_values: np.ndarray) -> np.ndarray:
         f_arr = np.asarray(f_values, dtype=float)
         with np.errstate(divide="ignore", invalid="ignore"):
             efficiency = np.where(np.isfinite(f_arr) & (f_arr > 0.0), 1.0 / np.square(f_arr), np.nan)
+        return np.clip(efficiency, 0.0, 1.0)
+
+    @staticmethod
+    def _efficiency_auc_from_curve(x_range: np.ndarray, efficiency_curve: np.ndarray) -> float:
+        x_arr = np.asarray(x_range, dtype=float)
+        eff_arr = np.asarray(efficiency_curve, dtype=float)
+        if x_arr.size == 0 or eff_arr.size == 0 or not np.any(np.isfinite(eff_arr)):
+            return 0.0
+        return float(np.trapezoid(eff_arr, x_arr) if hasattr(np, "trapezoid") else np.trapz(eff_arr, x_arr))
+
+    def _optimization_efficiency_summary(
+        self,
+        cfg: PhysicsConfig,
+        x_range: np.ndarray,
+        *,
+        objective_mode: str,
+        n_photons: int = int(1e4),
+        precomputed_f_values: Optional[np.ndarray] = None,
+        reference_excitation_area: float = 1.0,
+        reference_precision_rate_hz: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        display_basis = self._resolve_f_photon_basis_mode(getattr(cfg, "optimization_f_photon_basis", "period"))
+        correction_method = self._resolve_deadtime_correction_method(None, cfg)
+        correction_enabled = correction_method != "none"
+        if precomputed_f_values is None:
+            if correction_enabled:
+                _, display_f, _ = self.compute_deadtime_corrected_fisher_info(
+                    x_range,
+                    int(n_photons),
+                    correction_method=correction_method,
+                    photon_basis_mode=display_basis,
+                )
+            else:
+                _, display_f = self.compute_fisher_info(
+                    x_range,
+                    int(n_photons),
+                    photon_basis_mode=display_basis,
+                )
+        else:
+            display_f = np.asarray(precomputed_f_values, dtype=float)
+        display_eff_curve = self._efficiency_curve_from_f_values(display_f)
+        display_peak_efficiency = self._peak_efficiency_from_f_values(display_f)
+        display_auc_efficiency = self._efficiency_auc_from_curve(x_range, display_eff_curve)
+
+        selected_basis = display_basis
+        selected_peak_efficiency = display_peak_efficiency
+        selected_auc_efficiency = display_auc_efficiency
+        if str(objective_mode).lower() in {"fisher_throughput", "throughput_auc"}:
+            selected_basis = "all"
+            if selected_basis == display_basis:
+                selected_f = display_f
+            else:
+                if correction_enabled:
+                    _, selected_f, _ = self.compute_deadtime_corrected_fisher_info(
+                        x_range,
+                        int(n_photons),
+                        correction_method=correction_method,
+                        photon_basis_mode=selected_basis,
+                    )
+                else:
+                    _, selected_f = self.compute_fisher_info(
+                        x_range,
+                        int(n_photons),
+                        photon_basis_mode=selected_basis,
+                    )
+            selected_eff_curve = self._efficiency_curve_from_f_values(selected_f)
+            selected_peak_efficiency = self._peak_efficiency_from_f_values(selected_f)
+            selected_auc_efficiency = self._efficiency_auc_from_curve(x_range, selected_eff_curve)
+
+        throughput_scale = self._throughput_metric(
+            cfg,
+            reference_excitation_area,
+            reference_precision_rate_hz=reference_precision_rate_hz,
+        )
+        throughput_metric = selected_peak_efficiency * throughput_scale
+        throughput_auc = selected_auc_efficiency * throughput_scale
+
+        return {
+            "display_photon_basis": display_basis,
+            "deadtime_correction_enabled": correction_enabled,
+            "display_peak_efficiency": float(display_peak_efficiency),
+            "display_auc_efficiency": float(display_auc_efficiency),
+            "objective_photon_basis": selected_basis,
+            "selected_photon_basis": selected_basis,
+            "peak_efficiency": float(selected_peak_efficiency),
+            "selected_peak_efficiency": float(selected_peak_efficiency),
+            "auc_efficiency": float(selected_auc_efficiency),
+            "selected_auc_efficiency": float(selected_auc_efficiency),
+            "throughput_metric": float(throughput_metric),
+            "throughput_auc": float(throughput_auc),
+        }
+
+    @staticmethod
+    def _merge_rate_candidates(candidates: List[float], extras: List[float]) -> np.ndarray:
+        merged = np.asarray(list(candidates) + list(extras), dtype=float)
+        merged = merged[np.isfinite(merged) & (merged > 0.0)]
+        if merged.size == 0:
+            return np.asarray([], dtype=float)
+        return np.unique(np.round(merged, 12))
+
+    def _initial_count_rate_candidates(self, cfg: PhysicsConfig) -> np.ndarray:
+        kcps_min = max(float(getattr(cfg, "count_rate_optimization_min_kcps", 10.0)), 1e-6)
+        kcps_max = max(float(getattr(cfg, "count_rate_optimization_max_kcps", kcps_min)), kcps_min)
+        n_steps = max(int(getattr(cfg, "count_rate_optimization_steps", 24)), 3)
+        scale = str(getattr(cfg, "count_rate_optimization_scale", "log")).lower()
+        current_kcps = max(self._configured_precision_rate_hz(cfg) / 1000.0, 1e-6)
+
+        deadtime_ns = max(float(getattr(cfg, "detector_deadtime", 0.0)), 0.0)
+        if deadtime_ns > 0.0:
+            deadtime_ceiling_kcps = max((0.98 / max(deadtime_ns * 1e-9, 1e-15)) / 1000.0, kcps_min)
+            kcps_max = min(kcps_max, deadtime_ceiling_kcps)
+        if kcps_max < kcps_min:
+            kcps_max = kcps_min
+
+        base = (
+            np.linspace(kcps_min, kcps_max, n_steps)
+            if scale == "linear"
+            else np.geomspace(kcps_min, kcps_max, n_steps)
+        )
+        extras = [
+            float(np.clip(current_kcps, kcps_min, kcps_max)),
+            float(np.clip(current_kcps * 0.5, kcps_min, kcps_max)),
+            float(np.clip(current_kcps * 2.0, kcps_min, kcps_max)),
+        ]
+        return self._merge_rate_candidates(base.tolist(), extras)
+
+    def _refined_count_rate_candidates(
+        self,
+        cfg: PhysicsConfig,
+        coarse_rates: np.ndarray,
+        candidates: List[Tuple[PhysicsConfig, Dict[str, Any]]],
+    ) -> np.ndarray:
+        if coarse_rates.size < 2 or not candidates:
+            return np.asarray([], dtype=float)
+
+        rate_by_idx = [float(item[1].get("count_rate_kcps", np.nan)) for item in candidates]
+        bias_limit = max(float(getattr(cfg, "count_rate_optimization_max_bias_pct", 2.0)), 0.0)
+        guard_enabled = bool(getattr(cfg, "count_rate_optimization_enforce_accuracy", True))
+
+        extras: List[float] = []
+        if guard_enabled:
+            feasible_flags = [
+                np.isfinite(float(item[1].get("max_relative_bias_pct", np.inf)))
+                and float(item[1].get("max_relative_bias_pct", np.inf)) <= bias_limit + 1e-12
+                for item in candidates
+            ]
+            for idx in range(len(feasible_flags) - 1):
+                if feasible_flags[idx] and not feasible_flags[idx + 1]:
+                    left = rate_by_idx[idx]
+                    right = rate_by_idx[idx + 1]
+                    if np.isfinite(left) and np.isfinite(right) and right > left > 0.0:
+                        extras.extend(np.geomspace(left, right, 7).tolist())
+
+        best_idx = max(
+            range(len(candidates)),
+            key=lambda i: float(candidates[i][1].get("throughput_metric", -np.inf)),
+        )
+        anchor = rate_by_idx[best_idx]
+        if np.isfinite(anchor) and anchor > 0.0:
+            lower = max(anchor / 2.0, coarse_rates[0])
+            upper = min(anchor * 2.0, coarse_rates[-1])
+            if upper > lower:
+                extras.extend(np.geomspace(lower, upper, 9).tolist())
+
+        refined = self._merge_rate_candidates(coarse_rates.tolist(), extras)
+        return refined[~np.isin(refined, coarse_rates)]
+
+    def _predicted_accuracy_bias_summary(
+        self,
+        cfg: PhysicsConfig,
+        x_range: np.ndarray,
+        n_photons: int,
+    ) -> Dict[str, Any]:
+        original_cfg = self.config
+        try:
+            local_cfg = copy.deepcopy(cfg)
+            local_cfg.a_photons = float(n_photons)
+            self.config = local_cfg
+            self.invalidate_grid()
+            self.distill_gates()
+            self.ensure_grid_current()
+
+            x_arr = np.asarray(x_range, dtype=float)
+            param_name = str(getattr(self.config, "f_x_param", "tau1"))
+            original_param = self._get_cfg_param(param_name)
+            gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
+            correction_method = self._resolve_deadtime_correction_method(None, self.config)
+            expected_estimates = np.full(x_arr.shape, np.nan, dtype=float)
+            rel_bias_pct = np.full(x_arr.shape, np.nan, dtype=float)
+
+            for idx, truth in enumerate(x_arr):
+                self._set_cfg_param(param_name, float(truth))
+                pdf = self.dt_pdf(self.time_vector)
+                conditional_probs, collected_fraction = self._gate_statistics_from_pdf(
+                    pdf,
+                    float(n_photons),
+                    gate_profiles,
+                    self.config,
+                )
+                observed_counts = np.asarray(conditional_probs, dtype=float) * float(collected_fraction) * float(n_photons)
+                estimate = float(
+                    self.estimate_tau_batch(
+                        observed_counts.reshape(1, -1),
+                        photon_budget=float(n_photons),
+                        correction_method=correction_method,
+                    )[0]
+                )
+                expected_estimates[idx] = estimate
+                denom = max(abs(float(truth)), 1e-12)
+                rel_bias_pct[idx] = abs(estimate - float(truth)) / denom * 100.0
+
+            self._set_cfg_param(param_name, original_param)
+            finite = rel_bias_pct[np.isfinite(rel_bias_pct)]
+            return {
+                "predicted_estimate": expected_estimates,
+                "relative_bias_pct": rel_bias_pct,
+                "max_relative_bias_pct": float(np.nanmax(finite)) if finite.size else np.nan,
+                "rms_relative_bias_pct": float(np.sqrt(np.mean(np.square(finite)))) if finite.size else np.nan,
+            }
+        finally:
+            self.config = original_cfg
+            self.invalidate_grid()
+
+    @staticmethod
+    def _peak_efficiency_from_f_values(f_values: np.ndarray) -> float:
+        efficiency = TwinEngine._efficiency_curve_from_f_values(f_values)
         if not np.any(np.isfinite(efficiency)):
             return 0.0
         return float(np.clip(np.nanmax(efficiency), 0.0, 1.0))
@@ -3614,7 +4303,7 @@ class TwinEngine:
                 _, f_val = self.compute_fisher_info(
                     x_range,
                     int(reference_cfg.precision_photons),
-                    photon_basis_mode=getattr(reference_cfg, "optimization_f_photon_basis", "period"),
+                    photon_basis_mode="all",
                 )
                 return self._peak_efficiency_from_f_values(f_val)
             finally:
@@ -3648,7 +4337,7 @@ class TwinEngine:
         _, f_val = scratch.compute_fisher_info(
             x_range,
             int(reference_cfg.precision_photons),
-            photon_basis_mode=getattr(reference_cfg, "optimization_f_photon_basis", "period"),
+            photon_basis_mode="all",
         )
         return scratch._peak_efficiency_from_f_values(f_val)
 
@@ -3683,6 +4372,7 @@ class TwinEngine:
                                       progress_callback: Optional[Callable],
                                       objective_mode: str,
                                       reference_excitation_area: float,
+                                      reference_precision_rate_hz: Optional[float] = None,
                                       note: str = "") -> Dict[str, Any]:
         original_cfg = self.config
         try:
@@ -3696,12 +4386,20 @@ class TwinEngine:
             )
             mean_f = float(np.nanmean(f_val)) if np.any(np.isfinite(f_val)) else np.inf
             min_f = float(np.nanmin(f_val)) if np.any(np.isfinite(f_val)) else np.nan
-            eff_curve = np.minimum(1.0, 1.0 / np.maximum(np.square(np.asarray(f_val, dtype=float)), 1e-12))
-            peak_efficiency = self._peak_efficiency_from_f_values(f_val)
-            auc_efficiency = float(np.trapezoid(eff_curve, x_range) if hasattr(np, "trapezoid") else np.trapz(eff_curve, x_range))
-            throughput_scale = self._throughput_metric(candidate_cfg, reference_excitation_area)
-            throughput_metric = peak_efficiency * throughput_scale
-            throughput_auc = auc_efficiency * throughput_scale
+            efficiency_summary = self._optimization_efficiency_summary(
+                candidate_cfg,
+                x_range,
+                objective_mode=objective_mode,
+                n_photons=int(1e4),
+                precomputed_f_values=f_val,
+                reference_excitation_area=reference_excitation_area,
+                reference_precision_rate_hz=reference_precision_rate_hz,
+            )
+            peak_efficiency = float(efficiency_summary["peak_efficiency"])
+            auc_efficiency = float(efficiency_summary["auc_efficiency"])
+            throughput_metric = float(efficiency_summary["throughput_metric"])
+            throughput_auc = float(efficiency_summary["throughput_auc"])
+            throughput_scale = throughput_metric / max(peak_efficiency, 1e-12)
             if objective_mode == "fisher_information":
                 objective = mean_f
             elif objective_mode == "photon_efficiency_auc":
@@ -3727,8 +4425,15 @@ class TwinEngine:
             payload["min_f"] = float(min_f)
             payload["peak_efficiency"] = float(peak_efficiency)
             payload["auc_efficiency"] = float(auc_efficiency)
+            payload["display_peak_efficiency"] = float(efficiency_summary["display_peak_efficiency"])
+            payload["display_auc_efficiency"] = float(efficiency_summary["display_auc_efficiency"])
+            payload["objective_photon_basis"] = str(
+                efficiency_summary.get("objective_photon_basis", efficiency_summary.get("selected_photon_basis", "all"))
+            )
+            payload["display_photon_basis"] = str(efficiency_summary["display_photon_basis"])
             payload["throughput_auc"] = float(throughput_auc)
             payload["excitation_summary"] = self._summarise_excitation_profile(candidate_cfg)
+            payload["count_rate_kcps"] = float(self._configured_precision_rate_hz(candidate_cfg) / 1000.0)
             self._emit_gate_optimization_progress(callback, progress_callback, payload)
             return payload
         finally:
@@ -3738,7 +4443,8 @@ class TwinEngine:
     def optimize_excitation(self, tau_range: Tuple[float, float], n_tau: int = 50,
                             callback: Optional[Callable] = None,
                             progress_callback: Optional[Callable] = None,
-                            throughput_reference_peak_efficiency: Optional[float] = None) -> Tuple[PhysicsConfig, float, Dict[str, Any]]:
+                            throughput_reference_peak_efficiency: Optional[float] = None,
+                            reference_precision_rate_hz: Optional[float] = None) -> Tuple[PhysicsConfig, float, Dict[str, Any]]:
         cfg = copy.deepcopy(self.config)
         x_range = self._build_optimization_x_range(cfg, float(tau_range[0]), float(tau_range[1]), int(n_tau))
         objective_mode = str(getattr(cfg, "optimization_objective", "fisher_information")).lower()
@@ -3756,6 +4462,7 @@ class TwinEngine:
                 progress_callback=progress_callback,
                 objective_mode=objective_mode,
                 reference_excitation_area=reference_area,
+                reference_precision_rate_hz=reference_precision_rate_hz,
                 note=note,
             )
             history.append(self._clone_gate_optimization_payload(payload))
@@ -3854,6 +4561,119 @@ class TwinEngine:
         }
         return copy.deepcopy(best_cfg), float(best_payload["objective"]), info
 
+    def optimize_count_rate(
+        self,
+        tau_range: Tuple[float, float],
+        n_tau: int = 50,
+        callback: Optional[Callable] = None,
+        progress_callback: Optional[Callable] = None,
+    ) -> Tuple[PhysicsConfig, float, Dict[str, Any]]:
+        cfg = copy.deepcopy(self.config)
+        x_range = self._build_optimization_x_range(cfg, float(tau_range[0]), float(tau_range[1]), int(n_tau))
+        objective_mode = str(getattr(cfg, "optimization_objective", "fisher_information")).lower()
+        reference_area, _ = self._excitation_area_and_peak(cfg)
+        reference_rate_hz = self._configured_precision_rate_hz(cfg)
+        accuracy_guard_enabled = bool(getattr(cfg, "count_rate_optimization_enforce_accuracy", True))
+        accuracy_bias_limit_pct = max(float(getattr(cfg, "count_rate_optimization_max_bias_pct", 2.0)), 0.0)
+        history: List[Dict[str, Any]] = []
+
+        def evaluate_candidate(candidate_cfg: PhysicsConfig, step: int, note: str) -> Dict[str, Any]:
+            payload = self._evaluate_optimization_config(
+                candidate_cfg,
+                x_range,
+                algorithm="count_rate_scan",
+                step=step,
+                callback=callback,
+                progress_callback=progress_callback,
+                objective_mode=objective_mode,
+                reference_excitation_area=reference_area,
+                reference_precision_rate_hz=reference_rate_hz,
+                note=note,
+            )
+            bias_summary = self._predicted_accuracy_bias_summary(
+                candidate_cfg,
+                x_range,
+                int(candidate_cfg.precision_photons),
+            )
+            payload["accuracy_guard"] = bias_summary
+            payload["max_relative_bias_pct"] = float(bias_summary["max_relative_bias_pct"])
+            payload["rms_relative_bias_pct"] = float(bias_summary["rms_relative_bias_pct"])
+            history.append(self._clone_gate_optimization_payload(payload))
+            return payload
+
+        coarse_candidate_kcps = self._initial_count_rate_candidates(cfg)
+
+        candidates: List[Tuple[PhysicsConfig, Dict[str, Any]]] = []
+        step = 0
+
+        def scan_rates(rate_grid: np.ndarray, phase: str) -> None:
+            nonlocal step
+            for kcps in rate_grid:
+                if bool(getattr(self.config, "b_interrupt", False)):
+                    raise InterruptedError("Optimisation interrupted.")
+                candidate_cfg = copy.deepcopy(cfg)
+                target_rate_hz = max(float(kcps) * 1000.0, 1.0)
+                candidate_cfg.event_pixel_dwell_time_s = float(max(candidate_cfg.precision_photons, 1) / target_rate_hz)
+                payload = evaluate_candidate(candidate_cfg, step, f"{phase}: count_rate={float(kcps):.6g} kcps")
+                candidates.append((candidate_cfg, payload))
+                step += 1
+
+        scan_rates(coarse_candidate_kcps, "coarse")
+        refined_candidate_kcps = self._refined_count_rate_candidates(cfg, coarse_candidate_kcps, candidates)
+        if refined_candidate_kcps.size > 0:
+            scan_rates(refined_candidate_kcps, "refined")
+
+        if objective_mode in {"fisher_throughput", "throughput_auc"}:
+            ref_peak_eff = max(float(item[1].get("peak_efficiency", 0.0)) for item in candidates)
+            min_allowed = max(0.0, ref_peak_eff - max(float(getattr(cfg, "optimization_max_fi_loss_pct", 5.0)), 0.0) / 100.0)
+            feasible = [item for item in candidates if float(item[1].get("peak_efficiency", 0.0)) >= min_allowed - 1e-12]
+            accuracy_feasible = feasible
+            if accuracy_guard_enabled:
+                accuracy_feasible = [
+                    item for item in feasible
+                    if float(item[1].get("max_relative_bias_pct", np.inf)) <= accuracy_bias_limit_pct + 1e-12
+                ]
+            choice = (
+                max(accuracy_feasible, key=lambda item: (float(item[1]["throughput_metric"]), -float(item[0].event_pixel_dwell_time_s)))
+                if accuracy_feasible
+                else min(
+                    feasible,
+                    key=lambda item: (
+                        float(item[1].get("max_relative_bias_pct", np.inf)),
+                        -float(item[1]["throughput_metric"]),
+                    ),
+                )
+                if feasible
+                else max(candidates, key=lambda item: (float(item[1].get("peak_efficiency", 0.0)), -float(item[1].get("max_relative_bias_pct", np.inf))))
+            )
+        else:
+            feasible = candidates
+            if accuracy_guard_enabled:
+                filtered = [
+                    item for item in candidates
+                    if float(item[1].get("max_relative_bias_pct", np.inf)) <= accuracy_bias_limit_pct + 1e-12
+                ]
+                if filtered:
+                    feasible = filtered
+                else:
+                    feasible = sorted(
+                        candidates,
+                        key=lambda item: float(item[1].get("max_relative_bias_pct", np.inf)),
+                    )
+            choice = min(feasible, key=lambda item: float(item[1]["objective"]))
+
+        best_cfg, best_payload = choice
+        info = {
+            "history": history,
+            "x_range": np.array(x_range, copy=True),
+            "algorithm": "count_rate_scan",
+            "accuracy_guard_enabled": accuracy_guard_enabled,
+            "accuracy_bias_limit_pct": float(accuracy_bias_limit_pct),
+            "coarse_candidate_kcps": np.array(coarse_candidate_kcps, copy=True),
+            "refined_candidate_kcps": np.array(refined_candidate_kcps, copy=True),
+        }
+        return copy.deepcopy(best_cfg), float(best_payload["objective"]), info
+
     def run_optimization_workflow(self, progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
         cfg = copy.deepcopy(self.config)
         x_range = self._build_optimization_x_range(
@@ -3871,7 +4691,9 @@ class TwinEngine:
 
         run_detection = bool(getattr(cfg, "optimize_detection_gates", False))
         run_excitation = bool(getattr(cfg, "optimize_excitation_profile", False))
+        run_count_rate = bool(getattr(cfg, "optimize_count_rate", False))
         objective_mode = str(getattr(cfg, "optimization_objective", "fisher_information")).lower()
+        reference_precision_rate_hz = self._configured_precision_rate_hz(cfg)
         excitation_throughput_reference = None
         if run_excitation and objective_mode == "fisher_throughput":
             excitation_throughput_reference = self._build_excitation_throughput_reference_peak_efficiency(
@@ -3907,36 +4729,60 @@ class TwinEngine:
                 n_tau=max(int(self.config.f_x_steps), 10),
                 progress_callback=on_progress,
                 throughput_reference_peak_efficiency=excitation_throughput_reference,
+                reference_precision_rate_hz=reference_precision_rate_hz,
             )
             self.config = copy.deepcopy(best_cfg)
             self.invalidate_grid()
             self.distill_gates()
             return float(best_j)
 
-        if not run_detection and not run_excitation:
+        def run_count_rate_stage():
+            best_cfg, best_j, _ = self.optimize_count_rate(
+                tau_range=(float(self.config.f_x_min), float(self.config.f_x_max)),
+                n_tau=max(int(self.config.f_x_steps), 10),
+                progress_callback=on_progress,
+            )
+            self.config = copy.deepcopy(best_cfg)
+            self.invalidate_grid()
+            self.distill_gates()
+            return float(best_j)
+
+        if not run_detection and not run_excitation and not run_count_rate:
             raise ValueError("Enable at least one optimisation target.")
 
         order = []
-        if run_detection and run_excitation:
-            if str(getattr(cfg, "optimization_first", "detection")).lower() == "excitation":
-                order = ["excitation", "detection"]
-            else:
-                order = ["detection", "excitation"]
-        elif run_detection:
-            order = ["detection"]
-        else:
-            order = ["excitation"]
+        for scope in ("detection", "excitation", "count_rate"):
+            enabled = {
+                "detection": run_detection,
+                "excitation": run_excitation,
+                "count_rate": run_count_rate,
+            }[scope]
+            if enabled:
+                order.append(scope)
+        first = str(getattr(cfg, "optimization_first", "detection")).lower()
+        if len(order) > 1 and first in order:
+            order = [first] + [scope for scope in order if scope != first]
 
         last_objective = np.nan
         if len(order) == 1:
-            last_objective = run_detection_stage() if order[0] == "detection" else run_excitation_stage()
+            if order[0] == "detection":
+                last_objective = run_detection_stage()
+            elif order[0] == "excitation":
+                last_objective = run_excitation_stage()
+            else:
+                last_objective = run_count_rate_stage()
         else:
             iterations = max(int(getattr(cfg, "optimization_iterations", 20)), 1)
             for _ in range(iterations):
                 for scope in order:
                     if bool(getattr(self.config, "b_interrupt", False)):
                         raise InterruptedError("Optimisation interrupted.")
-                    last_objective = run_detection_stage() if scope == "detection" else run_excitation_stage()
+                    if scope == "detection":
+                        last_objective = run_detection_stage()
+                    elif scope == "excitation":
+                        last_objective = run_excitation_stage()
+                    else:
+                        last_objective = run_count_rate_stage()
 
         final_fi, final_f = self.compute_fisher_info(
             x_range,

@@ -2,55 +2,10 @@
   "schema_version": 2,
   "profile_type": "instrument_definition",
   "name": "HydraHarp500 + LDH-IB-485-B + PMA-40 (40MHz, 256 bins)",
-  "description": "Instrument profile built from HydraHarp500 electronics, LDH-IB-485-B laser, and PMA-40 detector at 40 MHz with 256 equal bins across the full period.",
+  "description": "",
   "created_at": "2026-03-22T20:20:55Z",
-  "updated_at": "2026-03-22T20:25:53Z",
-  "metadata": {
-    "components": [
-      "PicoQuant HydraHarp500 electronics",
-      "PicoQuant LDH-IB-485-B laser",
-      "PicoQuant PMA-40 detector"
-    ],
-    "sources": [
-      "PicoQuant_HydraHarp500.pdf",
-      "PicoQuant_LDH_I_lasers.pdf",
-      "PicoQuant_PMA_detectors.pdf"
-    ],
-    "workflow": "mcp_finalized",
-    "operating_point": {
-      "repetition_rate_hz": 40000000,
-      "n_equal_bins": 256,
-      "full_period_bins": true
-    },
-    "vendor_extracted_specs": {
-      "hydraharp500": {
-        "timing_precision_ps_rms": 2.5,
-        "deadtime_ns_lt": 0.68,
-        "histogram_bins_per_channel": 131072,
-        "multi_stop_capable": true
-      },
-      "ldh_ib_485_b": {
-        "wavelength_nm": 485,
-        "pulse_fwhm_ps_lt": 100,
-        "max_rep_rate_mhz": 100,
-        "high_avg_power_mw": 10.0,
-        "cw_power_mw": 50.0
-      },
-      "pma_40": {
-        "dark_counts_cps_cooled_lt": 150,
-        "transit_time_spread_ps_fwhm_typ_lt": 120,
-        "recommended_max_count_rate_mhz": 10,
-        "afterpulsing": "negligible",
-        "detection_efficiency_pct_at_500nm_up_to": 45
-      }
-    },
-    "notes": [
-      "Timing jitter field is set from the PMA-40 detector TTS specification (120 ps FWHM-style vendor figure) as a practical instrument timing parameter.",
-      "Laser pulse width is set from the LDH-IB-485-B family line (<100 ps) using the fast 20 ps LDH-I family minimum only for the laser source is not appropriate for the specific 485-B head, so the detector timing dominates.",
-      "IRF position set to 0 ns because the requested profile defines 256 equal bins over the full 25 ns period.",
-      "Multihit capacity set to 2048 to reflect the vendor burst specification used as the chosen operating cap."
-    ]
-  },
+  "updated_at": "2026-04-08T10:56:35Z",
+  "metadata": {},
   "config": {
     "gate_edges": [
       0.0,
@@ -649,15 +604,19 @@
     "precision_accuracy_pvalue": 0.0001,
     "precision_bootstrap_samples": 2000,
     "precision_ci_level": 99.7,
+    "deadtime_correction_method": "none",
     "sweep_autoplay": true,
     "optimize_detection_gates": false,
     "optimize_excitation_profile": false,
+    "optimize_count_rate": false,
     "optimization_mode": "sequential",
     "optimization_first": "detection",
     "optimization_iterations": 20,
     "optimization_f_photon_basis": "collected",
     "optimization_objective": "fisher_throughput",
     "optimization_max_fi_loss_pct": 5.0,
+    "count_rate_optimization_enforce_accuracy": true,
+    "count_rate_optimization_max_bias_pct": 2.0,
     "optimization_realtime_visualization": false,
     "optimization_realtime_interval_s": 5.0,
     "optimization_intermediate_steps": 6,
@@ -682,6 +641,10 @@
     "excitation_optimization_width_min": 0.05,
     "excitation_optimization_width_max": 10.0,
     "excitation_optimization_control_points": 8,
+    "count_rate_optimization_min_kcps": 10.0,
+    "count_rate_optimization_max_kcps": 1000.0,
+    "count_rate_optimization_steps": 24,
+    "count_rate_optimization_scale": "log",
     "sim_mode": "spatial gradient",
     "simulation_mode_preference": "auto",
     "simulation_mode": "ideal_poisson",
