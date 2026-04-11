@@ -78,4 +78,4 @@ def test_mle_accuracy_widget_summary_mode_plots_one_bar_per_curve():
 def test_mle_accuracy_widget_summary_compacts_long_tick_labels():
     assert MLEAccuracyWidget._format_summary_tick_label("Count Rate = 1 GHz (deadtime corrected)") == "1 GHz\nDT corr."
     assert MLEAccuracyWidget._format_summary_tick_label("Count Rate = 1 GHz (Isbaner corrected)") == "1 GHz\nIsbaner corr."
-    assert MLEAccuracyWidget._format_summary_tick_label("Current Configuration (Rapp-inspired corrected)") == "Current\nRapp-insp. corr."
+    assert MLEAccuracyWidget._format_summary_tick_label("Current Configuration (Rapp (MCPDF) corrected)") == "Current\nRapp MCPDF corr."

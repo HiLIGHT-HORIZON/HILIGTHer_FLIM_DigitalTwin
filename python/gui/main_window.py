@@ -848,8 +848,10 @@ class HILIGHTMainWindow(QMainWindow):
         method = str(getattr(cfg_like, "deadtime_correction_method", "none")).lower()
         method_map = {
             "isbaner_histogram": "Isbaner",
-            "rapp_inspired_inverse": "Rapp-inspired",
-            "rapp_stationary": "Rapp-inspired",
+            "rapp_mcpdf": "Rapp (MCPDF)",
+            "rapp_inspired_inverse": "Rapp (MCPDF)",
+            "rapp_stationary": "Rapp (MCPDF)",
+            "rapp_mchc": "Rapp (MCHC)",
         }
         return method_map.get(method, "Dead-time")
 
@@ -1587,7 +1589,9 @@ class HILIGHTMainWindow(QMainWindow):
         deadtime_correction_map = {
             "none": "none",
             "isbaner-style histogram": "isbaner_histogram",
-            "rapp-inspired inverse": "rapp_inspired_inverse",
+            "rapp (mcpdf)": "rapp_mcpdf",
+            "rapp-inspired inverse": "rapp_mcpdf",
+            "rapp (mchc)": "rapp_mchc",
         }
         cfg.deadtime_correction_method = deadtime_correction_map.get(
             cw.combo_deadtime_correction.currentText().lower(),

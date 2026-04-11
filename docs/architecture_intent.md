@@ -20,6 +20,7 @@ The current product intent also includes:
 - a fast Poisson core that can include a detector transfer function,
 - a slower event-driven detector core used as the explicit chronological reference,
 - selectable dead-time correction families that must stay aligned across the backend, GUI, optimisation, and service surfaces, and operate on experimentally available histogram data plus calibrated instrument metadata rather than hidden emitted-photon budgets,
+- precision workflows that keep the raw detector-limited Monte Carlo baseline distinct from any corrected companion estimate when a dead-time correction family is enabled,
 - structured MCP-assisted instrument-profile drafting and finalisation,
 - publication-oriented clipboard/report export without changing the live widget layout.
 

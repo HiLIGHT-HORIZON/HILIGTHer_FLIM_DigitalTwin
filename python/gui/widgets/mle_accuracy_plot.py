@@ -188,10 +188,12 @@ class MLEAccuracyWidget(QWidget):
         text = text.replace("(deadtime corrected)", "DT corr.")
         text = text.replace("deadtime corrected", "DT corr.")
         text = text.replace("(Isbaner corrected)", "Isbaner corr.")
-        text = text.replace("(Rapp-inspired corrected)", "Rapp-insp. corr.")
+        text = text.replace("(Rapp (MCPDF) corrected)", "Rapp MCPDF corr.")
+        text = text.replace("(Rapp (MCHC) corrected)", "Rapp MCHC corr.")
+        text = text.replace("(Rapp-inspired corrected)", "Rapp MCPDF corr.")
         text = text.replace("(Rapp corrected)", "Rapp corr.")
         text = text.replace("Current Configuration", "Current")
-        for suffix in ("DT corr.", "Isbaner corr.", "Rapp-insp. corr.", "Rapp corr."):
+        for suffix in ("DT corr.", "Isbaner corr.", "Rapp MCPDF corr.", "Rapp MCHC corr.", "Rapp corr."):
             if suffix in text:
                 main = text.replace(suffix, "").replace("()", "").strip()
                 return f"{main}\n{suffix}"

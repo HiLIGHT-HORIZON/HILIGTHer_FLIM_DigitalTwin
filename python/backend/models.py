@@ -136,7 +136,7 @@ class PhysicsConfig(BaseModel):
     precision_accuracy_pvalue: float = 0.0001
     precision_bootstrap_samples: int = 2000
     precision_ci_level: float = 99.7
-    deadtime_correction_method: str = "none"  # none, isbaner_histogram, rapp_inspired_inverse
+    deadtime_correction_method: str = "none"  # none, isbaner_histogram, rapp_mcpdf, rapp_mchc
     sweep_autoplay: bool = True
 
     # Optimization Controller

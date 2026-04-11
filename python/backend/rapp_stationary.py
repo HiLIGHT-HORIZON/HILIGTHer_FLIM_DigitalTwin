@@ -1,10 +1,10 @@
 """
 Scaffold for a future paper-faithful Rapp et al. stationary dead-time model.
 
-The currently exposed correction in HILIGHTer is a Rapp-inspired inverse fit
-implemented in `twin_engine.py` for gated histogram observations. This module
-reserves the backend surface for a future stationary-process implementation
-without overclaiming that it already exists.
+The currently exposed Rapp-family correction in HILIGHTer is a practical
+`Rapp (MCPDF)` companion fit implemented in `twin_engine.py` for gated
+histogram observations. This module reserves the backend surface for a future
+stationary-process implementation without overclaiming that it already exists.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ class RappStationaryModelScaffold:
     def gated_detection_probabilities(self, inputs: StationaryRappInputs) -> np.ndarray:
         raise NotImplementedError(
             "The paper-faithful Rapp stationary model has not been implemented yet. "
-            "Use the current 'rapp_inspired_inverse' path in twin_engine.py instead."
+            "Use the current 'rapp_mcpdf' path in twin_engine.py instead."
         )
 
     def log_likelihood(self, inputs: StationaryRappInputs) -> float:

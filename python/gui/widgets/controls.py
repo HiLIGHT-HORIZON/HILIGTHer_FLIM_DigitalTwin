@@ -361,7 +361,8 @@ class ControlWidget(QWidget):
         self.combo_deadtime_correction.addItems([
             "None",
             "Isbaner-style histogram",
-            "Rapp-inspired inverse",
+            "Rapp (MCPDF)",
+            "Rapp (MCHC)",
         ])
         exec_form.addRow("Dead-time correction:", self.combo_deadtime_correction)
 
@@ -2044,7 +2045,7 @@ class ControlWidget(QWidget):
             self.spin_accuracy_pvalue: "Bootstrap-based p-value threshold used to judge estimator accuracy.",
             self.spin_bootstrap_samples: "Number of bootstrap resamples used for p-values and confidence intervals.",
             self.spin_ci_level: "Confidence level used for the Monte Carlo interval display.",
-            self.combo_deadtime_correction: "Apply a dead-time correction companion estimator and theory curve using the selected correction family.",
+            self.combo_deadtime_correction: "Apply a dead-time correction companion estimator and theory curve using the selected correction family. Isbaner and Rapp (MCHC) first correct the histogram and then reuse the standard detector-free gridded MLE, while Rapp (MCPDF) remains a detector-aware companion fit.",
             self.lbl_ci_sigma_equiv: "Approximate Gaussian sigma-equivalent for the currently selected central confidence interval.",
             self.spin_photons: "Average photon budget for synthetic image generation.",
             self.spin_image_repeats: "Requested number of Monte Carlo-style repeats represented for each swept x-axis value.",
@@ -3384,8 +3385,10 @@ class ControlWidget(QWidget):
             deadtime_correction_map = {
                 "none": "None",
                 "isbaner_histogram": "Isbaner-style histogram",
-                "rapp_inspired_inverse": "Rapp-inspired inverse",
-                "rapp_stationary": "Rapp-inspired inverse",
+                "rapp_mcpdf": "Rapp (MCPDF)",
+                "rapp_inspired_inverse": "Rapp (MCPDF)",
+                "rapp_stationary": "Rapp (MCPDF)",
+                "rapp_mchc": "Rapp (MCHC)",
             }
             self.combo_deadtime_correction.setCurrentText(
                 deadtime_correction_map.get(getattr(cfg, "deadtime_correction_method", "none"), "None")

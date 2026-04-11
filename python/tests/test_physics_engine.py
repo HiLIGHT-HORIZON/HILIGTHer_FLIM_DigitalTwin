@@ -471,7 +471,7 @@ def test_monte_carlo_precision_rescales_f_by_selected_budget(monkeypatch):
         counts = np.tile(np.array([[10.0, 20.0, 30.0]], dtype=float), (len(detections), 1))
         return counts, np.array(detections, copy=True)
 
-    def fake_estimate_tau_batch(self, counts_batch):
+    def fake_estimate_tau_batch(self, counts_batch, photon_budget=None, correction_method=None):
         return np.array(estimates, copy=True)
 
     monkeypatch.setattr(TwinEngine, "simulate_gate_histograms", fake_simulate_gate_histograms)
@@ -503,6 +503,50 @@ def test_monte_carlo_precision_rescales_f_by_selected_budget(monkeypatch):
     assert np.isclose(payload_collected["survival_eta"][0], mean_detected / 2000.0, rtol=1e-12)
 
 
+def test_monte_carlo_precision_curve_keeps_raw_and_corrected_estimates_separate(monkeypatch):
+    tau_grid = np.array([2.0], dtype=float)
+    cfg = PhysicsConfig(
+        detector_deadtime=60.0,
+        precision_photons=2000,
+        a_photons=2000.0,
+        precision_mc_repeats=2,
+        deadtime_correction_method="isbaner_histogram",
+        gate_edges=[0.0, 0.8, 2.0, 4.0, 12.5],
+        event_pixel_dwell_time_s=2e-5,
+        f_x_param="tau1",
+        f_x_min=0.5,
+        f_x_max=4.0,
+        f_x_steps=20,
+        f_x_scale="linear",
+    )
+    counts = np.array([[10.0, 20.0, 30.0], [12.0, 18.0, 30.0]], dtype=float)
+    detections = np.array([60.0, 60.0], dtype=float)
+    raw_estimates = np.array([1.2, 1.4], dtype=float)
+    corrected_estimates = np.array([2.2, 2.4], dtype=float)
+    seen = []
+
+    def fake_simulate_gate_histograms(self, tau, n_photons, n_repeats, irf_cached=None):
+        return np.array(counts, copy=True), np.array(detections, copy=True)
+
+    def fake_estimate_tau_batch(self, counts_batch, photon_budget=None, correction_method=None):
+        seen.append(correction_method)
+        if correction_method == "none":
+            return np.array(raw_estimates[: counts_batch.shape[0]], copy=True)
+        if correction_method == "isbaner_histogram":
+            return np.array(corrected_estimates[: counts_batch.shape[0]], copy=True)
+        raise AssertionError(f"Unexpected correction method: {correction_method}")
+
+    monkeypatch.setattr(TwinEngine, "simulate_gate_histograms", fake_simulate_gate_histograms)
+    monkeypatch.setattr(TwinEngine, "estimate_tau_batch", fake_estimate_tau_batch)
+
+    payload = TwinEngine(cfg).monte_carlo_precision_curve(tau_grid, n_photons=2000, n_repeats=2)
+
+    assert seen == ["none", "isbaner_histogram"]
+    assert np.isclose(payload["mean_tau"][0], np.mean(raw_estimates), rtol=1e-12, atol=1e-12)
+    corrected = payload["deadtime_correction"]["monte_carlo_corrected"]
+    assert np.isclose(corrected["mean_tau"][0], np.mean(corrected_estimates), rtol=1e-12, atol=1e-12)
+
+
 def test_event_driven_fisher_path_keeps_detector_transfer_active():
     tau_grid = np.array([2.5])
     base_cfg = PhysicsConfig(
@@ -527,7 +571,7 @@ def test_event_driven_fisher_path_keeps_detector_transfer_active():
 
 @pytest.mark.parametrize(
     "method",
-    ["isbaner_histogram", "rapp_inspired_inverse"],
+    ["isbaner_histogram", "rapp_mcpdf", "rapp_mchc"],
 )
 def test_deadtime_correction_methods_return_finite_corrected_fisher(method):
     cfg = PhysicsConfig(
@@ -578,13 +622,20 @@ def test_deadtime_correction_methods_produce_distinct_corrected_curves():
         correction_method="isbaner_histogram",
         photon_basis_mode="all",
     )
-    _, f_rapp, _ = engine.compute_deadtime_corrected_fisher_info(
+    _, f_rapp_mcpdf, _ = engine.compute_deadtime_corrected_fisher_info(
         tau_grid,
         n_photons=2000,
-        correction_method="rapp_inspired_inverse",
+        correction_method="rapp_mcpdf",
         photon_basis_mode="all",
     )
-    assert not np.allclose(f_rapp, f_isbaner, rtol=1e-5, atol=1e-8)
+    _, f_rapp_mchc, _ = engine.compute_deadtime_corrected_fisher_info(
+        tau_grid,
+        n_photons=2000,
+        correction_method="rapp_mchc",
+        photon_basis_mode="all",
+    )
+    assert not np.allclose(f_rapp_mcpdf, f_isbaner, rtol=1e-5, atol=1e-8)
+    assert not np.allclose(f_rapp_mcpdf, f_rapp_mchc, rtol=1e-5, atol=1e-8)
 
 
 def test_deadtime_free_baseline_mle_shows_bias_and_isbaner_histogram_recovers_toward_truth():
@@ -622,7 +673,7 @@ def test_deadtime_free_baseline_mle_shows_bias_and_isbaner_histogram_recovers_to
     assert abs(isbaner - truth) < abs(baseline - truth)
 
 
-@pytest.mark.parametrize("method", ["isbaner_histogram", "rapp_inspired_inverse"])
+@pytest.mark.parametrize("method", ["isbaner_histogram", "rapp_mcpdf", "rapp_mchc"])
 def test_deadtime_corrections_do_not_require_known_total_photon_budget(method):
     cfg = PhysicsConfig(
         detector_deadtime=60.0,
@@ -675,10 +726,12 @@ def test_deadtime_method_template_families_match_cached_grid_semantics():
     observed_mass_expected = np.asarray(engine.grid_raw_templates, dtype=float) * np.asarray(engine.grid_raw_collected_fractions, dtype=float)[:, None]
 
     isbaner_mass, _, _ = engine._corrected_template_masses_for_method("isbaner_histogram")
-    rapp_mass, _, _ = engine._corrected_template_masses_for_method("rapp_inspired_inverse")
+    rapp_mcpdf_mass, _, _ = engine._corrected_template_masses_for_method("rapp_mcpdf")
+    rapp_mchc_mass, _, _ = engine._corrected_template_masses_for_method("rapp_mchc")
 
     assert np.allclose(isbaner_mass, raw_mass_expected, rtol=1e-12, atol=1e-12)
-    assert np.allclose(rapp_mass, observed_mass_expected, rtol=1e-12, atol=1e-12)
+    assert np.allclose(rapp_mcpdf_mass, observed_mass_expected, rtol=1e-12, atol=1e-12)
+    assert np.allclose(rapp_mchc_mass, raw_mass_expected, rtol=1e-12, atol=1e-12)
 
 
 def test_ideal_poisson_detector_effects_follow_distorted_gate_distribution():

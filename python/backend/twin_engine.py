@@ -698,12 +698,25 @@ class TwinEngine:
         cfg = cfg or self.config
         if correction_method is None:
             correction_method = getattr(cfg, "deadtime_correction_method", "none")
-        method = str(correction_method).lower()
-        if method == "rapp_stationary":
-            return "rapp_inspired_inverse"
-        if method not in {"none", "isbaner_histogram", "rapp_inspired_inverse"}:
-            return "none"
-        return method
+        method = str(correction_method).strip().lower().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "": "none",
+            "none": "none",
+            "off": "none",
+            "uncorrected": "none",
+            "isbaner": "isbaner_histogram",
+            "isbaner_histogram": "isbaner_histogram",
+            "isbaner_style_histogram": "isbaner_histogram",
+            "rapp": "rapp_mcpdf",
+            "mcpdf": "rapp_mcpdf",
+            "rapp_mcpdf": "rapp_mcpdf",
+            "rapp_inspired": "rapp_mcpdf",
+            "rapp_inspired_inverse": "rapp_mcpdf",
+            "rapp_stationary": "rapp_mcpdf",
+            "mchc": "rapp_mchc",
+            "rapp_mchc": "rapp_mchc",
+        }
+        return aliases.get(method, "none")
 
     def _detector_free_cfg(self, cfg: Optional[PhysicsConfig] = None) -> PhysicsConfig:
         cfg = copy.deepcopy(cfg or self.config)
@@ -739,11 +752,15 @@ class TwinEngine:
             "none": "Dead-time correction disabled.",
             "isbaner_histogram": (
                 "Histogram-style correction using only the observed gated histogram and a calibrated detector model. "
-                "It inverts the modeled gate activity and refits against detector-free templates using detected-photon information only."
+                "It corrects the histogram through modeled gate activity and then refits with the standard detector-free gridded MLE."
             ),
-            "rapp_inspired_inverse": (
-                "Rapp-inspired detected-photon inverse fit using only the observed gated histogram and the calibrated "
-                "detector-limited gate templates. This does not require a known total photon budget."
+            "rapp_mcpdf": (
+                "Rapp (MCPDF) detected-photon companion fit using only the observed gated histogram and the calibrated "
+                "detector-limited gate templates. This remains a detector-aware inverse fit rather than a histogram-correction prepass."
+            ),
+            "rapp_mchc": (
+                "Rapp (MCHC) histogram correction using only the observed gated histogram and the calibrated detector model. "
+                "It first reconstructs a corrected histogram and then refits it with the standard detector-free gridded MLE."
             ),
         }
         return notes.get(str(method).lower(), "Dead-time correction companion estimator enabled.")
@@ -788,11 +805,185 @@ class TwinEngine:
         observed_gate_mass = np.asarray(self.grid_raw_templates, dtype=float) * np.asarray(self.grid_raw_collected_fractions, dtype=float)[:, None]
         gate_activity = np.asarray(self.grid_gate_activity, dtype=float)
 
-        if method == "rapp_inspired_inverse":
+        if method == "rapp_mcpdf":
             return observed_gate_mass, np.asarray(self.grid_collected_fractions, dtype=float), gate_activity
-        if method == "isbaner_histogram":
+        if method in {"isbaner_histogram", "rapp_mchc"}:
             return raw_gate_mass, np.asarray(self.grid_collected_fractions, dtype=float), gate_activity
         return observed_gate_mass, np.asarray(self.grid_collected_fractions, dtype=float), gate_activity
+
+    def _grid_row_indices_for_estimates(self, estimates: np.ndarray) -> np.ndarray:
+        axis = np.asarray(self.grid_tau_axis, dtype=float)
+        values = np.asarray(estimates, dtype=float)
+        indices = np.zeros(values.shape[0], dtype=int)
+        if axis.size == 0 or values.size == 0:
+            return indices
+
+        valid = np.isfinite(values)
+        if not np.any(valid):
+            return indices
+
+        use_log_axis = np.all(axis > 0) and (
+            str(self.config.f_x_scale).lower() == "log"
+            and self.config.f_x_param in {"tau1", "tau2", "beta"}
+        )
+        if use_log_axis:
+            axis_metric = np.log(axis)
+            clipped = np.clip(values[valid], axis[0], axis[-1])
+            value_metric = np.log(np.maximum(clipped, axis[0]))
+        else:
+            axis_metric = axis
+            value_metric = np.clip(values[valid], axis[0], axis[-1])
+
+        nearest = np.argmin(np.abs(axis_metric[None, :] - value_metric[:, None]), axis=1)
+        indices[valid] = nearest.astype(int, copy=False)
+        return indices
+
+    def _histogram_corrected_counts(
+        self,
+        observed_counts: np.ndarray,
+        correction_method: str,
+    ) -> np.ndarray:
+        method = self._resolve_deadtime_correction_method(correction_method, self.config)
+        observed = np.maximum(np.asarray(observed_counts, dtype=float), 0.0)
+        reshape_output = observed.ndim == 1
+        if reshape_output:
+            observed = observed.reshape(1, -1)
+        if method in {"none", "rapp_mcpdf"}:
+            return observed[0] if reshape_output else np.array(observed, copy=True)
+
+        totals = np.sum(observed, axis=1, keepdims=True)
+        corrected = np.array(observed, copy=True)
+        valid = totals[:, 0] > 0.0
+        if not np.any(valid):
+            return corrected[0] if reshape_output else corrected
+
+        if method == "isbaner_histogram":
+            # Use the standard detector-limited gridded estimate to choose a single
+            # gate-activity correction before refitting with the unmodified MLE.
+            baseline_estimates = self._estimate_param_batch_gridded(
+                observed[valid],
+                correction_method="none",
+            )
+            estimate_valid = np.isfinite(baseline_estimates)
+            if not np.any(estimate_valid):
+                return corrected[0] if reshape_output else corrected
+
+            corrected_valid = np.array(observed[valid], copy=True)
+            row_indices = self._grid_row_indices_for_estimates(baseline_estimates[estimate_valid])
+            gate_activity = np.maximum(np.asarray(self.grid_gate_activity[row_indices, :], dtype=float), 1e-6)
+            corrected_rows = corrected_valid[estimate_valid] / gate_activity
+            corrected_totals = np.sum(corrected_rows, axis=1, keepdims=True)
+            corrected_rows = np.divide(
+                corrected_rows,
+                np.maximum(corrected_totals, 1e-12),
+                out=np.zeros_like(corrected_rows),
+                where=corrected_totals > 0.0,
+            )
+            corrected_rows *= totals[valid][estimate_valid]
+            corrected_valid[estimate_valid] = corrected_rows
+            corrected[valid] = corrected_valid
+            return corrected[0] if reshape_output else corrected
+
+        self.distill_gates()
+        gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
+        gate_matrix = gate_profiles * self._collection_efficiency_scale(gate_profiles.shape[0])
+        backprojection = self._gate_backprojection_matrix(gate_profiles)
+        for row_idx, counts in enumerate(observed):
+            total_counts = float(np.sum(counts))
+            if total_counts <= 0.0:
+                continue
+            detected_time = backprojection @ np.asarray(counts, dtype=float)
+            detected_time = np.maximum(detected_time, 0.0)
+            if float(np.sum(detected_time)) <= 0.0:
+                continue
+            arrival_time = self._invert_detector_transfer_time_counts(detected_time, self.config)
+            arrival_time = np.maximum(arrival_time, 0.0)
+            corrected_gate = np.asarray(gate_matrix @ arrival_time, dtype=float)
+            corrected_gate = np.maximum(corrected_gate, 0.0)
+            corrected_total = float(np.sum(corrected_gate))
+            if corrected_total <= 0.0:
+                continue
+            corrected[row_idx, :] = corrected_gate * (total_counts / corrected_total)
+        return corrected[0] if reshape_output else corrected
+
+    def _gate_backprojection_matrix(self, gate_profiles: np.ndarray) -> np.ndarray:
+        gate_profiles = np.asarray(gate_profiles, dtype=float)
+        gate_matrix = gate_profiles * self._collection_efficiency_scale(gate_profiles.shape[0])
+        if gate_matrix.size == 0:
+            return np.zeros((0, 0), dtype=float)
+        return np.asarray(np.linalg.pinv(gate_matrix), dtype=float)
+
+    def _invert_expected_detected_total(
+        self,
+        detected_total: float,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> float:
+        cfg = cfg or self.config
+        detected_total = float(max(detected_total, 0.0))
+        if detected_total <= 0.0:
+            return 0.0
+
+        expected_low = detected_total
+        expected_high = max(detected_total * 2.0, 1.0)
+        for _ in range(60):
+            transferred_high = self._detector_transfer_expected_detected(expected_high, cfg)
+            if transferred_high >= detected_total * 0.999999:
+                break
+            expected_high *= 2.0
+
+        for _ in range(80):
+            expected_mid = 0.5 * (expected_low + expected_high)
+            transferred_mid = self._detector_transfer_expected_detected(expected_mid, cfg)
+            if transferred_mid < detected_total:
+                expected_low = expected_mid
+            else:
+                expected_high = expected_mid
+        return float(expected_high)
+
+    def _invert_detector_transfer_time_counts(
+        self,
+        detected_time_counts: np.ndarray,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> np.ndarray:
+        cfg = cfg or self.config
+        detected_time_counts = np.asarray(detected_time_counts, dtype=float)
+        total_detected = float(np.sum(detected_time_counts))
+        if total_detected <= 0.0:
+            return np.array(detected_time_counts, copy=True)
+
+        dwell_s = float(max(getattr(cfg, "event_pixel_dwell_time_s", 1e-3), 1e-12))
+        period_ns = float(max(getattr(cfg, "period", 0.0), 1e-12))
+        n_periods = max((dwell_s * 1e9) / period_ns, 1.0)
+        per_period_detected = detected_time_counts / n_periods
+        reconstructed = np.array(per_period_detected, copy=True)
+
+        capacity = self._effective_event_capacity(cfg)
+        if capacity == 1:
+            reconstructed = np.zeros_like(per_period_detected)
+            cumulative_before = 0.0
+            for idx, detected in enumerate(per_period_detected):
+                available = np.exp(-cumulative_before)
+                ratio = float(np.clip(detected / max(available, 1e-12), 0.0, 1.0 - 1e-12))
+                reconstructed[idx] = -np.log(max(1.0 - ratio, 1e-12))
+                cumulative_before += detected
+        else:
+            deadtime_ns = float(max(getattr(cfg, "detector_deadtime", 0.0), 0.0))
+            dt_ns = float(self.time_vector[1] - self.time_vector[0]) if len(self.time_vector) > 1 else float(period_ns)
+            dead_bins = int(np.ceil(deadtime_ns / max(dt_ns, 1e-12)))
+            if dead_bins > 0:
+                reconstructed = np.zeros_like(per_period_detected)
+                for idx, detected in enumerate(per_period_detected):
+                    start_idx = max(0, idx - dead_bins)
+                    blocked = float(np.sum(per_period_detected[start_idx:idx]))
+                    availability = max(1.0 - min(blocked, 1.0), 1e-6)
+                    reconstructed[idx] = detected / availability
+
+        expected_raw_total = self._invert_expected_detected_total(total_detected, cfg)
+        reconstructed_total = float(np.sum(reconstructed))
+        if reconstructed_total > 0.0 and expected_raw_total > 0.0:
+            reconstructed *= expected_raw_total / reconstructed_total
+        reconstructed = np.maximum(reconstructed, 0.0)
+        return reconstructed * n_periods
 
     def _log_likelihood_for_deadtime_method(
         self,
@@ -801,16 +992,16 @@ class TwinEngine:
     ) -> np.ndarray:
         method = self._resolve_deadtime_correction_method(correction_method, self.config)
         observed = np.maximum(np.asarray(observed_counts, dtype=float), 0.0)
-        template_gate_mass, template_collected_fraction, gate_activity = self._corrected_template_masses_for_method(method)
-
-        if method == "rapp_inspired_inverse":
+        if method == "rapp_mcpdf":
             observed_norm = observed / np.maximum(np.sum(observed, axis=1, keepdims=True), 1e-12)
             log_gate = np.log(np.maximum(self.grid_raw_templates, 1e-300))
             return observed_norm @ log_gate.T
 
-        corrected_counts = observed[:, None, :] / np.maximum(gate_activity[None, :, :], 1e-6)
-
-        corrected_totals = np.sum(corrected_counts, axis=2, keepdims=True)
+        corrected_counts = np.asarray(
+            self._histogram_corrected_counts(observed, correction_method=method),
+            dtype=float,
+        )
+        corrected_totals = np.sum(corrected_counts, axis=1, keepdims=True)
         corrected_norm = np.divide(
             corrected_counts,
             np.maximum(corrected_totals, 1e-12),
@@ -1311,7 +1502,21 @@ class TwinEngine:
             return estimates
 
         correction_method = self._resolve_deadtime_correction_method(correction_method, self.config)
-        if correction_method != "none":
+        if correction_method in {"isbaner_histogram", "rapp_mchc"}:
+            corrected_counts = self._histogram_corrected_counts(
+                counts_batch[valid],
+                correction_method=correction_method,
+            )
+            corrected_totals = np.sum(corrected_counts, axis=1, keepdims=True)
+            obs_norm = np.divide(
+                corrected_counts,
+                np.maximum(corrected_totals, 1e-12),
+                out=np.zeros_like(corrected_counts),
+                where=corrected_totals > 0.0,
+            )
+            log_templates = np.log(np.maximum(self.grid_templates, 1e-300))
+            log_likelihood = obs_norm @ log_templates.T
+        elif correction_method != "none":
             log_likelihood = self._log_likelihood_for_deadtime_method(
                 counts_batch[valid],
                 correction_method,
@@ -2543,7 +2748,7 @@ class TwinEngine:
         photon_basis_mode: Optional[str] = None,
     ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
         method = self._resolve_deadtime_correction_method(correction_method, self.config)
-        if method in {"rapp_inspired_inverse", "isbaner_histogram"}:
+        if method in {"rapp_mcpdf", "rapp_mchc", "isbaner_histogram"}:
             return self._compute_method_specific_deadtime_fisher_info(
                 tau_grid,
                 n_photons=n_photons,
@@ -2639,6 +2844,20 @@ class TwinEngine:
                     raw_mass = np.asarray(raw_cond, dtype=float) * float(raw_frac)
                     if method == "isbaner_histogram":
                         probs = np.asarray(raw_cond, dtype=float)
+                    elif method == "rapp_mchc":
+                        observed_counts = (np.asarray(obs_cond, dtype=float) * float(obs_frac) * float(n_photons)).reshape(1, -1)
+                        corrected_counts = np.asarray(
+                            self._histogram_corrected_counts(
+                                observed_counts,
+                                correction_method=method,
+                            ),
+                            dtype=float,
+                        )
+                        corrected_total = float(np.sum(corrected_counts))
+                        if corrected_total > 0.0:
+                            probs = corrected_counts.reshape(-1) / corrected_total
+                        else:
+                            probs = np.asarray(raw_cond, dtype=float)
                     else:
                         probs = np.asarray(obs_cond, dtype=float)
                     budget = float(n_photons) * float(obs_frac)
@@ -2848,7 +3067,10 @@ class TwinEngine:
                     n_repeats=int(n_repeats),
                     irf_cached=irf_cached,
                 )
-            param_est = self.estimate_tau_batch(counts)
+            param_est = self.estimate_tau_batch(
+                counts,
+                correction_method="none",
+            )
             corrected_est = None
             if correction_method != "none":
                 corrected_est = self.estimate_tau_batch(
@@ -2997,9 +3219,10 @@ class TwinEngine:
             "efficiency_ci_upper": eff_ci_upper,
         }
         if correction_method != "none":
+            estimator_name = "detector_aware_companion_fit" if correction_method == "rapp_mcpdf" else "histogram_corrected_gridded_mle"
             result["deadtime_correction"] = {
                 "method": correction_method,
-                "estimator": "histogram_corrected_gridded_mle",
+                "estimator": estimator_name,
                 "monte_carlo_corrected": {
                     "mean_tau": corrected_mean_tau,
                     "std_tau": corrected_std_tau,
