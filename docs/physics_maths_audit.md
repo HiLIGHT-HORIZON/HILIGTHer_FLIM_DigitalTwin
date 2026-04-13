@@ -121,6 +121,9 @@ Preliminary audit:
 - The code appears consistent with the documented distinction between conditional collected-photon precision and survival-based rescaling.
 - `compute_fisher_info` forms gate probabilities from the same distilled gate model used elsewhere, computes a scalar Fisher quantity from finite differences, then rescales the resulting `F` using `_f_value_reference_budget(...)`. This is consistent with the manual statement that "Compute F-value on" changes reporting basis rather than estimator semantics.
 - The ideal-reference path is explicitly tested to force a zero-to-period, no-artifact configuration. That is a strong guard against accidental semantic drift in the reference curve.
+- The current dead-time correction surface is no longer a single generic mode. `Isbaner-lite` and `Rapp (MCHC-lite)` are histogram-correction companions that refit with the standard detector-free gridded MLE, `Rapp (MCPDF-lite)` is a detector-aware surrogate companion fit on observed gated histograms, `Rapp (MCPDF-full)` is the promoted stationary detected-histogram fit, and `Rapp (MCHC-full)` is the promoted stationary histogram-correction-plus-standard-MLE fit.
+- `Isbaner-lite` should not yet be treated as a paper-faithful implementation of Isbaner et al. The original paper estimates the mean photon-hit rate from raw photon timestamps using the inter-photon-time distribution and then applies a recursive correction. The current code instead applies a gated-histogram gate-activity surrogate selected from the raw detector-limited estimate.
+- The corrected Fisher paths are method-matched surrogates derived from the same backend model family, not yet a human-audited proof that each corrected curve satisfies all expected physical invariants.
 - The main manual-review risk is not the headline formula; it is whether every code path uses the same photon accounting assumptions when overlap, sequential collection, or detector distortions are active.
 
 Manual questions:
@@ -128,6 +131,7 @@ Manual questions:
 - Does every reported `F` correspond to the same estimator target and the same interpretation of `N`?
 - Is `collected_fraction` always the scientifically correct survival term when detector transfer or event-driven logic is active?
 - Are finite-difference parameter steps stable and scientifically acceptable near bounds and on log-scaled axes?
+- Should the corrected Fisher companions be documented and interpreted as estimator-matched surrogates rather than literature-faithful bounds until a human scientific audit is complete?
 
 ### 3. Monte Carlo Versus Theory
 
@@ -156,6 +160,8 @@ Preliminary audit:
 
 - The Monte Carlo path uses the same `dt_pdf(...)` latent distribution as theory, which is the correct architectural pattern.
 - Histogram generation contains multiple branches: sequential acquisition, duplicate-overlap counting, exclusive overlap, optional uniform background injection, and optional detector-transfer distortion. This is powerful, but it means theoretical and empirical outputs can silently drift if one branch changes semantics without a matching documentation update.
+- The raw Monte Carlo baseline is now intentionally kept distinct from any corrected companion estimate when a dead-time correction family is enabled. That is the right semantic separation, but it should continue to be regression-tested because it is easy to break accidentally.
+- The corrected Monte Carlo companion is estimator-specific, so agreement or disagreement must be judged against the matching companion theory rather than against the raw detector-limited theory curve.
 - Current tests verify payload structure, confidence interval emission, and some parity behavior, but do not yet prove full semantic parity across all detector and overlap modes.
 
 Manual questions:
@@ -163,6 +169,7 @@ Manual questions:
 - Is every Monte Carlo branch expected to match the same theoretical Fisher curve, or only a subset?
 - When background is injected, does the theoretical Fisher path use an identical background interpretation?
 - Are bootstrap p-values and CI bands attached to the same estimator quantity the UI labels imply?
+- For corrected companions, which mismatches should be interpreted as acceptable surrogate error and which ones should be treated as implementation defects?
 
 ### 4. Event-Driven Detector Model
 
@@ -297,6 +304,7 @@ This is not a sign-off. It is a structured first-pass audit based on code and te
 
 - Gate semantics are richer than the current manual prose. Sequential collection, overlap effects, and detector-transfer branches need explicit human inspection.
 - Monte Carlo and theory share the same latent PDF, but they also contain branch-specific logic that could drift independently.
+- The dead-time correction companions mix histogram-correction and detector-aware-fit semantics, so a label staying stable does not guarantee that the underlying scientific claim stayed stable.
 - Optimisation semantics likely need the deepest human review after Fisher semantics because objective labels can mask subtle changes in quantity definition.
 - Current tests are strongest on invariants, bridge checks, and monotonicity. They are weaker on full analytical validation across all supported detector and background modes.
 

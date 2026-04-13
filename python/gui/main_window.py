@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (QMainWindow, QApplication, QDockWidget,
                              QVBoxLayout, QWidget, QStatusBar, QFileDialog,
                              QMenuBar, QDialog, QHBoxLayout, QPushButton, QMessageBox, QCheckBox)
 from PyQt6.QtGui import QAction, QActionGroup, QDesktopServices, QGuiApplication
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import Qt, QUrl, QTimer
 import qdarkstyle
 
 # Import custom widgets
@@ -22,6 +22,8 @@ from gui.widgets.diagnostics_plot import DiagnosticsWidget
 from gui.widgets.instrument_manager import InstrumentManager
 from gui.widgets.manual_viewer import ManualWidget
 from gui.widgets.custom_model_editor import CustomModelEditorDialog
+from gui.diagnostics_worker import DiagnosticsRefreshWorker
+from gui.precision_worker import PrecisionAnalysisWorker
 from gui.automation_api import DesktopAutomationAPI
 from gui.optimisation_worker import DetectionOptimisationWorker
 from gui.report_export import write_precision_report_package
@@ -105,6 +107,7 @@ class HILIGHTMainWindow(QMainWindow):
         self.optimization_toggle_suppressed = False
         self.loading_config_into_ui = False
         self.optimization_worker = None
+        self.precision_worker = None
         self.optimization_baseline_snapshot = None
         self.optimization_x_range = None
         self.optimization_ideal_f = None
@@ -117,6 +120,12 @@ class HILIGHTMainWindow(QMainWindow):
         self.simulation_core_prompted_session = False
         self.event_driven_warning_shown_session = False
         self.startup_complete = False
+        self._diagnostics_refresh_timer = QTimer(self)
+        self._diagnostics_refresh_timer.setSingleShot(True)
+        self._diagnostics_refresh_timer.timeout.connect(self._dispatch_diagnostics_refresh)
+        self._diagnostics_worker = None
+        self._diagnostics_request_id = 0
+        self._pending_diagnostics_request = None
         
         # Security & API State (Default open)
         self.gui_api_locked = False
@@ -557,21 +566,21 @@ class HILIGHTMainWindow(QMainWindow):
         self.control_widget.radio_f_basis_period.toggled.connect(self._on_f_basis_changed)
         self.control_widget.radio_f_basis_all.toggled.connect(self._on_f_basis_changed)
         self.control_widget.radio_f_basis_collected.toggled.connect(self._on_f_basis_changed)
-        self.control_widget.advanced_config_changed.connect(self.refresh_diagnostics)
+        self.control_widget.advanced_config_changed.connect(self.schedule_diagnostics_refresh)
         
         # Auto-refresh diagnostics on any param change
         from PyQt6.QtWidgets import QDoubleSpinBox, QSpinBox, QComboBox, QCheckBox, QLineEdit
         for widget in self.control_widget.findChildren((QDoubleSpinBox, QSpinBox)):
-            widget.valueChanged.connect(self.refresh_diagnostics)
+            widget.valueChanged.connect(self.schedule_diagnostics_refresh)
         for widget in self.control_widget.findChildren((QComboBox, QCheckBox)):
             if isinstance(widget, QComboBox):
-                widget.currentIndexChanged.connect(self.refresh_diagnostics)
+                widget.currentIndexChanged.connect(self.schedule_diagnostics_refresh)
             else:
-                widget.clicked.connect(self.refresh_diagnostics)
-        self.control_widget.group_burst.toggled.connect(self.refresh_diagnostics)
+                widget.clicked.connect(self.schedule_diagnostics_refresh)
         for widget in self.control_widget.findChildren(QLineEdit):
-            widget.textChanged.connect(self.refresh_diagnostics)
-        self.control_widget.btn_freeform_mode.toggled.connect(self.refresh_diagnostics)
+            widget.editingFinished.connect(self.schedule_diagnostics_refresh)
+        self.control_widget.group_burst.toggled.connect(self.schedule_diagnostics_refresh)
+        self.control_widget.btn_freeform_mode.toggled.connect(self.schedule_diagnostics_refresh)
 
         self.map_widget.pixel_selected.connect(self.on_pixel_select)
 
@@ -847,11 +856,14 @@ class HILIGHTMainWindow(QMainWindow):
     def _deadtime_method_display_name(cfg_like) -> str:
         method = str(getattr(cfg_like, "deadtime_correction_method", "none")).lower()
         method_map = {
-            "isbaner_histogram": "Isbaner",
-            "rapp_mcpdf": "Rapp (MCPDF)",
-            "rapp_inspired_inverse": "Rapp (MCPDF)",
-            "rapp_stationary": "Rapp (MCPDF)",
-            "rapp_mchc": "Rapp (MCHC)",
+            "isbaner_histogram": "Isbaner-lite",
+            "isbaner_lite": "Isbaner-lite",
+            "rapp_mcpdf": "Rapp (MCPDF-lite)",
+            "rapp_inspired_inverse": "Rapp (MCPDF-lite)",
+            "rapp_mcpdf_full": "Rapp (MCPDF-full)",
+            "rapp_stationary": "Rapp (MCPDF-full)",
+            "rapp_mchc": "Rapp (MCHC-lite)",
+            "rapp_mchc_full": "Rapp (MCHC-full)",
         }
         return method_map.get(method, "Dead-time")
 
@@ -921,7 +933,9 @@ class HILIGHTMainWindow(QMainWindow):
                     "mean": np.asarray(mc_payload["mean_tau"], dtype=float),
                     "std": np.asarray(mc_payload["std_tau"], dtype=float),
                 }
-            corrected_theory = self._deadtime_corrected_theory_series(item.get("config", report["config"]), x_range)
+            corrected_theory = item.get("corrected_theory")
+            if corrected_theory is None:
+                corrected_theory = self._deadtime_corrected_theory_series(item.get("config", report["config"]), x_range)
             if corrected_theory is not None:
                 corrected_theory_label = self._deadtime_corrected_series_label(
                     item.get("config", report["config"]),
@@ -1589,9 +1603,14 @@ class HILIGHTMainWindow(QMainWindow):
         deadtime_correction_map = {
             "none": "none",
             "isbaner-style histogram": "isbaner_histogram",
+            "isbaner-lite": "isbaner_histogram",
             "rapp (mcpdf)": "rapp_mcpdf",
+            "rapp (mcpdf-lite)": "rapp_mcpdf",
+            "rapp (mcpdf-full)": "rapp_mcpdf_full",
             "rapp-inspired inverse": "rapp_mcpdf",
             "rapp (mchc)": "rapp_mchc",
+            "rapp (mchc-lite)": "rapp_mchc",
+            "rapp (mchc-full)": "rapp_mchc_full",
         }
         cfg.deadtime_correction_method = deadtime_correction_map.get(
             cw.combo_deadtime_correction.currentText().lower(),
@@ -1804,12 +1823,33 @@ class HILIGHTMainWindow(QMainWindow):
             self.engine.grid_tau_axis = None
             self.engine.distill_gates()
             tau_ref = self.engine.config.taus[0] if self.engine.config.taus else 2.5
-            pdf_ref = self.engine.dt_pdf(self.engine.time_vector, tau_ref)
+            photon_budget = float(
+                max(
+                    getattr(self.engine.config, "a_photons", 0.0)
+                    or getattr(self.engine.config, "precision_photons", 0.0)
+                    or 1000.0,
+                    1.0,
+                )
+            )
+            latent_pdf_ref = self.engine.dt_pdf(self.engine.time_vector, tau_ref)
             pdf_ref = self.engine._effective_detected_pdf(
-                pdf_ref,
-                float(getattr(self.engine.config, "a_photons", 0.0)),
+                latent_pdf_ref,
+                photon_budget,
                 self.engine.config,
             )
+            histogram_diag = self.engine.build_deadtime_histogram_diagnostics(
+                tau_ref,
+                n_photons=photon_budget,
+                correction_method=getattr(self.engine.config, "deadtime_correction_method", "none"),
+                reference_pdf=latent_pdf_ref,
+            )
+            observed_hist_label = None
+            corrected_hist_label = None
+            if histogram_diag.get("observed_time_hist") is not None:
+                observed_hist_label = "Observed Histogram"
+                corrected_hist_label = (
+                    f"Corrected Histogram ({self._deadtime_method_display_name(self.engine.config)})"
+                )
             irf_cfg = copy.deepcopy(self.engine.config)
             irf_cfg.simulation_mode_preference = "ideal_poisson"
             irf_cfg.background_level = 0.0
@@ -1824,6 +1864,14 @@ class HILIGHTMainWindow(QMainWindow):
                 "gate_shapes": np.array(self.engine.gate_shapes, copy=True),
                 "irf": np.array(irf_ref, copy=True),
                 "pdf": np.array(pdf_ref, copy=True),
+                "observed_hist": None
+                if histogram_diag.get("observed_time_hist") is None
+                else np.array(histogram_diag["observed_time_hist"], copy=True),
+                "corrected_hist": None
+                if histogram_diag.get("corrected_time_hist") is None
+                else np.array(histogram_diag["corrected_time_hist"], copy=True),
+                "observed_hist_label": observed_hist_label,
+                "corrected_hist_label": corrected_hist_label,
                 "label": label,
             }
         finally:
@@ -1851,7 +1899,11 @@ class HILIGHTMainWindow(QMainWindow):
                 frame["gate_shapes"],
                 irf=frame.get("irf"),
                 pdf=frame.get("pdf"),
-                label=pdf_label
+                label=pdf_label,
+                observed_hist=frame.get("observed_hist"),
+                corrected_hist=frame.get("corrected_hist"),
+                observed_hist_label=frame.get("observed_hist_label"),
+                corrected_hist_label=frame.get("corrected_hist_label"),
             )
 
     def refresh_diagnostics(self):
@@ -1866,14 +1918,144 @@ class HILIGHTMainWindow(QMainWindow):
         if self.optimization_mode_active and not self.optimization_running:
             self._show_optimization_baseline()
             return
+        if self._should_async_refresh_diagnostics(self.engine.config):
+            self._queue_async_diagnostics_refresh(self.engine.config)
+            return
         frame = self._create_diagnostics_frame(self.engine.config)
         self._show_diagnostics_frame(frame, use_frames=False)
+
+    def schedule_diagnostics_refresh(self, *_args):
+        if self.loading_config_into_ui or self.optimization_running:
+            return
+        self._diagnostics_refresh_timer.start(75)
+
+    def _dispatch_diagnostics_refresh(self):
+        self.refresh_diagnostics()
+
+    def _should_async_refresh_diagnostics(self, cfg):
+        method = str(getattr(cfg, "deadtime_correction_method", "none")).lower()
+        return method in {"rapp_mcpdf_full", "rapp_mchc_full"}
+
+    def _queue_async_diagnostics_refresh(self, cfg, label="Instrument snapshot"):
+        cfg_copy = copy.deepcopy(cfg)
+        self._diagnostics_request_id += 1
+        request_id = self._diagnostics_request_id
+        if self._diagnostics_worker is not None and self._diagnostics_worker.isRunning():
+            self._pending_diagnostics_request = (cfg_copy, label, request_id)
+            self.statusBar().showMessage("Updating diagnostics after current full-model refresh...")
+            return
+        self._start_async_diagnostics_worker(cfg_copy, label, request_id)
+
+    def _start_async_diagnostics_worker(self, cfg, label, request_id):
+        worker = DiagnosticsRefreshWorker(cfg, request_id=request_id, label=label)
+        worker.result_ready.connect(self._on_async_diagnostics_ready)
+        worker.failed.connect(self._on_async_diagnostics_failed)
+        self._diagnostics_worker = worker
+        self.statusBar().showMessage(f"Updating diagnostics ({self._deadtime_method_display_name(cfg)})...")
+        worker.start()
+
+    def _on_async_diagnostics_ready(self, request_id, frame):
+        if int(request_id) == int(self._diagnostics_request_id):
+            self._show_diagnostics_frame(frame, use_frames=False)
+            self.statusBar().showMessage("Diagnostics updated.")
+        worker = self._diagnostics_worker
+        self._diagnostics_worker = None
+        if worker is not None:
+            worker.deleteLater()
+        self._drain_pending_diagnostics_request()
+
+    def _on_async_diagnostics_failed(self, request_id, message):
+        if int(request_id) == int(self._diagnostics_request_id):
+            self.statusBar().showMessage(f"Diagnostics refresh failed: {message}")
+        worker = self._diagnostics_worker
+        self._diagnostics_worker = None
+        if worker is not None:
+            worker.deleteLater()
+        self._drain_pending_diagnostics_request()
+
+    def _drain_pending_diagnostics_request(self):
+        if self._pending_diagnostics_request is None:
+            return
+        cfg, label, request_id = self._pending_diagnostics_request
+        self._pending_diagnostics_request = None
+        self._start_async_diagnostics_worker(cfg, label, request_id)
 
     def interrupt_simulation(self):
         self.engine.config.b_interrupt = True
         if self.optimization_worker is not None:
             self.optimization_worker.request_interrupt()
+        if self.precision_worker is not None:
+            self.precision_worker.request_interrupt()
         self.statusBar().showMessage("⌛ Interrupt Request Received...")
+
+    def _should_async_precision_analysis(self, cfg_like):
+        cfg = self._coerce_physics_config(cfg_like)
+        method = str(getattr(cfg, "deadtime_correction_method", "none")).lower()
+        return method in {"rapp_mcpdf_full", "rapp_mchc_full"}
+
+    def _start_async_precision_analysis(self, baseline_cfg, target_label):
+        self.control_widget.btn_precision.setEnabled(False)
+        self.control_widget.btn_interrupt.setEnabled(True)
+        self.diagnostics_widget.chk_autoplay.setChecked(baseline_cfg.sweep_autoplay)
+        self.diagnostics_widget.pause_playback()
+        self.diagnostics_widget.clear_frames()
+        self.fisher_widget.clear_data()
+        self.mle_accuracy_widget.clear_data()
+        self._set_progress(0, 1, f"Running precision analysis ({self._deadtime_method_display_name(baseline_cfg)})...")
+        worker = PrecisionAnalysisWorker(copy.deepcopy(baseline_cfg), target_label)
+        worker.progress_ready.connect(self._on_precision_worker_progress)
+        worker.result_ready.connect(self._on_precision_worker_finished)
+        worker.failed.connect(self._on_precision_worker_failed)
+        self.precision_worker = worker
+        worker.start()
+
+    def _on_precision_worker_progress(self, payload):
+        self._set_progress(
+            int(payload.get("completed", 0)),
+            int(payload.get("total", 1)),
+            str(payload.get("message", "Running precision analysis...")),
+        )
+
+    def _on_precision_worker_finished(self, payload):
+        self.last_precision_run = payload["report"]
+        self._set_export_enabled()
+        self.fisher_widget.set_xaxis_label(str(payload["target_label"]))
+        self.mle_accuracy_widget.set_xaxis_label(f"Ground Truth {payload['target_label']}")
+        self.fisher_widget.plot_batch(
+            np.asarray(payload["x_range"], dtype=float),
+            payload["plot_results"],
+            ideal_x=np.asarray(payload["x_range"], dtype=float),
+            ideal_f=np.asarray(payload["ideal_f"], dtype=float),
+            ideal_conditional_f=np.asarray(payload["ideal_f_conditional"], dtype=float),
+            ideal_throughput_scale=1.0,
+            ideal_photon_count=float(payload.get("precision_photons", 0.0)),
+            ci_level=float(payload.get("ci_level", 99.7)),
+        )
+        if payload.get("accuracy_results"):
+            self.mle_accuracy_widget.plot_accuracy(
+                np.asarray(payload["x_range"], dtype=float),
+                payload["accuracy_results"],
+            )
+        else:
+            self.mle_accuracy_widget.clear_data()
+        self.diagnostics_widget.set_sweep_frames(payload.get("frames", []))
+        self.statusBar().showMessage("Precision analysis complete.")
+        self._finish_precision_worker()
+
+    def _on_precision_worker_failed(self, message):
+        self.statusBar().showMessage(f"Precision analysis failed: {message}")
+        self._finish_precision_worker()
+
+    def _finish_precision_worker(self):
+        worker = self.precision_worker
+        self.precision_worker = None
+        if worker is not None:
+            worker.deleteLater()
+        self.control_widget.btn_precision.setEnabled(True)
+        self.control_widget.btn_interrupt.setEnabled(False)
+        self.progress.hide()
+        if self.diagnostics_widget.chk_autoplay.isChecked():
+            self.diagnostics_widget.resume_playback()
 
     def _serialise_workspace_value(self, value):
         if isinstance(value, np.ndarray):
@@ -2076,7 +2258,11 @@ class HILIGHTMainWindow(QMainWindow):
             self.diagnostics_widget.update_plot(
                 frame["time_vec"], frame["gate_shapes"], 
                 irf=frame["irf"], pdf=frame["pdf"], 
-                background_curves=sweep_pdfs
+                background_curves=sweep_pdfs,
+                observed_hist=frame.get("observed_hist"),
+                corrected_hist=frame.get("corrected_hist"),
+                observed_hist_label=frame.get("observed_hist_label"),
+                corrected_hist_label=frame.get("corrected_hist_label"),
             )
 
             # ---- SINGLE PLOT UPDATE WITH ALL CURVES ----
@@ -2098,7 +2284,11 @@ class HILIGHTMainWindow(QMainWindow):
             self.diagnostics_widget.update_plot(
                 frame["time_vec"], frame["gate_shapes"], 
                 irf=frame["irf"], pdf=frame["pdf"], 
-                background_curves=sweep_pdfs
+                background_curves=sweep_pdfs,
+                observed_hist=frame.get("observed_hist"),
+                corrected_hist=frame.get("corrected_hist"),
+                observed_hist_label=frame.get("observed_hist_label"),
+                corrected_hist_label=frame.get("corrected_hist_label"),
             )
 
             self.fisher_widget.plot_batch(x_range, {"Simulated": np.array(f_val, copy=True)},
@@ -2347,6 +2537,10 @@ class HILIGHTMainWindow(QMainWindow):
         target_label = self.control_widget.param_rows[cfg.f_x_param]['label'].text().replace(":", "")
         self.fisher_widget.set_xaxis_label(target_label)
 
+        if self._should_async_precision_analysis(cfg):
+            self._start_async_precision_analysis(baseline_cfg, target_label)
+            return
+
         sweep_values = cfg.instr_sweep_vals if (cfg.instr_sweep_active and cfg.instr_sweep_vals) else [None]
         run_mc = cfg.precision_validate_mc
 
@@ -2401,7 +2595,11 @@ class HILIGHTMainWindow(QMainWindow):
                     irf=frame.get("irf"),
                     pdf=frame.get("pdf"),
                     label=frame.get("label"),
-                    background_curves=frame["background_curves"]
+                    background_curves=frame["background_curves"],
+                    observed_hist=frame.get("observed_hist"),
+                    corrected_hist=frame.get("corrected_hist"),
+                    observed_hist_label=frame.get("observed_hist_label"),
+                    corrected_hist_label=frame.get("corrected_hist_label"),
                 )
                 
                 self.diagnostics_widget.pause_playback()
@@ -2618,6 +2816,7 @@ class HILIGHTMainWindow(QMainWindow):
                     "mc": mc_payload,
                     "diagnostics_frame": frame,
                     "config": copy.deepcopy(sweep_cfg),
+                    "corrected_theory": copy.deepcopy(corrected_theory),
                 })
 
             self.last_precision_run = {

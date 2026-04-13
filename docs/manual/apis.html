@@ -47,6 +47,7 @@
         <h2>Python service API</h2>
         <p><code>python/backend/service_api.py</code> exposes the main programmatic workflows: status/config, precision, optimisation, simulations, diagnostics, phasors, sessions, and instrument-profile creation helpers.</p>
         <p>The service layer is the source of truth for all other transports. The desktop, HTTP API, and MCP server should all be documented in terms of <code>DigitalTwinService</code>.</p>
+        <p>The precision workflow always returns <code>x_range</code>, <code>ideal</code>, and raw detector-limited <code>theory</code>. When dead-time correction is enabled, it also returns a <code>deadtime_correction</code> companion block with the selected method, corrected theory arrays, and a summary note. When Monte Carlo validation is enabled, the top-level <code>monte_carlo</code> payload remains the raw detector-limited baseline and any corrected companion statistics are nested under <code>monte_carlo.deadtime_correction</code>.</p>
       </section>
 
       <section class="card" id="http-api">
@@ -59,7 +60,7 @@
           <tr><td><code>/api/v1/backend/gui/schema</code></td><td>GET</td><td>Declarative description of the controller/workspace.</td></tr>
           <tr><td><code>/api/v1/workflows/simulate/basic</code></td><td>POST</td><td>Basic synthetic dataset and fit.</td></tr>
           <tr><td><code>/api/v1/workflows/simulate/advanced</code></td><td>POST</td><td>Advanced synthetic dataset and fit.</td></tr>
-          <tr><td><code>/api/v1/workflows/precision</code></td><td>POST</td><td>Precision analysis.</td></tr>
+          <tr><td><code>/api/v1/workflows/precision</code></td><td>POST</td><td>Precision analysis with ideal, raw theory, optional corrected companion theory, and optional Monte Carlo validation.</td></tr>
           <tr><td><code>/api/v1/workflows/optimisation</code></td><td>POST</td><td>Integrated optimisation workflow.</td></tr>
           <tr><td><code>/api/v1/data/summary</code></td><td>GET</td><td>Map availability and warnings.</td></tr>
           <tr><td><code>/api/v1/data/results</code></td><td>GET</td><td>Current result snapshot.</td></tr>

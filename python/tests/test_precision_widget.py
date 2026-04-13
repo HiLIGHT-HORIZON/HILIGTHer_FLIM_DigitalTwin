@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import QApplication
 import numpy as np
 
+from gui.widgets.diagnostics_plot import DiagnosticsWidget
 from gui.widgets.fisher_plot import FisherWidget
 from gui.widgets.mle_accuracy_plot import MLEAccuracyWidget
 
@@ -77,5 +78,52 @@ def test_mle_accuracy_widget_summary_mode_plots_one_bar_per_curve():
 
 def test_mle_accuracy_widget_summary_compacts_long_tick_labels():
     assert MLEAccuracyWidget._format_summary_tick_label("Count Rate = 1 GHz (deadtime corrected)") == "1 GHz\nDT corr."
-    assert MLEAccuracyWidget._format_summary_tick_label("Count Rate = 1 GHz (Isbaner corrected)") == "1 GHz\nIsbaner corr."
-    assert MLEAccuracyWidget._format_summary_tick_label("Current Configuration (Rapp (MCPDF) corrected)") == "Current\nRapp MCPDF corr."
+    assert MLEAccuracyWidget._format_summary_tick_label("Count Rate = 1 GHz (Isbaner-lite corrected)") == "1 GHz\nIsbaner-lite corr."
+    assert MLEAccuracyWidget._format_summary_tick_label("Current Configuration (Rapp (MCPDF-lite) corrected)") == "Current\nRapp MCPDF-lite corr."
+    assert MLEAccuracyWidget._format_summary_tick_label("Current Configuration (Rapp (MCPDF-full) corrected)") == "Current\nRapp MCPDF-full corr."
+    assert MLEAccuracyWidget._format_summary_tick_label("Current Configuration (Rapp (MCHC-full) corrected)") == "Current\nRapp MCHC-full corr."
+
+
+def test_diagnostics_widget_histogram_overlays_enable_only_when_present():
+    _app()
+    widget = DiagnosticsWidget()
+    time_vec = np.array([0.0, 1.0, 2.0], dtype=float)
+    gate_shapes = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ],
+        dtype=float,
+    )
+
+    widget.update_plot(
+        time_vec,
+        gate_shapes,
+        pdf=np.array([1.0, 0.4, 0.1], dtype=float),
+        observed_hist=np.array([0.0, 1.0, 0.5], dtype=float),
+        corrected_hist=np.array([0.0, 0.7, 1.0], dtype=float),
+        observed_hist_label="Observed Histogram",
+        corrected_hist_label="Corrected Histogram (Rapp (MCHC-lite))",
+    )
+
+    assert widget.chk_observed_hist.isEnabled()
+    assert widget.chk_corrected_hist.isEnabled()
+
+    widget.chk_observed_hist.setChecked(True)
+    widget.chk_corrected_hist.setChecked(True)
+
+    assert widget.observed_hist_curve.isVisible()
+    assert widget.corrected_hist_curve.isVisible()
+
+    widget.update_plot(
+        time_vec,
+        gate_shapes,
+        pdf=np.array([1.0, 0.4, 0.1], dtype=float),
+        observed_hist=None,
+        corrected_hist=None,
+    )
+
+    assert not widget.chk_observed_hist.isEnabled()
+    assert not widget.chk_corrected_hist.isEnabled()
+    assert not widget.observed_hist_curve.isVisible()
+    assert not widget.corrected_hist_curve.isVisible()

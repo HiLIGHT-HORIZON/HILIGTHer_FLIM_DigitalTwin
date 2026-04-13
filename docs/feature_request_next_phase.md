@@ -1,12 +1,19 @@
 # Feature Request: Next Scientific Phase
 
-This document is the combined implementation-facing feature request for the next three scientific milestones. It is a planning artifact for future engineering work. Nothing in this file should be interpreted as already implemented behavior.
+This document is the combined implementation-facing feature request for the next scientific milestones. It is a planning artifact for future engineering work. Some portions have since been delivered in `1.2.1 beta`; where that has happened, the section notes what remains under scientific review or follow-up engineering.
 
 ## 1. Dead-Time Correction Methods with Fisher Analysis
 
+Status in `1.2.1 beta`:
+
+- initial correction-aware precision reporting is implemented
+- the exposed methods are `Isbaner-lite`, `Rapp (MCPDF-lite)`, `Rapp (MCPDF-full)`, `Rapp (MCHC-lite)`, and `Rapp (MCHC-full)`
+- the raw Monte Carlo baseline is now kept distinct from any corrected companion estimate
+- literature-faithful ranking and corrected Fisher semantics still require explicit human scientific review
+
 ### Goal
 
-Add correction-aware precision analysis for detector deadtime so the product can compare detector-limited measurements, correction-aware reporting, and ideal-reference behavior within one workflow.
+Extend and scientifically validate the correction-aware precision analysis now exposed in the product so users can compare detector-limited measurements, correction-aware reporting, and ideal-reference behavior within one workflow.
 
 ### Scientific Intent
 
@@ -31,7 +38,7 @@ It must not silently redefine `F`, `eta`, or photon-basis reporting.
   - both
 - expose enough diagnostics to let a user understand what quantity is raw, corrected, conditional, or reference-based
 
-### Out of Scope for the First Implementation
+### Still Out of Scope
 
 - exhaustive support for every detector correction method in the literature
 - GUI-only correction logic without backend ownership
@@ -39,16 +46,16 @@ It must not silently redefine `F`, `eta`, or photon-basis reporting.
 
 ### Backend Changes Required
 
-- extend the precision workflow to model correction-aware deadtime reporting
-- define correction-aware outputs in the shared engine and service layer
-- preserve comparability with the existing event-driven and ideal-reference workflows
-- ensure Monte Carlo validation can distinguish uncorrected and corrected interpretations where applicable
+- preserve the current correction-aware outputs in the shared engine and service layer
+- maintain comparability with the existing event-driven and ideal-reference workflows
+- keep Monte Carlo validation able to distinguish uncorrected and corrected interpretations
+- refine the current surrogate implementations only with explicit scientific review
 
 ### Config and Model Changes Required
 
-- add explicit deadtime-correction settings to the backend configuration model
+- keep explicit deadtime-correction settings in the backend configuration model
 - keep correction mode separate from deadtime simulation mode
-- ensure defaults preserve current behavior until the feature is explicitly enabled
+- preserve current behavior by default until a correction mode is explicitly enabled
 
 ### Service, API, MCP, and Documentation Impacts
 
@@ -66,7 +73,7 @@ It must not silently redefine `F`, `eta`, or photon-basis reporting.
 
 ### Risks and Open Scientific Review Points
 
-- whether correction belongs in the estimator, the Fisher model, or both
+- whether each exposed correction should remain an estimator companion, a Fisher companion, or both
 - how corrected photon accounting maps onto current collected-photon semantics
 - whether ideal-reference comparisons remain scientifically meaningful under the chosen correction model
 

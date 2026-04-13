@@ -571,7 +571,7 @@ def test_event_driven_fisher_path_keeps_detector_transfer_active():
 
 @pytest.mark.parametrize(
     "method",
-    ["isbaner_histogram", "rapp_mcpdf", "rapp_mchc"],
+    ["isbaner_histogram", "rapp_mcpdf", "rapp_mchc", "rapp_mchc_full"],
 )
 def test_deadtime_correction_methods_return_finite_corrected_fisher(method):
     cfg = PhysicsConfig(
@@ -628,6 +628,12 @@ def test_deadtime_correction_methods_produce_distinct_corrected_curves():
         correction_method="rapp_mcpdf",
         photon_basis_mode="all",
     )
+    _, f_rapp_mcpdf_full, _ = engine.compute_deadtime_corrected_fisher_info(
+        tau_grid,
+        n_photons=2000,
+        correction_method="rapp_mcpdf_full",
+        photon_basis_mode="all",
+    )
     _, f_rapp_mchc, _ = engine.compute_deadtime_corrected_fisher_info(
         tau_grid,
         n_photons=2000,
@@ -635,6 +641,7 @@ def test_deadtime_correction_methods_produce_distinct_corrected_curves():
         photon_basis_mode="all",
     )
     assert not np.allclose(f_rapp_mcpdf, f_isbaner, rtol=1e-5, atol=1e-8)
+    assert not np.allclose(f_rapp_mcpdf_full, f_rapp_mcpdf, rtol=1e-5, atol=1e-8)
     assert not np.allclose(f_rapp_mcpdf, f_rapp_mchc, rtol=1e-5, atol=1e-8)
 
 
@@ -727,11 +734,201 @@ def test_deadtime_method_template_families_match_cached_grid_semantics():
 
     isbaner_mass, _, _ = engine._corrected_template_masses_for_method("isbaner_histogram")
     rapp_mcpdf_mass, _, _ = engine._corrected_template_masses_for_method("rapp_mcpdf")
+    rapp_mcpdf_full_mass, _, _ = engine._corrected_template_masses_for_method("rapp_mcpdf_full")
     rapp_mchc_mass, _, _ = engine._corrected_template_masses_for_method("rapp_mchc")
+    rapp_mchc_full_mass, _, _ = engine._corrected_template_masses_for_method("rapp_mchc_full")
 
     assert np.allclose(isbaner_mass, raw_mass_expected, rtol=1e-12, atol=1e-12)
     assert np.allclose(rapp_mcpdf_mass, observed_mass_expected, rtol=1e-12, atol=1e-12)
+    assert rapp_mcpdf_full_mass.shape == observed_mass_expected.shape
+    assert np.all(np.isfinite(rapp_mcpdf_full_mass))
     assert np.allclose(rapp_mchc_mass, raw_mass_expected, rtol=1e-12, atol=1e-12)
+    assert np.allclose(rapp_mchc_full_mass, raw_mass_expected, rtol=1e-12, atol=1e-12)
+
+
+def test_stationary_alias_resolves_to_promoted_mcpdf_full():
+    engine = TwinEngine(PhysicsConfig())
+
+    assert engine._resolve_deadtime_correction_method("rapp_stationary") == "rapp_mcpdf_full"
+    assert engine._resolve_deadtime_correction_method("mcpdf_full") == "rapp_mcpdf_full"
+    assert engine._resolve_deadtime_correction_method("mchc_full") == "rapp_mchc_full"
+
+
+def test_promoted_mchc_full_matches_explicit_stationary_inverse_then_standard_mle():
+    cfg = PhysicsConfig(
+        detector_deadtime=1.5,
+        precision_photons=50,
+        a_photons=50.0,
+        gate_edges=[0.0, 2.0, 4.0, 6.0, 8.0],
+        period=8.0,
+        dt_override=0.5,
+        f_x_param="tau1",
+        f_x_min=0.6,
+        f_x_max=3.0,
+        f_x_steps=9,
+        f_x_scale="linear",
+        grid_tau_min=0.6,
+        grid_tau_max=3.0,
+        grid_steps=9,
+        taus=[1.35],
+    )
+    engine = TwinEngine(cfg)
+    engine.distill_gates()
+    engine.ensure_grid_current()
+
+    truth = 1.35
+    pdf = engine.dt_pdf(engine.time_vector, tau=truth)
+    probs, frac = engine._stationary_gate_statistics_from_pdf(pdf, 50.0, cfg)
+    observed = (probs * frac * 50.0).reshape(1, -1)
+
+    promoted = float(engine.estimate_tau_batch(observed, photon_budget=50.0, correction_method="rapp_mchc_full")[0])
+    corrected_counts = np.asarray(
+        engine._histogram_corrected_counts(
+            observed,
+            correction_method="rapp_mchc_full",
+            photon_budget=50.0,
+        ),
+        dtype=float,
+    )
+    explicit = float(engine.estimate_tau_batch(corrected_counts.reshape(1, -1), correction_method="none")[0])
+
+    assert np.isfinite(promoted)
+    assert np.isclose(promoted, explicit, rtol=1e-12, atol=1e-12)
+
+
+def test_stationary_mcpdf_batch_likelihood_matches_single_helper():
+    cfg = PhysicsConfig(
+        detector_deadtime=1.5,
+        precision_photons=50,
+        a_photons=50.0,
+        gate_edges=[0.0, 2.0, 4.0, 6.0, 8.0],
+        period=8.0,
+        dt_override=0.5,
+        f_x_param="tau1",
+        f_x_min=0.6,
+        f_x_max=3.0,
+        f_x_steps=9,
+        f_x_scale="linear",
+        grid_tau_min=0.6,
+        grid_tau_max=3.0,
+        grid_steps=9,
+        taus=[1.2],
+    )
+    engine = TwinEngine(cfg)
+    engine.distill_gates()
+    engine.ensure_grid_current()
+    pdf = engine.dt_pdf(engine.time_vector, tau=1.2)
+    probs, frac = engine._stationary_gate_statistics_from_pdf(pdf, 50.0, cfg)
+    observed = probs * frac * 50.0
+
+    ll_batch = engine.stationary_mcpdf_log_likelihood_batch(observed.reshape(1, -1), photon_budget=50.0)
+    ll_single = []
+    original_tau = engine.config.taus[0]
+    try:
+        for tau in np.asarray(engine.grid_tau_axis, dtype=float):
+            engine.config.taus[0] = float(tau)
+            pdf_tau = engine.dt_pdf(engine.time_vector)
+            ll_single.append(engine.stationary_mcpdf_log_likelihood(observed, pdf_tau, 50.0, cfg))
+    finally:
+        engine.config.taus[0] = original_tau
+    ll_single = np.asarray(ll_single, dtype=float)
+
+    assert np.allclose(ll_batch.reshape(-1), ll_single, rtol=1e-12, atol=1e-12)
+
+
+def test_stationary_mcpdf_estimator_recovers_stationary_generated_truth():
+    cfg = PhysicsConfig(
+        detector_deadtime=1.5,
+        precision_photons=50,
+        a_photons=50.0,
+        gate_edges=[0.0, 2.0, 4.0, 6.0, 8.0],
+        period=8.0,
+        dt_override=0.5,
+        f_x_param="tau1",
+        f_x_min=0.6,
+        f_x_max=3.0,
+        f_x_steps=25,
+        f_x_scale="linear",
+        grid_tau_min=0.6,
+        grid_tau_max=3.0,
+        grid_steps=25,
+        taus=[1.35],
+    )
+    engine = TwinEngine(cfg)
+    engine.distill_gates()
+
+    truth = 1.35
+    pdf = engine.dt_pdf(engine.time_vector, tau=truth)
+    probs, frac = engine._stationary_gate_statistics_from_pdf(pdf, 50.0, cfg)
+    observed = (probs * frac * 50.0).reshape(1, -1)
+
+    estimate = float(engine.estimate_tau_batch_stationary_mcpdf(observed, photon_budget=50.0)[0])
+
+    assert np.isfinite(estimate)
+    assert abs(estimate - truth) < 0.2
+
+
+def test_promoted_mcpdf_full_matches_stationary_helper_estimator():
+    cfg = PhysicsConfig(
+        detector_deadtime=1.5,
+        precision_photons=50,
+        a_photons=50.0,
+        gate_edges=[0.0, 2.0, 4.0, 6.0, 8.0],
+        period=8.0,
+        dt_override=0.5,
+        f_x_param="tau1",
+        f_x_min=0.6,
+        f_x_max=3.0,
+        f_x_steps=9,
+        f_x_scale="linear",
+        grid_tau_min=0.6,
+        grid_tau_max=3.0,
+        grid_steps=9,
+        taus=[1.35],
+    )
+    engine = TwinEngine(cfg)
+    engine.distill_gates()
+
+    truth = 1.35
+    pdf = engine.dt_pdf(engine.time_vector, tau=truth)
+    probs, frac = engine._stationary_gate_statistics_from_pdf(pdf, 50.0, cfg)
+    observed = (probs * frac * 50.0).reshape(1, -1)
+
+    helper_estimate = float(engine.estimate_tau_batch_stationary_mcpdf(observed, photon_budget=50.0)[0])
+    promoted_estimate = float(engine.estimate_tau_batch(observed, photon_budget=50.0, correction_method="rapp_mcpdf_full")[0])
+
+    assert np.isfinite(helper_estimate)
+    assert np.isclose(promoted_estimate, helper_estimate, rtol=1e-12, atol=1e-12)
+
+
+def test_compare_mcpdf_variants_on_stationary_sweep_prefers_stationary_path():
+    cfg = PhysicsConfig(
+        detector_deadtime=1.5,
+        precision_photons=50,
+        a_photons=50.0,
+        gate_edges=[0.0, 2.0, 4.0, 6.0, 8.0],
+        period=8.0,
+        dt_override=0.5,
+        f_x_param="tau1",
+        f_x_min=0.8,
+        f_x_max=2.4,
+        f_x_steps=5,
+        f_x_scale="linear",
+        grid_tau_min=0.8,
+        grid_tau_max=2.4,
+        grid_steps=5,
+        taus=[1.2],
+    )
+    engine = TwinEngine(cfg)
+
+    payload = engine.compare_mcpdf_variants_on_stationary_sweep(np.array([0.9, 1.3, 1.7, 2.1]), n_photons=50)
+
+    assert payload["observed_counts"].shape == (4, 4)
+    assert payload["lite"]["estimates"].shape == (4,)
+    assert payload["stationary"]["estimates"].shape == (4,)
+    assert payload["stationary"]["mae"] <= payload["lite"]["mae"] + 1e-9
+    assert payload["lite"]["elapsed_s"] >= 0.0
+    assert payload["stationary"]["elapsed_s"] >= 0.0
 
 
 def test_ideal_poisson_detector_effects_follow_distorted_gate_distribution():

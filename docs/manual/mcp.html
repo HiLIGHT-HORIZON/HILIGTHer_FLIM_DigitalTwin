@@ -67,6 +67,7 @@ python python/tools/mcp_smoke_test.py</code></pre>
           <tr><td><code>list_vendor_sources</code>, <code>read_vendor_source</code>, <code>get_instrument_profile_schema</code>, <code>draft_instrument_profile</code>, <code>finalize_instrument_profile</code></td><td>LLM-guided instrument-profile creation workflow.</td></tr>
           <tr><td><code>ingest_instrument_profile_source</code></td><td>Single-source profile extraction helper for PDFs, pages, or local files.</td></tr>
         </table>
+        <p><code>run_precision</code> mirrors the Python service payload: it always returns the ideal reference and the raw detector-limited theory, can add a <code>deadtime_correction</code> companion block when a correction method is enabled, and keeps the raw Monte Carlo baseline separate from any corrected companion Monte Carlo statistics. The currently exposed user-facing dead-time methods are <code>Isbaner-lite</code>, <code>Rapp (MCPDF-lite)</code>, <code>Rapp (MCPDF-full)</code>, <code>Rapp (MCHC-lite)</code>, and <code>Rapp (MCHC-full)</code>. <code>Rapp (MCPDF-full)</code> is the promoted stationary detected-histogram implementation, <code>Rapp (MCHC-full)</code> is the promoted stationary histogram-correction implementation, and the lite methods remain surrogate variants rather than paper-faithful stationary-chain implementations.</p>
       </section>
 
       <section class="card" id="resources">

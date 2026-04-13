@@ -1,10 +1,44 @@
 # Next Milestones
 
-This document records the next scientific and platform milestones planned after `1.1.0 beta`. It is a roadmap artifact for engineering and scientific review. It does not describe implemented user-facing functionality.
+This document records the next scientific and platform milestones planned after `1.2.1 beta`. It is a roadmap artifact for engineering and scientific review. It does not describe implemented user-facing functionality.
 
 The milestones below are intentionally listed without hard priority ranking. A recommended execution order is provided at the end to reduce semantic drift and implementation risk.
 
-## 1. Pixellated Detector Simulation
+## 1. Paper-Faithful Stationary Dead-Time Correction
+
+Problem statement:
+The current dead-time correction surface is mixed. `Rapp (MCPDF-full)` and `Rapp (MCHC-full)` are now the promoted stationary-model paths, while `Isbaner-lite`, `Rapp (MCPDF-lite)`, and `Rapp (MCHC-lite)` remain useful surrogate companions that do not yet implement the raw-timestamp or full inverse procedures described in the original literature.
+
+User and scientific value:
+This milestone would make dead-time-corrected benchmarking more trustworthy at high count rates and would let HILIGHTer compare corrected Monte Carlo, corrected Fisher, and detector-aware estimators against a defensible physical model rather than only against a shared surrogate family.
+
+Intended outcome:
+The backend should expose a paper-faithful stationary-process forward model for dead-time-distorted detection histograms and use it to implement:
+
+- a faithful Isbaner reimplementation that works from raw photon timestamps and the inter-photon-time distribution rather than from the current gated-histogram surrogate
+- a faithful MCPDF path that matches measured detection histograms against the stationary detection distribution
+- a faithful MCHC path that reconstructs an arrival histogram from the detected histogram and then reuses the standard low-flux estimator
+- method-specific corrected Fisher calculations and diagnostics that are documented as stationary-model outputs rather than surrogate companions
+- a user-facing relabel that keeps the current surrogate exposed as `Isbaner-lite` until the faithful Isbaner method is available for side-by-side comparison
+
+Dependencies on existing backend semantics:
+
+- shared backend ownership of detector, gate, and excitation modelling
+- service-layer precision workflow payloads
+- diagnostics surfaces for observed versus corrected histograms
+- calibration semantics for dead time, IRF, and gate geometry
+
+Main scientific review risks:
+
+- mixing gated-histogram surrogates with raw-timestamp methods without making the distinction explicit
+- renaming the current Isbaner surface without also documenting the reimplementation path, which would still leave users unsure what is lite versus faithful
+- under-specifying which experimentally available measurements are required for faithful MCPDF versus faithful MCHC
+- introducing a stationary detector model that is internally consistent but too expensive for practical sweeps or Monte Carlo validation
+
+Suggested acceptance signal:
+The milestone is reached when the backend can ingest experimentally realistic detection histograms plus calibrated detector settings, reproduce the stationary forward model, expose paper-faithful MCPDF and MCHC estimators beside the existing lite surrogates, and show corrected theory/Monte Carlo agreement without violating basic physical expectations such as the ideal `F >= 1` floor.
+
+## 2. Pixellated Detector Simulation
 
 Problem statement:
 The current detector model is channel- and resource-based, but it does not yet expose pixellated detector arrays as a first-class simulation concept.
@@ -31,7 +65,7 @@ Main scientific review risks:
 Suggested acceptance signal:
 The milestone is reached when users can simulate single-channel and pixellated detector cases under consistent backend semantics, compare independent and shared-resource array behaviors, and obtain array-aware outputs that remain scientifically interpretable.
 
-## 2. Frequency-Domain Support with Digital FD and Sine-Wave Excitation
+## 3. Frequency-Domain Support with Digital FD and Sine-Wave Excitation
 
 Problem statement:
 The current application is time-domain centered. The next milestone is to add a frequency-domain branch, starting with a digital FD workflow and sine-wave excitation.
@@ -79,7 +113,8 @@ For any implementation work in these areas:
 
 The milestones are roadmap items rather than strict priorities, but the recommended implementation order is:
 
-1. Pixellated detector simulation
-2. Frequency-domain support with digital FD and sine-wave excitation
+1. Paper-faithful stationary dead-time correction
+2. Pixellated detector simulation
+3. Frequency-domain support with digital FD and sine-wave excitation
 
-This order extends the current time-domain precision core with detector-topology complexity first, and only then introduces a new analysis domain.
+This order first stabilizes the scientific meaning of the existing high-flux precision stack, then extends detector-topology complexity, and only then introduces a new analysis domain.

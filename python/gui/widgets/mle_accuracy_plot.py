@@ -187,13 +187,19 @@ class MLEAccuracyWidget(QWidget):
             text = text.split("=", 1)[1].strip()
         text = text.replace("(deadtime corrected)", "DT corr.")
         text = text.replace("deadtime corrected", "DT corr.")
-        text = text.replace("(Isbaner corrected)", "Isbaner corr.")
-        text = text.replace("(Rapp (MCPDF) corrected)", "Rapp MCPDF corr.")
-        text = text.replace("(Rapp (MCHC) corrected)", "Rapp MCHC corr.")
+        text = text.replace("(Isbaner-lite corrected)", "Isbaner-lite corr.")
+        text = text.replace("(Isbaner corrected)", "Isbaner-lite corr.")
+        text = text.replace("(Rapp (MCPDF-lite) corrected)", "Rapp MCPDF-lite corr.")
+        text = text.replace("(Rapp (MCPDF-full) corrected)", "Rapp MCPDF-full corr.")
+        text = text.replace("(Rapp (MCHC-lite) corrected)", "Rapp MCHC-lite corr.")
+        text = text.replace("(Rapp (MCHC-full) corrected)", "Rapp MCHC-full corr.")
+        text = text.replace("(Rapp (MCPDF) corrected)", "Rapp MCPDF-lite corr.")
+        text = text.replace("(Rapp (MCHC) corrected)", "Rapp MCHC-lite corr.")
         text = text.replace("(Rapp-inspired corrected)", "Rapp MCPDF corr.")
         text = text.replace("(Rapp corrected)", "Rapp corr.")
         text = text.replace("Current Configuration", "Current")
-        for suffix in ("DT corr.", "Isbaner corr.", "Rapp MCPDF corr.", "Rapp MCHC corr.", "Rapp corr."):
+        text = text.replace("Rapp MCPDF corr.", "Rapp MCPDF-lite corr.")
+        for suffix in ("DT corr.", "Isbaner-lite corr.", "Rapp MCPDF-lite corr.", "Rapp MCPDF-full corr.", "Rapp MCHC-lite corr.", "Rapp MCHC-full corr.", "Rapp corr."):
             if suffix in text:
                 main = text.replace(suffix, "").replace("()", "").strip()
                 return f"{main}\n{suffix}"

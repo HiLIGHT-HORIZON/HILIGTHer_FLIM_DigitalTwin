@@ -1,6 +1,7 @@
 import numpy as np
 import copy
 import os
+import time
 from math import erfc, sqrt
 from scipy.interpolate import interp1d
 from scipy.optimize import minimize, fmin, minimize_scalar
@@ -17,6 +18,7 @@ from .event_driven import (
     TabulatedOpticalModel,
 )
 from .models import PhysicsConfig
+from .rapp_stationary import RappStationaryModel, StationaryRappInputs
 
 try:
     from numba import njit
@@ -84,6 +86,7 @@ class TwinEngine:
     def __init__(self, config: Optional[PhysicsConfig] = None):
         self.config = config or PhysicsConfig()
         self.decay_model_store = DecayModelStore()
+        self.rapp_stationary_model = RappStationaryModel()
         self.raw_data = None  # (nY, nX, nGates)
         self.gate_shapes = None  # (nGates, nTime)
         self.time_vector = None  # (nTime,)
@@ -111,6 +114,10 @@ class TwinEngine:
         self.grid_gate_activity = None
         self.grid_tau_axis = None
         self.grid_signature = None
+        self.stationary_grid_probabilities = None
+        self.stationary_grid_detected_budgets = None
+        self.stationary_grid_signature = None
+        self.stationary_grid_photon_budget = None
 
     def invalidate_grid(self):
         self.grid_templates = None
@@ -120,6 +127,10 @@ class TwinEngine:
         self.grid_gate_activity = None
         self.grid_tau_axis = None
         self.grid_signature = None
+        self.stationary_grid_probabilities = None
+        self.stationary_grid_detected_budgets = None
+        self.stationary_grid_signature = None
+        self.stationary_grid_photon_budget = None
 
     def clear_workspace_data(self):
         self.raw_data = None
@@ -705,16 +716,21 @@ class TwinEngine:
             "off": "none",
             "uncorrected": "none",
             "isbaner": "isbaner_histogram",
+            "isbaner_lite": "isbaner_histogram",
             "isbaner_histogram": "isbaner_histogram",
             "isbaner_style_histogram": "isbaner_histogram",
             "rapp": "rapp_mcpdf",
             "mcpdf": "rapp_mcpdf",
             "rapp_mcpdf": "rapp_mcpdf",
+            "mcpdf_full": "rapp_mcpdf_full",
+            "rapp_mcpdf_full": "rapp_mcpdf_full",
             "rapp_inspired": "rapp_mcpdf",
             "rapp_inspired_inverse": "rapp_mcpdf",
-            "rapp_stationary": "rapp_mcpdf",
+            "rapp_stationary": "rapp_mcpdf_full",
             "mchc": "rapp_mchc",
             "rapp_mchc": "rapp_mchc",
+            "mchc_full": "rapp_mchc_full",
+            "rapp_mchc_full": "rapp_mchc_full",
         }
         return aliases.get(method, "none")
 
@@ -751,19 +767,54 @@ class TwinEngine:
         notes = {
             "none": "Dead-time correction disabled.",
             "isbaner_histogram": (
-                "Histogram-style correction using only the observed gated histogram and a calibrated detector model. "
+                "Isbaner-lite histogram correction using only the observed gated histogram and a calibrated detector model. "
                 "It corrects the histogram through modeled gate activity and then refits with the standard detector-free gridded MLE."
             ),
             "rapp_mcpdf": (
-                "Rapp (MCPDF) detected-photon companion fit using only the observed gated histogram and the calibrated "
+                "Rapp (MCPDF-lite) detected-photon companion fit using only the observed gated histogram and the calibrated "
                 "detector-limited gate templates. This remains a detector-aware inverse fit rather than a histogram-correction prepass."
             ),
+            "rapp_mcpdf_full": (
+                "Rapp (MCPDF-full) stationary detected-photon companion fit using only the observed gated histogram and calibrated "
+                "instrument metadata. It evaluates the stationary dead-time detection model directly rather than using the lite surrogate templates."
+            ),
             "rapp_mchc": (
-                "Rapp (MCHC) histogram correction using only the observed gated histogram and the calibrated detector model. "
+                "Rapp (MCHC-lite) histogram correction using only the observed gated histogram and the calibrated detector model. "
                 "It first reconstructs a corrected histogram and then refits it with the standard detector-free gridded MLE."
+            ),
+            "rapp_mchc_full": (
+                "Rapp (MCHC-full) stationary histogram correction using only the observed gated histogram and calibrated "
+                "instrument metadata. It reconstructs the arrival histogram through the stationary dead-time model and then refits with the standard detector-free gridded MLE."
             ),
         }
         return notes.get(str(method).lower(), "Dead-time correction companion estimator enabled.")
+
+    def _resolve_stationary_photon_budget(
+        self,
+        observed_counts: Optional[np.ndarray] = None,
+        photon_budget: Optional[float] = None,
+    ) -> float:
+        if photon_budget is not None and np.isfinite(photon_budget) and float(photon_budget) > 0.0:
+            return float(photon_budget)
+
+        for attr_name in ("precision_photons", "a_photons"):
+            candidate = float(getattr(self.config, attr_name, 0.0) or 0.0)
+            if np.isfinite(candidate) and candidate > 0.0:
+                return candidate
+
+        if observed_counts is not None:
+            observed = np.maximum(np.asarray(observed_counts, dtype=float), 0.0)
+            if observed.ndim == 1:
+                total = float(np.sum(observed))
+                if np.isfinite(total) and total > 0.0:
+                    return total
+            else:
+                totals = np.sum(observed, axis=1)
+                finite = totals[np.isfinite(totals) & (totals > 0.0)]
+                if finite.size:
+                    return float(np.nanmedian(finite))
+
+        return 1.0
 
     def _deadtime_correction_summary(
         self,
@@ -807,7 +858,17 @@ class TwinEngine:
 
         if method == "rapp_mcpdf":
             return observed_gate_mass, np.asarray(self.grid_collected_fractions, dtype=float), gate_activity
-        if method in {"isbaner_histogram", "rapp_mchc"}:
+        if method == "rapp_mcpdf_full":
+            photon_budget = self._resolve_stationary_photon_budget()
+            self._ensure_stationary_grid_current(photon_budget=photon_budget)
+            stationary_mass = (
+                np.asarray(self.stationary_grid_probabilities, dtype=float)
+                * np.asarray(self.stationary_grid_detected_budgets, dtype=float)[:, None]
+            )
+            stationary_activity = self._safe_gate_activity(stationary_mass, raw_gate_mass)
+            stationary_fractions = np.asarray(self.stationary_grid_detected_budgets, dtype=float) / max(photon_budget, 1e-12)
+            return stationary_mass, stationary_fractions, stationary_activity
+        if method in {"isbaner_histogram", "rapp_mchc", "rapp_mchc_full"}:
             return raw_gate_mass, np.asarray(self.grid_collected_fractions, dtype=float), gate_activity
         return observed_gate_mass, np.asarray(self.grid_collected_fractions, dtype=float), gate_activity
 
@@ -842,13 +903,15 @@ class TwinEngine:
         self,
         observed_counts: np.ndarray,
         correction_method: str,
+        photon_budget: Optional[float] = None,
+        stationary_max_iter: int = 40,
     ) -> np.ndarray:
         method = self._resolve_deadtime_correction_method(correction_method, self.config)
         observed = np.maximum(np.asarray(observed_counts, dtype=float), 0.0)
         reshape_output = observed.ndim == 1
         if reshape_output:
             observed = observed.reshape(1, -1)
-        if method in {"none", "rapp_mcpdf"}:
+        if method in {"none", "rapp_mcpdf", "rapp_mcpdf_full"}:
             return observed[0] if reshape_output else np.array(observed, copy=True)
 
         totals = np.sum(observed, axis=1, keepdims=True)
@@ -858,8 +921,10 @@ class TwinEngine:
             return corrected[0] if reshape_output else corrected
 
         if method == "isbaner_histogram":
-            # Use the standard detector-limited gridded estimate to choose a single
-            # gate-activity correction before refitting with the unmodified MLE.
+            # This is the Isbaner-lite gated-histogram surrogate, not the paper's
+            # raw-timestamp/IPTD recursion. We use the standard detector-limited
+            # gridded estimate to choose a single gate-activity correction before
+            # refitting with the unmodified MLE.
             baseline_estimates = self._estimate_param_batch_gridded(
                 observed[valid],
                 correction_method="none",
@@ -884,26 +949,47 @@ class TwinEngine:
             corrected[valid] = corrected_valid
             return corrected[0] if reshape_output else corrected
 
-        self.distill_gates()
-        gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
-        gate_matrix = gate_profiles * self._collection_efficiency_scale(gate_profiles.shape[0])
-        backprojection = self._gate_backprojection_matrix(gate_profiles)
-        for row_idx, counts in enumerate(observed):
-            total_counts = float(np.sum(counts))
-            if total_counts <= 0.0:
-                continue
-            detected_time = backprojection @ np.asarray(counts, dtype=float)
-            detected_time = np.maximum(detected_time, 0.0)
-            if float(np.sum(detected_time)) <= 0.0:
-                continue
-            arrival_time = self._invert_detector_transfer_time_counts(detected_time, self.config)
-            arrival_time = np.maximum(arrival_time, 0.0)
-            corrected_gate = np.asarray(gate_matrix @ arrival_time, dtype=float)
-            corrected_gate = np.maximum(corrected_gate, 0.0)
-            corrected_total = float(np.sum(corrected_gate))
-            if corrected_total <= 0.0:
-                continue
-            corrected[row_idx, :] = corrected_gate * (total_counts / corrected_total)
+        base_dt = self.config.dt_override if (self.config.dt_override and self.config.dt_override > 0) else self.config.dt_input
+        stationary_dt = self._stationary_recommended_dt(self.config, base_dt) if method == "rapp_mchc_full" else None
+        original_dt_override = self.config.dt_override
+        try:
+            if stationary_dt is not None:
+                self.config.dt_override = stationary_dt
+            self.distill_gates()
+            gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
+            gate_matrix = gate_profiles * self._collection_efficiency_scale(gate_profiles.shape[0])
+            backprojection = self._gate_backprojection_matrix(gate_profiles)
+            resolved_budget = self._resolve_stationary_photon_budget(observed, photon_budget)
+            for row_idx, counts in enumerate(observed):
+                total_counts = float(np.sum(counts))
+                if total_counts <= 0.0:
+                    continue
+                if method == "rapp_mchc_full":
+                    arrival_time = self.stationary_mchc_reconstruct_arrival_histogram(
+                        counts,
+                        n_photons=resolved_budget,
+                        cfg=self.config,
+                        max_iter=stationary_max_iter,
+                        time_vector_ns=np.asarray(self.time_vector, dtype=float),
+                        gate_matrix=gate_matrix,
+                        gate_edges_ns=np.asarray(getattr(self.config, "gate_edges", []), dtype=float),
+                    )
+                else:
+                    detected_time = backprojection @ np.asarray(counts, dtype=float)
+                    detected_time = np.maximum(detected_time, 0.0)
+                    if float(np.sum(detected_time)) <= 0.0:
+                        continue
+                    arrival_time = self._invert_detector_transfer_time_counts(detected_time, self.config)
+                arrival_time = np.maximum(arrival_time, 0.0)
+                corrected_gate = np.asarray(gate_matrix @ arrival_time, dtype=float)
+                corrected_gate = np.maximum(corrected_gate, 0.0)
+                corrected_total = float(np.sum(corrected_gate))
+                if corrected_total <= 0.0:
+                    continue
+                corrected[row_idx, :] = corrected_gate * (total_counts / corrected_total)
+        finally:
+            self.config.dt_override = original_dt_override
+            self.distill_gates()
         return corrected[0] if reshape_output else corrected
 
     def _gate_backprojection_matrix(self, gate_profiles: np.ndarray) -> np.ndarray:
@@ -985,10 +1071,433 @@ class TwinEngine:
         reconstructed = np.maximum(reconstructed, 0.0)
         return reconstructed * n_periods
 
+    def _expected_gate_count_vector_from_pdf(
+        self,
+        pdf: np.ndarray,
+        n_photons: float,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> np.ndarray:
+        cfg = cfg or self.config
+        self.distill_gates()
+        gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
+        conditional_probs, collected_fraction = self._gate_statistics_from_pdf(
+            pdf,
+            float(max(n_photons, 0.0)),
+            gate_profiles,
+            cfg,
+        )
+        return (
+            np.asarray(conditional_probs, dtype=float)
+            * float(max(collected_fraction, 0.0))
+            * float(max(n_photons, 0.0))
+        )
+
+    def _backproject_gate_counts_to_time(
+        self,
+        gate_counts: np.ndarray,
+    ) -> np.ndarray:
+        self.distill_gates()
+        gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
+        backprojection = self._gate_backprojection_matrix(gate_profiles)
+        time_counts = np.asarray(backprojection @ np.asarray(gate_counts, dtype=float).reshape(-1), dtype=float)
+        return np.maximum(time_counts, 0.0)
+
+    def _stationary_rapp_inputs_from_pdf(
+        self,
+        pdf: np.ndarray,
+        n_photons: float,
+        detected_counts: Optional[np.ndarray] = None,
+        cfg: Optional[PhysicsConfig] = None,
+        latent_pdf_plus: Optional[np.ndarray] = None,
+        latent_pdf_minus: Optional[np.ndarray] = None,
+        time_vector_ns: Optional[np.ndarray] = None,
+        gate_matrix: Optional[np.ndarray] = None,
+        gate_edges_ns: Optional[np.ndarray] = None,
+    ) -> StationaryRappInputs:
+        cfg = cfg or self.config
+        if time_vector_ns is None or gate_matrix is None:
+            self.distill_gates()
+            gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
+            gate_matrix = gate_profiles * self._collection_efficiency_scale(gate_profiles.shape[0])
+            time_vector_ns = np.asarray(self.time_vector, dtype=float)
+        else:
+            gate_matrix = np.asarray(gate_matrix, dtype=float)
+            time_vector_ns = np.asarray(time_vector_ns, dtype=float)
+        if gate_edges_ns is None:
+            gate_edges_ns = np.asarray(getattr(cfg, "gate_edges", []), dtype=float)
+        else:
+            gate_edges_ns = np.asarray(gate_edges_ns, dtype=float)
+        observed = np.asarray(
+            np.zeros((gate_matrix.shape[0],), dtype=float) if detected_counts is None else detected_counts,
+            dtype=float,
+        ).reshape(-1)
+        return StationaryRappInputs(
+            period_ns=float(getattr(cfg, "period", 0.0)),
+            deadtime_ns=float(max(getattr(cfg, "detector_deadtime", 0.0), 0.0)),
+            detected_counts=observed,
+            time_vector_ns=time_vector_ns,
+            latent_pdf=np.asarray(pdf, dtype=float),
+            expected_arrivals_per_period=float(max(n_photons, 0.0)),
+            gate_edges_ns=gate_edges_ns,
+            gate_matrix=gate_matrix,
+            dwell_s=float(max(getattr(cfg, "event_pixel_dwell_time_s", 0.0), 0.0)),
+            dark_counts_per_period=float(max(self._dark_counts_per_frame(cfg), 0.0)),
+            latent_pdf_plus=None if latent_pdf_plus is None else np.asarray(latent_pdf_plus, dtype=float),
+            latent_pdf_minus=None if latent_pdf_minus is None else np.asarray(latent_pdf_minus, dtype=float),
+        )
+
+    def _stationary_gate_statistics_from_pdf(
+        self,
+        pdf: np.ndarray,
+        n_photons: float,
+        cfg: Optional[PhysicsConfig] = None,
+        time_vector_ns: Optional[np.ndarray] = None,
+        gate_matrix: Optional[np.ndarray] = None,
+        gate_edges_ns: Optional[np.ndarray] = None,
+    ) -> Tuple[np.ndarray, float]:
+        inputs = self._stationary_rapp_inputs_from_pdf(
+            pdf,
+            n_photons,
+            cfg=cfg,
+            time_vector_ns=time_vector_ns,
+            gate_matrix=gate_matrix,
+            gate_edges_ns=gate_edges_ns,
+        )
+        masses = np.asarray(self.rapp_stationary_model.gated_detection_masses(inputs), dtype=float)
+        collected_fraction = float(np.sum(masses) / max(float(max(n_photons, 0.0)), 1e-12))
+        total = float(np.sum(masses))
+        if total <= 0.0:
+            return np.full(masses.shape, 1.0 / max(masses.size, 1), dtype=float), 0.0
+        return masses / total, float(max(collected_fraction, 0.0))
+
+    def _ensure_stationary_grid_current(
+        self,
+        photon_budget: Optional[float] = None,
+    ) -> None:
+        self.ensure_grid_current()
+        budget = float(
+            max(
+                photon_budget
+                if photon_budget is not None
+                else getattr(self.config, "a_photons", 0.0)
+                or getattr(self.config, "precision_photons", 0.0)
+                or 1.0,
+                1e-6,
+            )
+        )
+        base_dt = self.config.dt_override if (self.config.dt_override and self.config.dt_override > 0) else self.config.dt_input
+        stationary_dt = self._stationary_recommended_dt(self.config, base_dt)
+        signature = (self._grid_signature(), float(stationary_dt))
+        if (
+            self.stationary_grid_probabilities is not None
+            and self.stationary_grid_signature == signature
+            and self.stationary_grid_photon_budget is not None
+            and np.isclose(float(self.stationary_grid_photon_budget), budget, rtol=1e-12, atol=1e-12)
+        ):
+            return
+
+        n_steps = int(self.grid_tau_axis.size)
+        original_dt_override = self.config.dt_override
+        stationary_probs = None
+        stationary_budgets = np.zeros((n_steps,), dtype=float)
+        original_param_value = self._get_cfg_param(self.config.f_x_param)
+        try:
+            self.config.dt_override = stationary_dt
+            self.distill_gates()
+            gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
+            gate_matrix = gate_profiles * self._collection_efficiency_scale(gate_profiles.shape[0])
+            time_vector_ns = np.asarray(self.time_vector, dtype=float)
+            gate_edges_ns = np.asarray(getattr(self.config, "gate_edges", []), dtype=float)
+            stationary_probs = np.zeros((n_steps, gate_matrix.shape[0]), dtype=float)
+            for i, param_val in enumerate(self.grid_tau_axis):
+                self._set_cfg_param(self.config.f_x_param, float(param_val))
+                pdf = self.dt_pdf(self.time_vector)
+                probs, frac = self._stationary_gate_statistics_from_pdf(
+                    pdf,
+                    budget,
+                    self.config,
+                    time_vector_ns=time_vector_ns,
+                    gate_matrix=gate_matrix,
+                    gate_edges_ns=gate_edges_ns,
+                )
+                stationary_probs[i, :] = np.asarray(probs, dtype=float)
+                stationary_budgets[i] = float(max(frac, 0.0)) * budget
+        finally:
+            self._set_cfg_param(self.config.f_x_param, original_param_value)
+            self.config.dt_override = original_dt_override
+            self.distill_gates()
+
+        self.stationary_grid_probabilities = stationary_probs
+        self.stationary_grid_detected_budgets = stationary_budgets
+        self.stationary_grid_signature = signature
+        self.stationary_grid_photon_budget = budget
+
+    def stationary_mcpdf_log_likelihood_batch(
+        self,
+        observed_gate_counts: np.ndarray,
+        photon_budget: Optional[float] = None,
+    ) -> np.ndarray:
+        observed = np.asarray(observed_gate_counts, dtype=float)
+        reshape_output = observed.ndim == 1
+        if reshape_output:
+            observed = observed.reshape(1, -1)
+        self._ensure_stationary_grid_current(photon_budget=photon_budget)
+        log_probs = np.log(np.maximum(np.asarray(self.stationary_grid_probabilities, dtype=float), 1e-300))
+        ll = observed @ log_probs.T
+        return ll[0] if reshape_output else ll
+
+    def estimate_tau_batch_stationary_mcpdf(
+        self,
+        counts_batch: np.ndarray,
+        photon_budget: Optional[float] = None,
+    ) -> np.ndarray:
+        counts_batch = np.asarray(counts_batch, dtype=float)
+        self.ensure_grid_current()
+        totals = np.sum(counts_batch, axis=1, keepdims=True)
+        valid = totals[:, 0] > 0.0
+        estimates = np.full(counts_batch.shape[0], np.nan)
+        if not np.any(valid):
+            return estimates
+
+        log_likelihood = self.stationary_mcpdf_log_likelihood_batch(
+            counts_batch[valid],
+            photon_budget=photon_budget,
+        )
+        best_idx = np.argmax(log_likelihood, axis=1)
+        refined = np.array(self.grid_tau_axis[best_idx], copy=True)
+
+        if self.grid_tau_axis.size >= 3:
+            interior_rows = np.where((best_idx > 0) & (best_idx < (self.grid_tau_axis.size - 1)))[0]
+            if interior_rows.size > 0:
+                axis = np.array(self.grid_tau_axis, copy=False, dtype=float)
+                use_log_interp = np.all(axis > 0) and (
+                    str(self.config.f_x_scale).lower() == "log"
+                    and self.config.f_x_param in {"tau1", "tau2", "beta"}
+                )
+                interp_axis = np.log(axis) if use_log_interp else axis
+                axis_steps = np.diff(interp_axis)
+                if axis_steps.size > 0 and np.allclose(axis_steps, axis_steps[0], rtol=1e-4, atol=1e-10):
+                    h = float(axis_steps[0])
+                    row_idx = interior_rows
+                    center_idx = best_idx[row_idx]
+                    ll_minus = log_likelihood[row_idx, center_idx - 1]
+                    ll_center = log_likelihood[row_idx, center_idx]
+                    ll_plus = log_likelihood[row_idx, center_idx + 1]
+                    denom = ll_minus - (2.0 * ll_center) + ll_plus
+                    safe = np.abs(denom) > 1e-12
+                    offset = np.zeros(center_idx.shape[0], dtype=float)
+                    offset[safe] = 0.5 * (ll_minus[safe] - ll_plus[safe]) / denom[safe]
+                    offset = np.clip(offset, -1.0, 1.0)
+                    interp_peak = interp_axis[center_idx] + (offset * h)
+                    refined[row_idx] = np.exp(interp_peak) if use_log_interp else interp_peak
+
+        estimates[valid] = np.clip(refined, self.grid_tau_axis[0], self.grid_tau_axis[-1])
+        return estimates
+
+    def compare_mcpdf_variants_on_stationary_sweep(
+        self,
+        x_grid: np.ndarray,
+        n_photons: int,
+    ) -> Dict[str, Any]:
+        x_values = np.asarray(x_grid, dtype=float).reshape(-1)
+        self.distill_gates()
+        self.ensure_grid_current()
+        photon_budget = float(max(n_photons, 1))
+        original_dt_override = self.config.dt_override
+        stationary_dt = self._stationary_recommended_dt(self.config)
+
+        target_param = str(getattr(self.config, "f_x_param", "tau1"))
+        original_param_value = self._get_cfg_param(target_param)
+
+        observed_counts = []
+        observed_detected_budgets = np.zeros(x_values.shape, dtype=float)
+        try:
+            self.config.dt_override = stationary_dt
+            self.distill_gates()
+            gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
+            gate_matrix = gate_profiles * self._collection_efficiency_scale(gate_profiles.shape[0])
+            time_vector_ns = np.asarray(self.time_vector, dtype=float)
+            gate_edges_ns = np.asarray(getattr(self.config, "gate_edges", []), dtype=float)
+            for idx, value in enumerate(x_values):
+                self._set_cfg_param(target_param, float(value))
+                pdf = self.dt_pdf(self.time_vector)
+                probs, frac = self._stationary_gate_statistics_from_pdf(
+                    pdf,
+                    photon_budget,
+                    self.config,
+                    time_vector_ns=time_vector_ns,
+                    gate_matrix=gate_matrix,
+                    gate_edges_ns=gate_edges_ns,
+                )
+                counts = np.asarray(probs, dtype=float) * float(max(frac, 0.0)) * photon_budget
+                observed_counts.append(counts)
+                observed_detected_budgets[idx] = float(np.sum(counts))
+        finally:
+            self._set_cfg_param(target_param, original_param_value)
+            self.config.dt_override = original_dt_override
+            self.distill_gates()
+
+        observed_counts_batch = np.asarray(observed_counts, dtype=float)
+
+        t0 = time.perf_counter()
+        lite_estimates = self.estimate_tau_batch(
+            observed_counts_batch,
+            photon_budget=photon_budget,
+            correction_method="rapp_mcpdf",
+        )
+        lite_elapsed_s = float(time.perf_counter() - t0)
+
+        t1 = time.perf_counter()
+        stationary_estimates = self.estimate_tau_batch(
+            observed_counts_batch,
+            photon_budget=photon_budget,
+            correction_method="rapp_mcpdf_full",
+        )
+        stationary_elapsed_s = float(time.perf_counter() - t1)
+
+        return {
+            "x_grid": np.asarray(x_values, dtype=float),
+            "observed_counts": observed_counts_batch,
+            "observed_detected_budget": observed_detected_budgets,
+            "lite": {
+                "method": "rapp_mcpdf",
+                "estimates": np.asarray(lite_estimates, dtype=float),
+                "bias": np.asarray(lite_estimates, dtype=float) - x_values,
+                "mae": float(np.nanmean(np.abs(np.asarray(lite_estimates, dtype=float) - x_values))),
+                "elapsed_s": lite_elapsed_s,
+            },
+            "stationary": {
+                "method": "rapp_mcpdf_full",
+                "estimates": np.asarray(stationary_estimates, dtype=float),
+                "bias": np.asarray(stationary_estimates, dtype=float) - x_values,
+                "mae": float(np.nanmean(np.abs(np.asarray(stationary_estimates, dtype=float) - x_values))),
+                "elapsed_s": stationary_elapsed_s,
+            },
+        }
+
+    def stationary_mcpdf_log_likelihood(
+        self,
+        observed_gate_counts: np.ndarray,
+        pdf: np.ndarray,
+        n_photons: float,
+        cfg: Optional[PhysicsConfig] = None,
+    ) -> float:
+        inputs = self._stationary_rapp_inputs_from_pdf(
+            pdf,
+            n_photons,
+            detected_counts=observed_gate_counts,
+            cfg=cfg,
+        )
+        return float(self.rapp_stationary_model.log_likelihood(inputs))
+
+    def stationary_mchc_reconstruct_arrival_histogram(
+        self,
+        observed_gate_counts: np.ndarray,
+        n_photons: Optional[float] = None,
+        reference_pdf: Optional[np.ndarray] = None,
+        cfg: Optional[PhysicsConfig] = None,
+        max_iter: int = 40,
+        time_vector_ns: Optional[np.ndarray] = None,
+        gate_matrix: Optional[np.ndarray] = None,
+        gate_edges_ns: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        cfg = cfg or self.config
+        photon_budget = float(
+            max(
+                n_photons
+                if n_photons is not None
+                else float(np.sum(np.maximum(np.asarray(observed_gate_counts, dtype=float), 0.0))),
+                1e-6,
+            )
+        )
+        if reference_pdf is None:
+            time_axis = np.asarray(self.time_vector, dtype=float)
+            reference_pdf = np.ones_like(time_axis, dtype=float)
+            reference_total = float(np.sum(reference_pdf))
+            if reference_total > 0.0:
+                reference_pdf = reference_pdf / reference_total
+        inputs = self._stationary_rapp_inputs_from_pdf(
+            reference_pdf,
+            photon_budget,
+            detected_counts=observed_gate_counts,
+            cfg=cfg,
+            time_vector_ns=time_vector_ns,
+            gate_matrix=gate_matrix,
+            gate_edges_ns=gate_edges_ns,
+        )
+        return np.asarray(
+            self.rapp_stationary_model.reconstruct_arrival_histogram(inputs, max_iter=max_iter),
+            dtype=float,
+        )
+
+    def build_deadtime_histogram_diagnostics(
+        self,
+        tau: float,
+        n_photons: Optional[float] = None,
+        correction_method: Optional[str] = None,
+        reference_pdf: Optional[np.ndarray] = None,
+    ) -> Dict[str, Any]:
+        method = self._resolve_deadtime_correction_method(correction_method, self.config)
+        if method not in {"isbaner_histogram", "rapp_mchc", "rapp_mchc_full"}:
+            return {
+                "method": method,
+                "observed_gate_counts": None,
+                "corrected_gate_counts": None,
+                "observed_time_hist": None,
+                "corrected_time_hist": None,
+            }
+
+        photon_budget = float(
+            max(
+                n_photons
+                if n_photons is not None
+                else getattr(self.config, "a_photons", 0.0)
+                or getattr(self.config, "precision_photons", 0.0)
+                or 1000.0,
+                1.0,
+            )
+        )
+        self.distill_gates()
+        latent_pdf = np.asarray(
+            reference_pdf if reference_pdf is not None else self.dt_pdf(self.time_vector, tau=tau),
+            dtype=float,
+        )
+        observed_gate_counts = np.asarray(
+            self._expected_gate_count_vector_from_pdf(latent_pdf, photon_budget, self.config),
+            dtype=float,
+        )
+        if float(np.sum(observed_gate_counts)) <= 0.0:
+            return {
+                "method": method,
+                "observed_gate_counts": observed_gate_counts,
+                "corrected_gate_counts": None,
+                "observed_time_hist": None,
+                "corrected_time_hist": None,
+            }
+
+        corrected_gate_counts = np.asarray(
+            self._histogram_corrected_counts(
+                observed_gate_counts,
+                correction_method=method,
+                photon_budget=photon_budget,
+            ),
+            dtype=float,
+        )
+        observed_time_hist = self._backproject_gate_counts_to_time(observed_gate_counts)
+        corrected_time_hist = self._backproject_gate_counts_to_time(corrected_gate_counts)
+        return {
+            "method": method,
+            "observed_gate_counts": observed_gate_counts,
+            "corrected_gate_counts": corrected_gate_counts,
+            "observed_time_hist": observed_time_hist,
+            "corrected_time_hist": corrected_time_hist,
+        }
+
     def _log_likelihood_for_deadtime_method(
         self,
         observed_counts: np.ndarray,
         correction_method: str,
+        photon_budget: Optional[float] = None,
     ) -> np.ndarray:
         method = self._resolve_deadtime_correction_method(correction_method, self.config)
         observed = np.maximum(np.asarray(observed_counts, dtype=float), 0.0)
@@ -996,9 +1505,19 @@ class TwinEngine:
             observed_norm = observed / np.maximum(np.sum(observed, axis=1, keepdims=True), 1e-12)
             log_gate = np.log(np.maximum(self.grid_raw_templates, 1e-300))
             return observed_norm @ log_gate.T
+        if method == "rapp_mcpdf_full":
+            budget = self._resolve_stationary_photon_budget(observed, photon_budget)
+            return self.stationary_mcpdf_log_likelihood_batch(
+                observed,
+                photon_budget=budget,
+            )
 
         corrected_counts = np.asarray(
-            self._histogram_corrected_counts(observed, correction_method=method),
+            self._histogram_corrected_counts(
+                observed,
+                correction_method=method,
+                photon_budget=photon_budget,
+            ),
             dtype=float,
         )
         corrected_totals = np.sum(corrected_counts, axis=1, keepdims=True)
@@ -1259,6 +1778,23 @@ class TwinEngine:
             return max(0.0, float(getattr(cfg, "gate_last_end", getattr(cfg, "period", 0.0))))
         return max(0.0, float(getattr(cfg, "period", 0.0)))
 
+    def _stationary_recommended_dt(self, cfg: Optional[PhysicsConfig] = None, base_dt: Optional[float] = None) -> float:
+        cfg = cfg or self.config
+        if base_dt is None:
+            base_dt = cfg.dt_override if (cfg.dt_override and cfg.dt_override > 0) else cfg.dt_input
+        base_dt = float(max(base_dt, 1e-4))
+        period = float(max(getattr(cfg, "period", 0.0), base_dt))
+        edges = np.asarray(getattr(cfg, "gate_edges", []) or [], dtype=float)
+        if edges.size >= 2:
+            widths = np.diff(edges)
+            positive = widths[widths > 0.0]
+            min_gate_width = float(np.min(positive)) if positive.size else period
+        else:
+            min_gate_width = period
+        recommended = max(base_dt, period / 512.0, min_gate_width / 16.0)
+        upper_bound = max(min_gate_width / 5.0, period / 128.0, base_dt)
+        return float(min(recommended, upper_bound))
+
     def resolve_gate_edges(self) -> np.ndarray:
         """
         Resolve the effective gate-edge definition from the high-level gating state.
@@ -1502,10 +2038,11 @@ class TwinEngine:
             return estimates
 
         correction_method = self._resolve_deadtime_correction_method(correction_method, self.config)
-        if correction_method in {"isbaner_histogram", "rapp_mchc"}:
+        if correction_method in {"isbaner_histogram", "rapp_mchc", "rapp_mchc_full"}:
             corrected_counts = self._histogram_corrected_counts(
                 counts_batch[valid],
                 correction_method=correction_method,
+                photon_budget=photon_budget,
             )
             corrected_totals = np.sum(corrected_counts, axis=1, keepdims=True)
             obs_norm = np.divide(
@@ -1520,6 +2057,7 @@ class TwinEngine:
             log_likelihood = self._log_likelihood_for_deadtime_method(
                 counts_batch[valid],
                 correction_method,
+                photon_budget=photon_budget,
             )
         else:
             obs_norm = counts_batch[valid] / totals[valid]
@@ -2748,7 +3286,7 @@ class TwinEngine:
         photon_basis_mode: Optional[str] = None,
     ) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
         method = self._resolve_deadtime_correction_method(correction_method, self.config)
-        if method in {"rapp_mcpdf", "rapp_mchc", "isbaner_histogram"}:
+        if method in {"rapp_mcpdf", "rapp_mcpdf_full", "rapp_mchc", "rapp_mchc_full", "isbaner_histogram"}:
             return self._compute_method_specific_deadtime_fisher_info(
                 tau_grid,
                 n_photons=n_photons,
@@ -2796,6 +3334,8 @@ class TwinEngine:
         fall = max(float(getattr(cfg, "gate_fall", rise)), 0.0)
         dt_user = cfg.dt_override if (cfg.dt_override and cfg.dt_override > 0) else (cfg.dt_input if (cfg.dt_input and cfg.dt_input > 0) else 0.01)
         dt = dt_user if rise <= 0.0 and fall <= 0.0 else max(min(dt_user, max(rise, fall, 1e-4) / 5.0), 0.005)
+        if method in {"rapp_mcpdf_full", "rapp_mchc_full"}:
+            dt = self._stationary_recommended_dt(cfg, dt)
         if bool(getattr(cfg, "burst_enabled", False)):
             burst_period = max(float(getattr(cfg, "burst_sub_period", 0.0)), 1e-6)
             dt = min(dt, max(burst_period / 20.0, 0.001))
@@ -2806,6 +3346,8 @@ class TwinEngine:
             self.distill_gates()
             gate_profiles = self._statistical_gate_profiles(self.gate_shapes)
             t = np.array(self.time_vector, copy=True)
+            stationary_gate_matrix = gate_profiles * self._collection_efficiency_scale(gate_profiles.shape[0])
+            stationary_gate_edges = np.asarray(getattr(cfg, "gate_edges", []), dtype=float)
         finally:
             cfg.dt_override = original_dt_override
 
@@ -2819,6 +3361,8 @@ class TwinEngine:
         collected_budgets = np.zeros(len(tau_grid), dtype=float)
         corrected_budgets = np.zeros(len(tau_grid), dtype=float)
         epsilon = 0.01
+        stationary_prob_cache: Dict[float, Tuple[np.ndarray, float, float]] = {}
+        stationary_mchc_cache: Dict[float, Tuple[np.ndarray, float, float]] = {}
 
         for k, x_val in enumerate(tau_grid):
             orig_x_val = self._get_cfg_param(cfg.f_x_param)
@@ -2838,18 +3382,65 @@ class TwinEngine:
                 def _method_probs(value: float) -> Tuple[np.ndarray, float, float]:
                     self._set_cfg_param(cfg.f_x_param, value)
                     pdf = self.dt_pdf(t, irf=irf_cached)
-                    obs_cond, obs_frac = self._gate_statistics_from_pdf(pdf, float(n_photons), gate_profiles, cfg)
-                    raw_cond, raw_frac = self._gate_statistics_without_detector_from_pdf(pdf, float(n_photons), gate_profiles, cfg)
-                    obs_mass = np.asarray(obs_cond, dtype=float) * float(obs_frac)
-                    raw_mass = np.asarray(raw_cond, dtype=float) * float(raw_frac)
                     if method == "isbaner_histogram":
+                        _obs_cond, obs_frac = self._gate_statistics_from_pdf(pdf, float(n_photons), gate_profiles, cfg)
+                        raw_cond, _raw_frac = self._gate_statistics_without_detector_from_pdf(pdf, float(n_photons), gate_profiles, cfg)
                         probs = np.asarray(raw_cond, dtype=float)
+                        budget = float(n_photons) * float(obs_frac)
+                        return np.asarray(probs, dtype=float), float(obs_frac), float(budget)
+                    elif method == "rapp_mcpdf_full":
+                        cache_key = float(value)
+                        cached = stationary_prob_cache.get(cache_key)
+                        if cached is None:
+                            stationary_probs, stationary_frac = self._stationary_gate_statistics_from_pdf(
+                                pdf,
+                                float(n_photons),
+                                cfg,
+                                time_vector_ns=t,
+                                gate_matrix=stationary_gate_matrix,
+                                gate_edges_ns=stationary_gate_edges,
+                            )
+                            stationary_budget = float(n_photons) * float(stationary_frac)
+                            cached = (
+                                np.asarray(stationary_probs, dtype=float),
+                                float(stationary_frac),
+                                float(stationary_budget),
+                            )
+                            stationary_prob_cache[cache_key] = cached
+                        return cached
+                    elif method == "rapp_mchc_full":
+                        cache_key = float(value)
+                        cached = stationary_mchc_cache.get(cache_key)
+                        if cached is None:
+                            obs_cond, obs_frac = self._gate_statistics_from_pdf(pdf, float(n_photons), gate_profiles, cfg)
+                            observed_counts = (np.asarray(obs_cond, dtype=float) * float(obs_frac) * float(n_photons)).reshape(1, -1)
+                            corrected_counts = np.asarray(
+                                self._histogram_corrected_counts(
+                                    observed_counts,
+                                    correction_method=method,
+                                    photon_budget=float(n_photons),
+                                    stationary_max_iter=2,
+                                ),
+                                dtype=float,
+                            )
+                            corrected_total = float(np.sum(corrected_counts))
+                            if corrected_total > 0.0:
+                                probs = corrected_counts.reshape(-1) / corrected_total
+                            else:
+                                raw_cond, _raw_frac = self._gate_statistics_without_detector_from_pdf(pdf, float(n_photons), gate_profiles, cfg)
+                                probs = np.asarray(raw_cond, dtype=float)
+                            budget = float(n_photons) * float(obs_frac)
+                            cached = (np.asarray(probs, dtype=float), float(obs_frac), float(budget))
+                            stationary_mchc_cache[cache_key] = cached
+                        return cached
                     elif method == "rapp_mchc":
+                        obs_cond, obs_frac = self._gate_statistics_from_pdf(pdf, float(n_photons), gate_profiles, cfg)
                         observed_counts = (np.asarray(obs_cond, dtype=float) * float(obs_frac) * float(n_photons)).reshape(1, -1)
                         corrected_counts = np.asarray(
                             self._histogram_corrected_counts(
                                 observed_counts,
                                 correction_method=method,
+                                photon_budget=float(n_photons),
                             ),
                             dtype=float,
                         )
@@ -2857,11 +3448,15 @@ class TwinEngine:
                         if corrected_total > 0.0:
                             probs = corrected_counts.reshape(-1) / corrected_total
                         else:
+                            raw_cond, _raw_frac = self._gate_statistics_without_detector_from_pdf(pdf, float(n_photons), gate_profiles, cfg)
                             probs = np.asarray(raw_cond, dtype=float)
+                        budget = float(n_photons) * float(obs_frac)
+                        return np.asarray(probs, dtype=float), float(obs_frac), float(budget)
                     else:
+                        obs_cond, obs_frac = self._gate_statistics_from_pdf(pdf, float(n_photons), gate_profiles, cfg)
                         probs = np.asarray(obs_cond, dtype=float)
-                    budget = float(n_photons) * float(obs_frac)
-                    return np.asarray(probs, dtype=float), float(obs_frac), float(budget)
+                        budget = float(n_photons) * float(obs_frac)
+                        return np.asarray(probs, dtype=float), float(obs_frac), float(budget)
 
                 p_cen, observed_frac, photon_budget = _method_probs(param_val)
                 p_plus, _plus_frac, _plus_budget = _method_probs(plus_val)
@@ -3219,7 +3814,14 @@ class TwinEngine:
             "efficiency_ci_upper": eff_ci_upper,
         }
         if correction_method != "none":
-            estimator_name = "detector_aware_companion_fit" if correction_method == "rapp_mcpdf" else "histogram_corrected_gridded_mle"
+            if correction_method == "rapp_mcpdf":
+                estimator_name = "detector_aware_companion_fit"
+            elif correction_method == "rapp_mcpdf_full":
+                estimator_name = "stationary_detector_aware_companion_fit"
+            elif correction_method == "rapp_mchc_full":
+                estimator_name = "stationary_histogram_corrected_gridded_mle"
+            else:
+                estimator_name = "histogram_corrected_gridded_mle"
             result["deadtime_correction"] = {
                 "method": correction_method,
                 "estimator": estimator_name,

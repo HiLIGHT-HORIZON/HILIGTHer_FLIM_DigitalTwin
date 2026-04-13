@@ -82,6 +82,30 @@ class DiagnosticsWidget(QWidget):
             name="Theoretical Reference"
         )
         self.chk_pdf = self._add_master_toggle("Ref PDF", self.pdf_curve, "white")
+
+        self.observed_hist_curve = self.plot_widget.plot(
+            pen=pg.mkPen(color='#f59e0b', width=2),
+            name="Observed Histogram"
+        )
+        self.observed_hist_curve.setVisible(False)
+        self.chk_observed_hist = QCheckBox("Observed Histogram")
+        self.chk_observed_hist.setChecked(False)
+        self.chk_observed_hist.setEnabled(False)
+        self.chk_observed_hist.setStyleSheet("color: #f59e0b; font-weight: bold;")
+        self.chk_observed_hist.stateChanged.connect(self._on_observed_hist_toggle)
+        self.controls_layout.addWidget(self.chk_observed_hist)
+
+        self.corrected_hist_curve = self.plot_widget.plot(
+            pen=pg.mkPen(color='#22c55e', width=2, style=Qt.PenStyle.DashLine),
+            name="Corrected Histogram"
+        )
+        self.corrected_hist_curve.setVisible(False)
+        self.chk_corrected_hist = QCheckBox("Corrected Histogram")
+        self.chk_corrected_hist.setChecked(False)
+        self.chk_corrected_hist.setEnabled(False)
+        self.chk_corrected_hist.setStyleSheet("color: #22c55e; font-weight: bold;")
+        self.chk_corrected_hist.stateChanged.connect(self._on_corrected_hist_toggle)
+        self.controls_layout.addWidget(self.chk_corrected_hist)
         
         self.chk_ensemble = QCheckBox("PDF Ensemble")
         self.chk_ensemble.setChecked(True)
@@ -106,6 +130,8 @@ class DiagnosticsWidget(QWidget):
         self.bg_curves = []  # Registry for background/sweep reference curves
         self.frames = []
         self.current_frame_index = -1
+        self._observed_hist_available = False
+        self._corrected_hist_available = False
         self._playback_timer = QTimer(self)
         self._playback_timer.setInterval(1000)
         self._playback_timer.timeout.connect(lambda: self.step_frame(1))
@@ -133,6 +159,8 @@ class DiagnosticsWidget(QWidget):
         border = '#334155' if dark else '#cbd5e1'
         irf_color = '#22d3ee' if dark else '#0f766e'
         pdf_color = 'w' if dark else '#111827'
+        observed_hist_color = '#f59e0b' if dark else '#b45309'
+        corrected_hist_color = '#22c55e' if dark else '#15803d'
         self.plot_widget.setBackground(bg)
         for axis_name in ('bottom', 'left'):
             axis = self.plot_widget.getAxis(axis_name)
@@ -143,6 +171,8 @@ class DiagnosticsWidget(QWidget):
         )
         self.irf_curve.setPen(pg.mkPen(color=irf_color, width=2))
         self.pdf_curve.setPen(pg.mkPen(color=pdf_color, width=3, style=Qt.PenStyle.DashLine))
+        self.observed_hist_curve.setPen(pg.mkPen(color=observed_hist_color, width=2))
+        self.corrected_hist_curve.setPen(pg.mkPen(color=corrected_hist_color, width=2, style=Qt.PenStyle.DashLine))
 
     def _add_master_toggle(self, label, curve, color=None):
         chk = QCheckBox(label)
@@ -163,19 +193,45 @@ class DiagnosticsWidget(QWidget):
         for c in self.gate_curves:
             c.setVisible(visible)
 
+    def _on_observed_hist_toggle(self, state):
+        self.observed_hist_curve.setVisible(
+            self._observed_hist_available and state == Qt.CheckState.Checked.value
+        )
+
+    def _on_corrected_hist_toggle(self, state):
+        self.corrected_hist_curve.setVisible(
+            self._corrected_hist_available and state == Qt.CheckState.Checked.value
+        )
+
     def _export_legend_entries(self):
         entries = []
         if self.chk_irf.isChecked():
             entries.append({"label": "IRF", "color": "#22d3ee", "style": "line"})
         if self.chk_pdf.isChecked():
             entries.append({"label": self.chk_pdf.text(), "color": "#ffffff" if self.current_theme == "dark" else "#111827", "style": "dash"})
+        if self._observed_hist_available and self.chk_observed_hist.isChecked():
+            entries.append({"label": self.chk_observed_hist.text(), "color": "#f59e0b" if self.current_theme == "dark" else "#b45309", "style": "line"})
+        if self._corrected_hist_available and self.chk_corrected_hist.isChecked():
+            entries.append({"label": self.chk_corrected_hist.text(), "color": "#22c55e" if self.current_theme == "dark" else "#15803d", "style": "dash"})
         if self.chk_ensemble.isChecked() and self.bg_curves:
             entries.append({"label": "PDF Ensemble", "color": "#71717a" if self.current_theme == "dark" else "#64748b", "style": "line"})
         if self.chk_gates.isChecked() and self.gate_curves:
             entries.append({"label": "Time Gates", "color": "#3b82f6", "style": "line"})
         return entries
 
-    def update_plot(self, time_vec, gate_shapes, irf=None, pdf=None, label=None, background_curves=None):
+    def update_plot(
+        self,
+        time_vec,
+        gate_shapes,
+        irf=None,
+        pdf=None,
+        label=None,
+        background_curves=None,
+        observed_hist=None,
+        corrected_hist=None,
+        observed_hist_label=None,
+        corrected_hist_label=None,
+    ):
         """Updates the diagnostic view with master gate control."""
         # Clear old gates
         for c in self.gate_curves:
@@ -205,6 +261,40 @@ class DiagnosticsWidget(QWidget):
             pdf_norm = pdf / np.max(pdf) if np.max(pdf) > 0 else pdf
             self.pdf_curve.setData(time_vec, pdf_norm)
             self.pdf_curve.setZValue(10)
+        else:
+            self.pdf_curve.setData([], [])
+
+        observed_hist = None if observed_hist is None else np.asarray(observed_hist, dtype=float)
+        self._observed_hist_available = bool(
+            observed_hist is not None and observed_hist.size > 0 and np.max(np.maximum(observed_hist, 0.0)) > 0.0
+        )
+        self.chk_observed_hist.setText(observed_hist_label or "Observed Histogram")
+        self.chk_observed_hist.setEnabled(self._observed_hist_available)
+        if self._observed_hist_available:
+            observed_hist_safe = np.maximum(observed_hist, 0.0)
+            observed_hist_norm = observed_hist_safe / np.max(observed_hist_safe)
+            self.observed_hist_curve.setData(time_vec, observed_hist_norm)
+            self.observed_hist_curve.setZValue(12)
+        else:
+            self.chk_observed_hist.setChecked(False)
+            self.observed_hist_curve.setData([], [])
+        self.observed_hist_curve.setVisible(self._observed_hist_available and self.chk_observed_hist.isChecked())
+
+        corrected_hist = None if corrected_hist is None else np.asarray(corrected_hist, dtype=float)
+        self._corrected_hist_available = bool(
+            corrected_hist is not None and corrected_hist.size > 0 and np.max(np.maximum(corrected_hist, 0.0)) > 0.0
+        )
+        self.chk_corrected_hist.setText(corrected_hist_label or "Corrected Histogram")
+        self.chk_corrected_hist.setEnabled(self._corrected_hist_available)
+        if self._corrected_hist_available:
+            corrected_hist_safe = np.maximum(corrected_hist, 0.0)
+            corrected_hist_norm = corrected_hist_safe / np.max(corrected_hist_safe)
+            self.corrected_hist_curve.setData(time_vec, corrected_hist_norm)
+            self.corrected_hist_curve.setZValue(13)
+        else:
+            self.chk_corrected_hist.setChecked(False)
+            self.corrected_hist_curve.setData([], [])
+        self.corrected_hist_curve.setVisible(self._corrected_hist_available and self.chk_corrected_hist.isChecked())
 
         # 5. Gate Shapes
         colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4']
@@ -273,6 +363,10 @@ class DiagnosticsWidget(QWidget):
             pdf=frame.get("pdf"),
             label=frame.get("label"),
             background_curves=frame.get("background_curves"),
+            observed_hist=frame.get("observed_hist"),
+            corrected_hist=frame.get("corrected_hist"),
+            observed_hist_label=frame.get("observed_hist_label"),
+            corrected_hist_label=frame.get("corrected_hist_label"),
         )
         self._update_nav_enabled()
 

@@ -26,7 +26,7 @@ RELEASE_STAGE = "beta"
 PATCH_BASE_BUILD = 45
 
 # Fallbacks used when git metadata is unavailable.
-FALLBACK_BUILD_NUMBER = 45
+FALLBACK_BUILD_NUMBER = 46
 FALLBACK_COMMIT = "unknown"
 
 

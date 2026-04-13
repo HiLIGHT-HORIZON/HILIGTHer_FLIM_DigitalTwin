@@ -99,6 +99,20 @@ F_eff = F_cond / sqrt(eta)</code></pre>
         <p>In the UI, <code>Compute F-value on</code> changes only the reporting basis. It does not change the collected-photon estimator or the conditional Fisher calculation.</p>
       </section>
 
+      <section class="card" id="deadtime-companions">
+        <h2>Dead-time correction companions</h2>
+        <p>When dead-time correction is enabled, the precision workflow keeps the raw detector-limited baseline and adds an optional corrected companion path. The raw Monte Carlo accuracy curve remains the same baseline that would be shown with correction disabled.</p>
+        <div class="plain-box">
+          <h3>Plain English</h3>
+          <p>The current correction families do not all mean the same thing. Some first correct the histogram and then reuse the standard gridded MLE, while one remains a detector-aware companion fit on the observed histogram. They should be compared as companion methods inside the same simulator, not assumed to be identical theory statements.</p>
+        </div>
+        <div class="specialist-box">
+          <h3>For specialists</h3>
+          <p><code>Isbaner-lite</code> applies a gated-histogram correction and then refits with the standard detector-free gridded MLE. It is not a paper-faithful implementation of Isbaner et al.: the original method estimates the mean photon-hit rate from raw photon timestamps via the inter-photon-time distribution and then uses that quantity inside a recursive dead-time correction. <code>Rapp (MCHC-lite)</code> is also a histogram-correction-plus-standard-MLE path, implemented as a gated-histogram MCHC-style surrogate rather than a paper-faithful stationary-chain inversion. <code>Rapp (MCPDF-lite)</code> remains a detector-aware companion fit on the observed gated histogram using detector-limited templates, which makes it MCPDF-like rather than a paper-faithful stationary-process implementation. <code>Rapp (MCPDF-full)</code> promotes the stationary detected-histogram model into the public correction surface: it fits the observed gated detection histogram directly against the stationary dead-time model. <code>Rapp (MCHC-full)</code> promotes the stationary inverse path into the public correction surface: it reconstructs the arrival histogram from the observed gated detection histogram through the stationary dead-time model and then feeds the resulting corrected histogram into the standard detector-free gridded MLE. Unlike the lite methods, both full stationary variants depend on the configured photon-budget / count-rate basis because that arrival-rate assumption is part of the stationary process.</p>
+        </div>
+        <p>Corrected Fisher curves are built from the corresponding method-matched surrogate probabilities in the backend. They are useful for internal comparison against the same simulator family, but they are still under scientific review and should not yet be treated as audited physical bounds.</p>
+      </section>
+
       <section class="card" id="resolvability">
         <h2>Resolvability</h2>
         <div class="plain-box">

@@ -89,6 +89,8 @@ class ControlWidget(QWidget):
         self.event_pixel_dwell_time_s = 1e-3
         self._ideal_detector_syncing = False
         self._ideal_gates_syncing = False
+        self._model_math_dirty = True
+        self._detector_math_dirty = True
         self.batch_sweep_store = BatchSweepStore()
         self.instrument_profile_store = InstrumentProfileStore()
         self.decay_model_store = DecayModelStore()
@@ -147,7 +149,7 @@ class ControlWidget(QWidget):
         self.btn_model_math.setFixedWidth(32)
         self.btn_model_math.setCheckable(True)
         self.btn_model_math.setChecked(False)
-        self.btn_model_math.clicked.connect(lambda checked: self.model_math_panel.setVisible(bool(checked)))
+        self.btn_model_math.clicked.connect(self._toggle_model_math_panel)
         model_row_layout.addWidget(self.btn_model_math)
         model_form.addRow(model_row)
 
@@ -360,9 +362,11 @@ class ControlWidget(QWidget):
         self.combo_deadtime_correction = QComboBox()
         self.combo_deadtime_correction.addItems([
             "None",
-            "Isbaner-style histogram",
-            "Rapp (MCPDF)",
-            "Rapp (MCHC)",
+            "Isbaner-lite",
+            "Rapp (MCPDF-lite)",
+            "Rapp (MCPDF-full)",
+            "Rapp (MCHC-lite)",
+            "Rapp (MCHC-full)",
         ])
         exec_form.addRow("Dead-time correction:", self.combo_deadtime_correction)
 
@@ -638,7 +642,7 @@ class ControlWidget(QWidget):
         self.btn_detector_math.setCheckable(True)
         self.btn_detector_math.setChecked(False)
         self.btn_detector_math.setFixedWidth(32)
-        self.btn_detector_math.clicked.connect(lambda checked: self.detector_math_panel.setVisible(bool(checked)))
+        self.btn_detector_math.clicked.connect(self._toggle_detector_math_panel)
         detector_header_row = QWidget()
         detector_header_layout = QHBoxLayout(detector_header_row)
         detector_header_layout.setContentsMargins(0, 0, 0, 0)
@@ -2045,7 +2049,7 @@ class ControlWidget(QWidget):
             self.spin_accuracy_pvalue: "Bootstrap-based p-value threshold used to judge estimator accuracy.",
             self.spin_bootstrap_samples: "Number of bootstrap resamples used for p-values and confidence intervals.",
             self.spin_ci_level: "Confidence level used for the Monte Carlo interval display.",
-            self.combo_deadtime_correction: "Apply a dead-time correction companion estimator and theory curve using the selected correction family. Isbaner and Rapp (MCHC) first correct the histogram and then reuse the standard detector-free gridded MLE, while Rapp (MCPDF) remains a detector-aware companion fit.",
+            self.combo_deadtime_correction: "Apply a dead-time correction companion estimator and theory curve using the selected correction family. Isbaner-lite and Rapp (MCHC-lite) first correct the histogram with surrogate models and then reuse the standard detector-free gridded MLE, Rapp (MCPDF-lite) remains a detector-aware surrogate companion fit, Rapp (MCPDF-full) evaluates the stationary detected-histogram model directly, and Rapp (MCHC-full) performs stationary histogram correction before the standard gridded MLE.",
             self.lbl_ci_sigma_equiv: "Approximate Gaussian sigma-equivalent for the currently selected central confidence interval.",
             self.spin_photons: "Average photon budget for synthetic image generation.",
             self.spin_image_repeats: "Requested number of Monte Carlo-style repeats represented for each swept x-axis value.",
@@ -2319,6 +2323,18 @@ class ControlWidget(QWidget):
             return f"<div style='margin:4px 0;'><img src='{uri}'></div>"
         return f"<pre style='margin:4px 0; color:{color};'>{html.escape(latex)}</pre>"
 
+    def _toggle_model_math_panel(self, checked):
+        visible = bool(checked)
+        self.model_math_panel.setVisible(visible)
+        if visible and self._model_math_dirty:
+            self._update_model_math_panel(force=True)
+
+    def _toggle_detector_math_panel(self, checked):
+        visible = bool(checked)
+        self.detector_math_panel.setVisible(visible)
+        if visible and self._detector_math_dirty:
+            self._update_detector_math_panel(force=True)
+
     def _latex_to_data_uri(self, latex: str, color: str = "#e5e7eb", fontsize: float = 14.0) -> str:
         key = (latex, color, float(fontsize))
         cached = self._math_render_cache.get(key)
@@ -2343,8 +2359,11 @@ class ControlWidget(QWidget):
         except Exception:
             return ""
 
-    def _update_model_math_panel(self):
+    def _update_model_math_panel(self, force: bool = False):
         if not hasattr(self, "model_math_panel"):
+            return
+        if not force and not self.model_math_panel.isVisible():
+            self._model_math_dirty = True
             return
         model_key = self.get_selected_decay_model_key()
         definition = self.decay_model_store.get(model_key)
@@ -2358,9 +2377,13 @@ class ControlWidget(QWidget):
             f"<div style='margin-top:8px; color:#cbd5e1;'>{html.escape(description)}</div>"
             "</div>"
         )
+        self._model_math_dirty = False
 
-    def _update_detector_math_panel(self):
+    def _update_detector_math_panel(self, force: bool = False):
         if not hasattr(self, "detector_math_panel") or not hasattr(self, "chk_ideal_detector"):
+            return
+        if not force and not self.detector_math_panel.isVisible():
+            self._detector_math_dirty = True
             return
         ideal_detector = bool(self.chk_ideal_detector.isChecked())
         ideal_gates = bool(self.chk_ideal_gates.isChecked())
@@ -2382,6 +2405,7 @@ class ControlWidget(QWidget):
             f"<div style='margin-top:8px; color:#cbd5e1;'>{'<br>'.join(html.escape(item) for item in notes)}</div>"
             "</div>"
         )
+        self._detector_math_dirty = False
 
     def _open_detection_algorithm_settings(self):
         dialog = QDialog(self)
@@ -3384,11 +3408,14 @@ class ControlWidget(QWidget):
             self.spin_ci_level.setValue(getattr(cfg, "precision_ci_level", 99.7))
             deadtime_correction_map = {
                 "none": "None",
-                "isbaner_histogram": "Isbaner-style histogram",
-                "rapp_mcpdf": "Rapp (MCPDF)",
-                "rapp_inspired_inverse": "Rapp (MCPDF)",
-                "rapp_stationary": "Rapp (MCPDF)",
-                "rapp_mchc": "Rapp (MCHC)",
+                "isbaner_histogram": "Isbaner-lite",
+                "isbaner_lite": "Isbaner-lite",
+                "rapp_mcpdf": "Rapp (MCPDF-lite)",
+                "rapp_inspired_inverse": "Rapp (MCPDF-lite)",
+                "rapp_mcpdf_full": "Rapp (MCPDF-full)",
+                "rapp_stationary": "Rapp (MCPDF-full)",
+                "rapp_mchc": "Rapp (MCHC-lite)",
+                "rapp_mchc_full": "Rapp (MCHC-full)",
             }
             self.combo_deadtime_correction.setCurrentText(
                 deadtime_correction_map.get(getattr(cfg, "deadtime_correction_method", "none"), "None")
